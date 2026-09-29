@@ -4,9 +4,12 @@ Edit-and-resend and regenerate for DeepSeek Harness conversations: reopen a sent
 user message and send the edit again, or produce an assistant reply again from
 the same prompt.
 
-**Status: skeleton.** The package installs and loads — the Host plugin and the
-Client plugin both activate, and both Typert descriptor faces resolve — but it
-contributes no behavior yet. The features land in the tickets that follow.
+**Status: the Remote contract is live.** The package installs and loads — the
+Host plugin registers the Typert descriptor table and creates the `resend`
+service, the Client plugin mounts the same contribution with
+`ctx.remote.$mount` — so `resend.apply` is a real, strictly-typed Remote call
+end to end. Its operation semantics are not implemented yet: every call refuses
+with the `internal` code until the resolution, rewind and resend tickets land.
 
 ## Targeted upstream
 
@@ -58,11 +61,17 @@ Gates:
    first argument, which is why this is a walk.)
 2. **`scripts/check-typert.mjs`** — drives both Typert descriptor faces through
    the **installed** `@deepseek-ai/dsh-typert-registry` validator instead of
-   restating its rules, so the gate follows the host. The descriptor table is
-   intentionally empty in the skeleton, so this gate fails on an empty table
-   unless `--allow-empty-descriptors` is passed; `npm run check` passes it and
-   the gate prints a loud `VACUOUS` note. Ticket 02 fills the table and removes
-   the flag.
+   restating its rules, so the gate follows the host. §6.3's seven rules are
+   asserted by mutation — a copy of the real contribution is broken one field at
+   a time and the validator must reject it *by that rule*, with acceptance probes
+   as the positive control — both registry paths are driven
+   (`ctx.typert.register` for the host face, `ctx.typert.remotes.register` for
+   the client face), and the two artifacts that actually *run* are read back and
+   compared with the faces (`lib/index.js`'s registration, `lib/client.bundle.js`'s
+   mount), because a face nobody ships proves nothing. An empty table fails:
+   there is nothing to assert against, and the `--allow-empty-descriptors`
+   concession the skeleton needed is gone (passing it now exits with a usage
+   error).
 3. **`scripts/check-host-contract.mjs`** — **skeleton**: it reads the installed
    DSH Desktop app (`app.asar` or an unpacked `resources/app`) directly and
    asserts a first set of host members in both directions; ticket 09 completes
@@ -79,6 +88,19 @@ your real `$DSH_HOME`, and it prints `SKIP` when no app is installed.
 
 Set `DSH_APP_ROOT` to point the gates (and the probe) at a specific installation:
 either an unpacked `resources/app` directory or an `app.asar` path.
+
+`zod` is the package's one runtime dependency: the descriptor's strict codecs are
+zod schemas, which is what the Typert contract asks a `create()` factory for. They
+are written in `zod/mini` — the same zod core with a functional spelling — because
+both faces derive from one shared table and whatever builds those schemas is
+therefore bundled into the browser script; the classic entry would put ~750 KB of
+zod into `lib/client.bundle.js` for functions the client never calls (spec §16.5).
+
+`@deepseek-ai/dsh-api-gateway` is a devDependency, not a peer: the shipped code
+never imports it (the client half reaches it through `ctx.remote`, and
+`dsh.client.inject` only orders its arrival). It is pinned so the descriptor
+specs drive the real consumer — mount, dispatch, envelope — in CI, rather than
+only on a machine with an installed app.
 
 `node-addon-require-builtin` is a devDependency with no import anywhere in this
 package: it is cordis's optional peer, and its presence is what lets the Loader

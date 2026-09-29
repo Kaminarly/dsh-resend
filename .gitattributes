@@ -1,0 +1,8 @@
+# lib/ holds committed build artifacts; the CI honesty gate
+# `git diff --exit-code -- lib/` compares them byte-for-byte against a fresh
+# `npm run build`. Pin LF everywhere so a Windows checkout (core.autocrlf=true)
+# can never fabricate a diff the build did not produce.
+* text=auto eol=lf
+lib/** text eol=lf
+*.png binary
+*.ico binary

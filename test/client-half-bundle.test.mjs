@@ -3,60 +3,40 @@
  * script that self-registers exactly one factory with the Web client module
  * loader (`window.__ModuleLoader__.load({ id, factory })`).
  *
- * Protocol sources of truth (dsh-client-modules, the shipped node half):
- *  - the registration queue is installed as `window.__ModuleLoader__` with
- *    `mode: "queue"` and a `pendingQueue` the bundles push into;
- *  - the row `id` is the package name, and `arrive()` fails with
- *    `loaded without registering "<id>"` when a bundle does not register it;
- *  - the factory receives the module-table `require` and returns the module
- *    exports (the boot queue calls `registration.factory(specifier => ...)` and
- *    uses its return value).
+ * The loader protocol itself, and the `vm` that stands in for a page, live in
+ * `scripts/client-bundle.mjs` — shared with the descriptor gate, which reads the
+ * same artifact back — where a bundle that registers under the wrong id, or that
+ * needs a module-table entry the host would not have, goes red.
+ *
+ * What the face *does* once it activates — mount the Remote contribution — is
+ * asserted here only against a recording `remote` service, so nothing in this
+ * file depends on the Gateway. The real Gateway is the subject of
+ * `remote-contract.test.mjs`.
  */
 import { describe, expect, it } from 'vitest'
-import vm from 'node:vm'
-import { readFileSync } from 'node:fs'
-import { Context } from '@deepseek-ai/cordis'
-import { FIBER_ACTIVE, pkg } from './helpers/dsh.mjs'
+import { Context, Service } from '@deepseek-ai/cordis'
+import { FIBER_ACTIVE, FIBER_PENDING, pkg } from './helpers/dsh.mjs'
+import { clientHalf, evaluateBundle, materialize } from '../scripts/client-bundle.mjs'
 
-const bundleSource = readFileSync(new URL('../lib/client.bundle.js', import.meta.url), 'utf8')
+/** A `remote` service that records the contributions the half asks it to mount. */
+function recordingRemote() {
+  const mounted = []
+  class RecordingRemote extends Service {
+    constructor(ctx) {
+      super(ctx, 'remote')
+    }
 
-/** Evaluate the bundle the way the browser does: a classic script in a page.
- *
- * The `__ModuleLoader__` queue below is a deliberate test double of the host's
- * own boot protocol (`bootInjections` in dsh-client-modules) — the browser
- * implementation cannot be imported here, and re-stating the protocol is what
- * makes a drifted bundle fail: a bundle that registers under the wrong id, or
- * that needs a module-table entry the host would not have, goes red here.
- */
-function evaluateBundle(source) {
-  const pendingQueue = []
-  const moduleLoader = {
-    mode: 'queue',
-    pendingQueue,
-    load(registration) {
-      pendingQueue.push(registration)
-    },
-    create() {
-      throw new Error('client-modules: a plugin bundle must never create the module system')
-    },
+    $mount(contribution) {
+      mounted.push(contribution)
+      return async () => {}
+    }
   }
-  vm.runInNewContext(source, { window: { __ModuleLoader__: moduleLoader } }, { filename: 'lib/client.bundle.js' })
-  return pendingQueue
-}
-
-/** Materialize a registration with a require that records every module-table lookup. */
-function materialize(registration) {
-  const misses = []
-  const exports = registration.factory((specifier) => {
-    misses.push(specifier)
-    throw new Error(`module table miss: ${specifier}`)
-  })
-  return { exports, misses }
+  return { RecordingRemote, mounted }
 }
 
 describe('self-registration', () => {
   it('registers exactly one factory under the package name', () => {
-    const queue = evaluateBundle(bundleSource)
+    const queue = evaluateBundle()
     expect(queue).toHaveLength(1)
     expect(queue[0].id).toBe(pkg.name)
     expect(typeof queue[0].factory).toBe('function')
@@ -65,42 +45,75 @@ describe('self-registration', () => {
   it('does not touch the DOM or create the module system while the script runs', () => {
     // The sandbox has nothing but `window.__ModuleLoader__`: any DOM access
     // (document, Element, style) or a `create()` call would throw here.
-    expect(() => evaluateBundle(bundleSource)).not.toThrow()
+    expect(() => evaluateBundle()).not.toThrow()
   })
 })
 
 describe('materialized exports', () => {
-  const [registration] = evaluateBundle(bundleSource)
+  const { registration } = clientHalf()
 
-  it('needs no module-table entry (the skeleton imports nothing)', () => {
-    const { misses } = materialize(registration)
-    expect(misses).toEqual([])
+  it('needs no module-table entry (the descriptor table and its schemas are bundled)', () => {
+    // The require this double installs throws on any lookup, so materializing at
+    // all is the assertion — a drifted bundle fails here naming its specifier.
+    expect(() => materialize(registration)).not.toThrow()
+  })
+
+  it('the module-table double has teeth: a lookup is refused by name', () => {
+    const needsCordis = { id: 'needs-cordis', factory: (require) => ({ cordis: require('@deepseek-ai/cordis') }) }
+    expect(() => materialize(needsCordis)).toThrow(/module table miss: @deepseek-ai\/cordis/)
   })
 
   it('exports the Cordis plugin face: name, inject, apply', () => {
-    const { exports } = materialize(registration)
+    const exports = materialize(registration)
     expect(exports.name).toBe(pkg.name)
-    expect(exports.inject).toEqual([])
+    expect(exports.inject).toEqual(['remote'])
     expect(typeof exports.apply).toBe('function')
   })
 
   it('tags its exports as a module, as the shipped bundle shape does', () => {
-    const { exports } = materialize(registration)
+    const exports = materialize(registration)
     expect(Object.prototype.toString.call(exports)).toBe('[object Module]')
   })
 
-  it('activates as a Cordis plugin without a pending fiber', async () => {
-    const { exports } = materialize(registration)
-    const ctx = new Context()
-    const fiber = ctx.plugin(exports)
-    await fiber
-    expect(fiber.state).toBe(FIBER_ACTIVE)
-  })
-
   it('re-materializes to the same face (the factory is pure)', () => {
-    const first = materialize(registration).exports
-    const second = materialize(registration).exports
+    const first = materialize(registration)
+    const second = materialize(registration)
     expect(second.name).toBe(first.name)
     expect(second.inject).toEqual(first.inject)
+  })
+})
+
+describe('the Remote mount', () => {
+  it('mounts the contribution this half owns, once, and activates', async () => {
+    const { exports: face } = clientHalf()
+    expect(face.remoteMountState().status).toBe('pending')
+
+    const { RecordingRemote, mounted } = recordingRemote()
+    const ctx = new Context()
+    await ctx.plugin(RecordingRemote)
+    const fiber = ctx.plugin(face)
+    await fiber
+
+    expect(fiber.state).toBe(FIBER_ACTIVE)
+    expect(mounted).toHaveLength(1)
+    // Spelled out rather than derived from lib/: a test that builds both sides
+    // with one helper cannot notice a format change. This bundle is also a
+    // separate artifact from lib/typert.client.js, so it pins what the browser
+    // half actually publishes.
+    expect(mounted[0].package).toBe('dsh-resend')
+    expect(mounted[0].descriptors.map((descriptor) => `${descriptor.service} ${descriptor.namespace}/${descriptor.method}`)).toEqual([
+      'resend resend/apply',
+    ])
+    expect(face.remoteMountState().status).toBe('mounted')
+  })
+
+  it('stays PENDING while ctx.remote is absent, so no mount can be attempted early', async () => {
+    const { exports: face } = clientHalf()
+    const ctx = new Context()
+    const fiber = ctx.plugin(face)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fiber.state).toBe(FIBER_PENDING)
+    expect(face.remoteMountState().status).toBe('pending')
+    await fiber.dispose()
   })
 })

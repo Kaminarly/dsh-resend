@@ -8,10 +8,15 @@
  * resolves fails the startup audit (`auditStartupEntries` in the host) and the
  * whole renderer refuses to boot. The negative control below (a fixture that
  * injects an absent service) proves this suite can see that state.
+ *
+ * Ticket 02 gives the row its one required service (`typert`, spec §3.1/§16.6),
+ * so the composition under test provides the real Typert registry — the row's
+ * inject edge is exactly what the PENDING negative control is about.
  */
 import { afterAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry'
 import { mkdir, rm, symlink } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -50,6 +55,9 @@ async function bootComposition(rows, baseUrl) {
   const logs = []
   ctx.logger.exporter({ levels: { default: 2 }, export: (message) => logs.push(message) })
   await ctx.plugin(Loader)
+  // The composition's own services, in the order a real profile provides them:
+  // the registry exists before the row that injects it.
+  await ctx.plugin(TypertRegistry)
   const loader = ctx.get('loader')
   expect(loader.internal, 'loader internals unavailable — profile-style bare specifier resolution cannot be exercised').toBeDefined()
   for (const row of rows) await loader.create(row)
@@ -84,12 +92,15 @@ describe('the Host plugin mounts as one Loader row from the shipped patch layer'
     expect(inactiveEntries(loader)).toEqual([])
   })
 
-  it('runs apply: the row announces itself on the host log', async () => {
+  it('runs apply: the row announces itself on the host log, naming what it registered', async () => {
     const dir = await profileLikeRoot()
-    const { logs } = await bootComposition(patchRows, dir)
+    const { logs, ctx } = await bootComposition(patchRows, dir)
 
     const announcement = logs.find((message) => message.name === pkg.name && message.type === 'info')
     expect(announcement, `no ${pkg.name} info log; captured: ${JSON.stringify(logs)}`).toBeDefined()
+    expect(announcement.args.join(' ')).toContain('resend/apply')
+    // The descriptor is in the registry the row injected, not merely in a log line.
+    expect(ctx.typert.local.get('resend/apply')).toBeDefined()
   })
 
   it('boots without an error or warning on the host log', async () => {
@@ -100,11 +111,24 @@ describe('the Host plugin mounts as one Loader row from the shipped patch layer'
     expect(noisy).toEqual([])
   })
 
-  it('the Host plugin reads no service, so no inject edge can park it', async () => {
+  it('injects exactly `typert`, the one service it reads (spec §3.1, §16.6)', async () => {
     const hostPlugin = await import('../lib/index.js')
-    expect(hostPlugin.inject).toEqual([])
+    expect(hostPlugin.inject).toEqual(['typert'])
     expect(hostPlugin.name).toBe(pkg.name)
     expect(typeof hostPlugin.apply).toBe('function')
+  })
+
+  it('a composition without the registry leaves the row PENDING — the inject edge is real', async () => {
+    const dir = await profileLikeRoot()
+    const ctx = new Context()
+    ctx.baseUrl = pathToFileURL(dir).href + '/'
+    await ctx.plugin(Loader)
+    const loader = ctx.get('loader')
+    for (const row of patchRows) await loader.create(row)
+
+    const entry = [...loader.entries()][0]
+    expect(await settle(entry, { timeoutMs: 300 })).toBe(FIBER_PENDING)
+    expect(inactiveEntries(loader).map((inactive) => inactive.options.id)).toEqual([pkg.name])
   })
 })
 

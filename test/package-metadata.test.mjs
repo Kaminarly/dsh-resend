@@ -137,8 +137,8 @@ describe('peerDependencies are the enforced compatibility mechanism (spec §3)',
 describe('no third-party contract package anywhere (spec §3)', () => {
   const CONTRACT_PACKAGES = ['dsh-log-contract']
 
-  it('declares no runtime dependencies in the skeleton', () => {
-    expect(pkg.dependencies ?? {}).toEqual({})
+  it('the only runtime dependency is the schema library the codecs are written in', () => {
+    expect(pkg.dependencies).toEqual({ zod: '^4.4.3' })
   })
 
   it('no dependency field names a contract package', () => {
@@ -148,6 +148,30 @@ describe('no third-party contract package anywhere (spec §3)', () => {
       }
     }
   })
+
+  it('every bare specifier the shipped ESM artifacts import is declared', () => {
+    // The Node-side artifacts are ESM bundles with their host packages left
+    // external; a profile installs `dependencies` and expects `peerDependencies`
+    // to come from the host, so an undeclared specifier is a load failure in the
+    // field and nowhere else.
+    const declared = new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})])
+    const imported = new Set()
+    for (const file of ['index.js', 'typert.host.js', 'typert.client.js']) {
+      const source = read(`lib/${file}`)
+      for (const match of source.matchAll(/(?:from|require\()\s*"([^"]+)"/g)) {
+        // `zod/mini` is the `zod` package; a subpath never changes which package must be declared.
+        const specifier = match[1]
+        imported.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
+      }
+    }
+    // Assert the scan itself found the imports, not only that whatever it found
+    // is declared: a quoting change would otherwise make this test scan nothing
+    // and pass.
+    expect([...imported].sort()).toEqual(['@deepseek-ai/cordis', 'zod'])
+    for (const packageName of imported) {
+      expect(declared, `the shipped ESM artifacts import undeclared package ${packageName}`).toContain(packageName)
+    }
+  })
 })
 
 describe('the three gates are wired into check, in order (ticket 01)', () => {
@@ -155,18 +179,17 @@ describe('the three gates are wired into check, in order (ticket 01)', () => {
     const parts = pkg.scripts.check.split('&&').map((part) => part.trim())
     expect(parts).toEqual([
       'node scripts/check-syntax.mjs',
-      'node scripts/check-typert.mjs --allow-empty-descriptors',
+      'node scripts/check-typert.mjs',
       'node scripts/check-host-contract.mjs',
     ])
   })
 
-  it('passes the empty-table concession explicitly, and documents that it is one', () => {
-    // The skeleton's descriptor table is empty, which gate 2 refuses by default.
-    // The concession must stay visible: named in the command, and explained in
-    // the README so ticket 02 knows exactly what to remove.
-    expect(pkg.scripts.check).toContain('--allow-empty-descriptors')
+  it('the skeleton\'s empty-table concession is gone: the table is filled and no flag exempts it', () => {
+    // Ticket 01 passed `--allow-empty-descriptors` because the table was empty,
+    // and the gate printed VACUOUS. Ticket 02 fills the table, so an empty table
+    // — or a leftover concession on the command line — is a failure now.
+    expect(pkg.scripts.check).not.toContain('--allow-empty-descriptors')
     expect(read('README.md')).toContain('--allow-empty-descriptors')
-    expect(read('README.md')).toContain('VACUOUS')
   })
 
   it('build and test scripts exist', () => {

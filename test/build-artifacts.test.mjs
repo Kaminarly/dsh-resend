@@ -87,7 +87,7 @@ describe('the export faces resolve in a real Node process', () => {
       const mod = await import('dsh-resend')
       console.log(JSON.stringify({ name: mod.name, apply: typeof mod.apply, inject: mod.inject }))
     `)
-    expect(JSON.parse(out)).toEqual({ name: 'dsh-resend', apply: 'function', inject: [] })
+    expect(JSON.parse(out)).toEqual({ name: 'dsh-resend', apply: 'function', inject: ['typert'] })
   })
 
   it('both descriptor faces resolve', () => {

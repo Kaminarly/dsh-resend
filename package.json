@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/check-syntax.mjs && node scripts/check-typert.mjs --allow-empty-descriptors && node scripts/check-host-contract.mjs",
+    "check": "node scripts/check-syntax.mjs && node scripts/check-typert.mjs && node scripts/check-host-contract.mjs",
     "probe": "node scripts/probe-profile.mjs",
     "test": "vitest run"
   },

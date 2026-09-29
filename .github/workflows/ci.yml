@@ -1,0 +1,39 @@
+# The four stages run in exactly this order, in one job, so any stage failing
+# fails the whole run:
+#
+#   check → build → git diff --exit-code -- lib/ → test
+#
+# The diff gate is what keeps the committed build artifacts honest, and it is
+# only meaningful *after* build: it compares the freshly rebuilt lib/ against
+# the committed one. Never reorder these steps.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Check (syntax, descriptors, host contract)
+        run: npm run check
+
+      - name: Build (rebuild lib/ from src/)
+        run: npm run build
+
+      - name: Build artifacts are honest (committed lib/ == fresh build)
+        run: git diff --exit-code -- lib/
+
+      - name: Test
+        run: npm test

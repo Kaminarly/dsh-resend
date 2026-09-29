@@ -2,21 +2,167 @@
  * The ONE descriptor table both faces of the bundle derive from (spec §6.1).
  *
  * Two hand-written faces exist because the Host plugin registers a contribution
- * and the Client plugin mounts one; they are generated from this single table so
- * they cannot drift. `scripts/check-typert.mjs` proves that by deep-comparing
+ * and the Client plugin mounts one; both are generated from this single table so
+ * they cannot drift, and `scripts/check-typert.mjs` proves that by deep-comparing
  * the two faces it imports from `lib/`.
  *
- * Skeleton (ticket 01): empty. Ticket 02 adds the unary `resend/apply`
- * invocation — `invocation: { kind: 'direct' }`, no `mode`, no `scope`, no
- * lookup parameter, no `cancellation` — together with its strict request and
- * result schemas.
+ * Hand-written, deliberately: there is no generator to pin, and the validation
+ * contract (§6.3) is small enough to satisfy exactly. `model` is omitted (it is
+ * the loader's reflection graph and nothing here reflects), and `sourceLocation`
+ * is omitted (it is generator provenance pointing at a file that is not
+ * shipped, and nothing validates it).
+ *
+ * Everything the descriptor needs is derived here — package, service, namespace,
+ * method, endpoint — so the service binding in `./resend.js` and the descriptor
+ * in this file cannot disagree about an identity.
+ *
+ * The schemas come from `zod/mini`, the same zod core with a functional spelling
+ * (`z.readonly(z.string())` instead of `z.string().readonly()`). The reason is
+ * the client bundle: both faces derive from this one table, so whatever builds
+ * these schemas is bundled into the browser script, and the classic entry would
+ * carry zod's entire surface — 758 KB of committed artifact instead of ~40 KB —
+ * for functions the client never calls (spec §16.5: the result codec has no
+ * `decode`, and the mount path only checks `mode: 'strict'`). Everything the
+ * host's boundary decode needs — strict objects, parse, safeParse — is core
+ * behavior, and the two entries share one core.
  */
+import * as z from 'zod/mini'
 
 /** Package name as it appears on the wire and in every key. */
 export const PACKAGE = 'dsh-resend'
 
+/** The Cordis service key that owns the method (`ctx.get(SERVICE)`). */
+export const SERVICE = 'resend'
+
+/** Remote namespace; the endpoint is `<NAMESPACE>/<METHOD>` (spec §6.2). */
+export const NAMESPACE = 'resend'
+
+/** The one unary method this plugin mounts. */
+export const METHOD = 'apply'
+
+/**
+ * The wire spelling of one endpoint, `<namespace>/<method>`.
+ *
+ * One home for the format: the descriptor's own endpoint, and the endpoints the
+ * host half reads back out of the registry at startup, are spelled by this.
+ * @param descriptor - anything carrying `namespace` and `method`.
+ */
+export const endpointOf = (descriptor) => `${descriptor.namespace}/${descriptor.method}`
+
+/** The endpoint the API Gateway dispatches on. */
+export const ENDPOINT = endpointOf({ namespace: NAMESPACE, method: METHOD })
+
+/** Invocation id: `<package>#<endpoint>`. */
+export const INVOCATION_ID = `${PACKAGE}#${ENDPOINT}`
+
+/**
+ * The closed business-error vocabulary (spec §4.5), in the spec's table order.
+ *
+ * Closed means closed: the result codec accepts exactly these `code` values, so
+ * a code invented downstream fails the descriptor gate instead of reaching a
+ * user who cannot act on it.
+ */
+export const ERROR_CODES = Object.freeze([
+  'bad-request',
+  'session-not-found',
+  'agent-unavailable',
+  'agent-busy',
+  'message-not-found',
+  'message-pending',
+  'target-shadowed',
+  'not-user-message',
+  'not-last-reply',
+  'blank-text',
+  'no-text',
+  'internal',
+])
+
 /** Schema records: `{ name, create }`, each `create` a schema factory. */
 export const schemas = []
 
+/**
+ * The `resend.apply` request, structurally (spec §4.1).
+ *
+ * Structural on purpose: every semantic refusal in §4.5 — an empty `sessionId`,
+ * a missing `text` for `op: 'edit'` — is a **business** outcome that must reach
+ * the caller as one of the twelve codes, so the codec must not pre-empt the
+ * business layer by rejecting them here. What the codec does enforce is the wire
+ * shape: JSON types only, no unknown fields (strictness is what makes a field a
+ * caller forgot loud instead of silently dropped).
+ */
+let requestSchema
+/** @returns the strict `ResendApplyRequest` wire schema. */
+export function resendApplyRequestSchema() {
+  return (requestSchema ??= z.strictObject({
+    sessionId: z.readonly(z.string()),
+    targetSeq: z.readonly(z.number()),
+    op: z.readonly(z.enum(['edit', 'regenerate'])),
+    text: z.optional(z.readonly(z.string())),
+  }))
+}
+
+/**
+ * The `resend.apply` result — `RemoteResult<T>` (spec §4.1, §4.5, §16.4).
+ *
+ * A tagged union: `ok: true` carries the business value, `ok: false` carries one
+ * variant per code in {@link ERROR_CODES}. Every field is readonly and every
+ * object is strict, so an unknown member is rejected rather than folded away.
+ *
+ * The client never runs this schema (spec §16.5: the generated result codec
+ * carries no `decode`, so the host's value passes through unchanged). It is
+ * written out in full anyway: it is what the Typert registry serves to tooling,
+ * and a wrong one is a documented lie about the wire.
+ */
+let resultSchema
+/** @returns the strict `ResendApplyResult` wire schema. */
+export function resendApplyResultSchema() {
+  return (resultSchema ??= z.union([
+    z.strictObject({
+      ok: z.readonly(z.literal(true)),
+      value: z.readonly(z.strictObject({
+        carrierSeq: z.readonly(z.number()),
+        shadowedSeqs: z.readonly(z.array(z.number())),
+        resendMessageId: z.readonly(z.string()),
+      })),
+    }),
+    z.strictObject({
+      ok: z.readonly(z.literal(false)),
+      error: z.readonly(z.union(ERROR_CODES.map((code) => z.strictObject({ code: z.readonly(z.literal(code)) })))),
+    }),
+  ]))
+}
+
 /** Invocation descriptors, shared verbatim by both faces. */
-export const descriptors = []
+export const descriptors = [
+  {
+    id: INVOCATION_ID,
+    service: SERVICE,
+    namespace: NAMESPACE,
+    method: METHOD,
+    // Unary: `invocation.kind` is `direct`, and `mode`, `scope`, `cancellation`
+    // and lookup parameters are all omitted — the registry allows `mode` only as
+    // `'stream'`, so a unary method omits it entirely (spec §6.3 rule 6).
+    invocation: { kind: 'direct' },
+    parameters: [
+      {
+        name: 'request',
+        wire: 'request',
+        source: 'json',
+        codec: {
+          mode: 'strict',
+          // Nothing verifies this string beyond non-emptiness (this plugin has no
+          // lookup or Context provider). It is still the only human-readable trace
+          // when a strict definition and its provider disagree, so it names the
+          // type this schema actually is.
+          typeSymbol: `${PACKAGE}/types#ResendApplyRequest`,
+          create: resendApplyRequestSchema,
+        },
+      },
+    ],
+    result: {
+      mode: 'strict',
+      typeSymbol: `${PACKAGE}/types#ResendApplyResult`,
+      create: resendApplyResultSchema,
+    },
+  },
+]

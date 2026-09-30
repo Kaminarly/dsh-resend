@@ -27,6 +27,7 @@
  * behavior, and the two entries share one core.
  */
 import * as z from 'zod/mini'
+import { ERROR_CODES } from './error-codes.js'
 
 /** Package name as it appears on the wire and in every key. */
 export const PACKAGE = 'dsh-resend'
@@ -56,26 +57,12 @@ export const ENDPOINT = endpointOf({ namespace: NAMESPACE, method: METHOD })
 export const INVOCATION_ID = `${PACKAGE}#${ENDPOINT}`
 
 /**
- * The closed business-error vocabulary (spec §4.5), in the spec's table order.
- *
- * Closed means closed: the result codec accepts exactly these `code` values, so
- * a code invented downstream fails the descriptor gate instead of reaching a
- * user who cannot act on it.
+ * The closed business-error vocabulary (spec §4.5), re-exported from its own
+ * module so this table stays the one place the WIRE contract is derived from:
+ * the result codec below turns it into a discriminated union, and every
+ * producer of a code checks against the same list.
  */
-export const ERROR_CODES = Object.freeze([
-  'bad-request',
-  'session-not-found',
-  'agent-unavailable',
-  'agent-busy',
-  'message-not-found',
-  'message-pending',
-  'target-shadowed',
-  'not-user-message',
-  'not-last-reply',
-  'blank-text',
-  'no-text',
-  'internal',
-])
+export { ERROR_CODES }
 
 /** Schema records: `{ name, create }`, each `create` a schema factory. */
 export const schemas = []

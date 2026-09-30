@@ -13,14 +13,14 @@
  * seen as strict can never fall back to the reflection path) from ever firing
  * while calls can still arrive.
  */
-import { ResendService } from './resend.js'
 import { ENDPOINT, endpointOf, SERVICE } from './typert.js'
+import { ResendService } from './resend.js'
 import { TYPERT } from './typert.host.js'
 
 export const name = 'dsh-resend'
 
 /**
- * The services this half reads.
+ * The services this half reads (spec §3.1).
  *
  * `typert` is required, not optional: Cordis refuses **any** service property
  * read on a fiber that does not inject that service (`cannot get property
@@ -28,14 +28,27 @@ export const name = 'dsh-resend'
  * (spec §3.1, §16.6 — where the empty-`inject` probe that "proved" the registry
  * absent is recorded as a trap, not evidence).
  *
- * The operation tickets add `sessions`, `agents`, `sessionQuery`,
- * `sessionPersistence` and `tokenMeter` as they are first read. Anything
- * optional and uncertain belongs in a child fiber (`ctx.inject([...], …)`),
- * whose absence disables one feature instead of leaving this fiber — and with
- * it the whole renderer — permanently PENDING.
+ * The other four are what the operation reads: the live session, the agent
+ * whose idle state is a precondition, and the two log routes §4.2 builds on
+ * (`sessionQuery` for the covering read, `sessionPersistence` for
+ * `fileMaxSeq`). §3.1 puts them here rather than in a child fiber because they
+ * certainly exist in this composition; a service that never resolves would
+ * leave this row permanently PENDING, which fails `assertEntriesActive()` and
+ * the whole renderer will not boot. `tokenMeter` joins this list in ticket 04,
+ * where the write first reads it.
  */
-export const inject = ['typert']
+export const inject = ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'typert']
 
+/**
+ * Activate the Host half: create the service the Gateway dispatches to, register
+ * the descriptor table, and report what the registry actually committed.
+ *
+ * The registration is owned by this row's fiber — `ctx.typert.register()`'s
+ * effect disposer is the only thing that removes it — which is what keeps the
+ * Gateway's "seen strict, then withdrawn" latch from ever firing while calls can
+ * still arrive (spec §6.5).
+ * @param ctx - the fiber's context, which provides the services in {@link inject}.
+ */
 export function apply(ctx) {
   // The receiver exists before the descriptor that names it is committed: the
   // registry emits its change synchronously inside `register()`, and a listener
@@ -53,6 +66,7 @@ export function apply(ctx) {
 
   ctx.root.logger?.('dsh-resend')?.info(
     `dsh-resend host half loaded — Remote endpoints registered: ${endpoints.join(', ') || 'none'}. ` +
-      `Operation semantics are not implemented in this build: every ${ENDPOINT} call refuses with "internal".`,
+      `${ENDPOINT} resolves its target, its range and its resend text from a covering log read; this build ` +
+      `stops at the write boundary, so a fully resolved plan refuses with "internal" until ticket 04 lands the pair.`,
   )
 }

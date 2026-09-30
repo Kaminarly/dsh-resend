@@ -28,16 +28,20 @@ export const name = 'dsh-resend'
  * (spec §3.1, §16.6 — where the empty-`inject` probe that "proved" the registry
  * absent is recorded as a trap, not evidence).
  *
- * The other four are what the operation reads: the live session, the agent
- * whose idle state is a precondition, and the two log routes §4.2 builds on
+ * The other five are what the operation reads: the live session, the agent
+ * whose idle state is a precondition, the two log routes §4.2 builds on
  * (`sessionQuery` for the covering read, `sessionPersistence` for
- * `fileMaxSeq`). §3.1 puts them here rather than in a child fiber because they
- * certainly exist in this composition; a service that never resolves would
- * leave this row permanently PENDING, which fails `assertEntriesActive()` and
- * the whole renderer will not boot. `tokenMeter` joins this list in ticket 04,
- * where the write first reads it.
+ * `fileMaxSeq`), and `tokenMeter` — the write's own dependency (§5.3). §3.1 puts
+ * them here rather than in a child fiber because they certainly exist in this
+ * composition; a service that never resolves would leave this row permanently
+ * PENDING, which fails `assertEntriesActive()` and the whole renderer will not
+ * boot. For the meter that boot-level failure is the point: the audit claim's
+ * price must be the OFFICIAL one, and the write is refused with `internal`
+ * rather than substituting a node count when the estimator is missing (a
+ * composition that lacks the whole service fails the boot audit loudly instead
+ * of silently degrading a number the user cannot see).
  */
-export const inject = ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'typert']
+export const inject = ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'tokenMeter', 'typert']
 
 /**
  * Activate the Host half: create the service the Gateway dispatches to, register
@@ -66,7 +70,8 @@ export function apply(ctx) {
 
   ctx.root.logger?.('dsh-resend')?.info(
     `dsh-resend host half loaded — Remote endpoints registered: ${endpoints.join(', ') || 'none'}. ` +
-      `${ENDPOINT} resolves its target, its range and its resend text from a covering log read; this build ` +
-      `stops at the write boundary, so a fully resolved plan refuses with "internal" until ticket 04 lands the pair.`,
+      `${ENDPOINT} resolves its target, its range and its resend text from a covering log read, then writes the rewind as one ` +
+      `pair — the audit claim (compaction/prune) and its carrier (user/message) — validated together before either append and ` +
+      `flushed once. The resend itself is ticket 05.`,
   )
 }

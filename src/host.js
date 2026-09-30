@@ -2,14 +2,20 @@
  * Host access, in one place: how this plugin resolves a host service and how it
  * renders a thrown value into a log-safe line.
  *
- * Small on purpose. The host half reads four services, but every read goes
+ * Small on purpose. The host half reads six services — the five READ-seams it
+ * injects (`sessions`, `agents`, `sessionQuery`, `sessionPersistence`,
+ * `tokenMeter`) and the optional, client-provided `locale` — but every read goes
  * through the same accessor, and the reason it is an accessor rather than a
  * property read is a measured host fact: Cordis refuses ANY service property
  * read on a fiber that does not inject that service (`cannot get property
  * "<name>" without inject`), so `ctx.get(name)` — the documented inject-free
  * accessor — is the honest presence test (spec §3.1, §16.6). The property read
- * behind it is legal because this plugin declares these services in its `inject`
- * list, and it is the idiom the spec itself uses for `tokenMeter` (§5.3).
+ * behind it is legal exactly for the services this plugin declares in its
+ * `inject` list, and it is the idiom the spec itself uses for `tokenMeter`
+ * (§5.3); a service this plugin does NOT inject (the locale) is read through
+ * `ctx.get` alone. The sixth injected service, `typert`, is not a data seam of
+ * this kind at all: it is used through its own registration API (register the
+ * descriptor, then read the registration back from the registry).
  */
 
 /**

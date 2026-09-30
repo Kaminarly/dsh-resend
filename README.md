@@ -4,12 +4,25 @@ Edit-and-resend and regenerate for DeepSeek Harness conversations: reopen a sent
 user message and send the edit again, or produce an assistant reply again from
 the same prompt.
 
-**Status: the Remote contract is live.** The package installs and loads — the
-Host plugin registers the Typert descriptor table and creates the `resend`
-service, the Client plugin mounts the same contribution with
-`ctx.remote.$mount` — so `resend.apply` is a real, strictly-typed Remote call
-end to end. Its operation semantics are not implemented yet: every call refuses
-with the `internal` code until the resolution, rewind and resend tickets land.
+**Status: the contract is live and the operation resolves; the write is next.**
+The package installs and loads — the Host plugin registers the Typert descriptor
+table and creates the `resend` service, the Client plugin mounts the same
+contribution with `ctx.remote.$mount` — so `resend.apply` is a real,
+strictly-typed Remote call end to end, and **every refusal path is finished
+behaviour**: for any input it answers with the correct one of the twelve codes —
+an empty or unknown session, a missing or streaming agent, a target that never
+existed, one that is only pending, one that was already rewound, the wrong kind
+of message, a blank edit, an image-only prompt. It reads the session log
+through `sessionQuery` (and `sessionPersistence` for `fileMaxSeq`) and **writes
+nothing**.
+
+The range and the resend text are resolved too — from one covering log read,
+folded with the official `foldSurface`, and asserted by the suite — but nothing
+on the wire reports them yet: a request that resolves completely stops at the
+write boundary and refuses with `internal` until the rewind and resend tickets
+land. (The host log says so, in those words, on each such call.) The success
+path is the next ticket's, and the result code cannot yet say "resolved but
+unwritable" — the closed vocabulary has no code for it.
 
 ## Targeted upstream
 

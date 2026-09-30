@@ -31,40 +31,9 @@
  */
 import { foldSurface, isAppendSurfaceEvent } from '@deepseek-ai/dsh-session'
 import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
-import { assertCode } from './error-codes.js'
+import { refuse } from './error-codes.js'
 import { asArray, describeError, logWarning } from './host.js'
-import { eventAtSeq, readCoveringLog, readFileMaxSeq } from './log-read.js'
-
-/**
- * How one covering-read refusal is reported (spec §4.5).
- *
- * `not-persisted` is the "not yet written / the file could not be read" state,
- * and it maps to `message-pending` — the retryable bucket, and the same
- * mapping the reference implementation made (prior art §F.5). `replay-failed`
- * gets `internal`: the closed vocabulary has no code of its own for it, and
- * the one thing it must never become is `target-shadowed`.
- */
-const COVERING_REFUSALS = Object.freeze({
-  'not-persisted': 'message-pending',
-  'replay-failed': 'internal',
-  'session-not-found': 'session-not-found',
-  internal: 'internal',
-})
-
-/**
- * A business refusal — this module's own result shape, not the wire envelope.
- *
- * The envelope is `failure()` in `./resend.js`, built from this code; the
- * difference is that this one carries an optional diagnostic for the host log,
- * and there is no envelope to freeze yet.
- * @param code - one of `ERROR_CODES`.
- * @param detail - an optional diagnostic for the host log.
- * @returns `{ ok: false, error: { code } }`, or the same with `detail`.
- */
-function refuse(code, detail) {
-  assertCode(code)
-  return { ok: false, error: detail === undefined ? { code } : { code, detail } }
-}
+import { coveringRefusalCode, eventAtSeq, readCoveringLog, readFileMaxSeq } from './log-read.js'
 
 /**
  * The code for a target the covering log does not hold (spec §4.5).
@@ -192,7 +161,7 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
 
   const covering = await readCoveringLog(ctx, sessionId)
   if (covering.status === 'refused') {
-    return refuse(COVERING_REFUSALS[covering.reason] ?? 'internal', covering.detail)
+    return refuse(coveringRefusalCode(covering.reason), covering.detail)
   }
   const log = covering.log
 

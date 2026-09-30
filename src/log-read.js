@@ -43,6 +43,39 @@
 import { asArray, describeError, hostService } from './host.js'
 
 /**
+ * How one covering-read refusal becomes a business code (spec §4.5).
+ *
+ * The refusal vocabulary here is this route's own; the business vocabulary is
+ * the closed one on the wire. `not-persisted` is the "not yet written / the file
+ * could not be read" state and maps to `message-pending`, the retryable bucket.
+ * `replay-failed` gets `internal`: the closed vocabulary has no code of its own
+ * for a log that will not replay, and the one thing it must never become is
+ * `target-shadowed` — a failed internal replay dressed as "history is
+ * read-only" is a lie the user cannot act on.
+ *
+ * Both readers of the covering log (resolution and the write) map a refusal
+ * through this one table, so a route that starts refusing differently cannot be
+ * classified two ways.
+ */
+const REFUSAL_CODES = Object.freeze({
+  'not-persisted': 'message-pending',
+  'replay-failed': 'internal',
+  'session-not-found': 'session-not-found',
+  internal: 'internal',
+})
+
+/**
+ * The business code for one covering-read refusal.
+ * @param reason - a reason from {@link readCoveringLog}'s refusal branch.
+ * @returns one of spec §4.5's codes; an unrecognized reason is `internal`,
+ *   because an unexpected fault has its own bucket and may never masquerade as
+ *   a business conclusion.
+ */
+export function coveringRefusalCode(reason) {
+  return REFUSAL_CODES[reason] ?? 'internal'
+}
+
+/**
  * The last seq an event list covers, or `undefined` when it covers none.
  *
  * The maximum is taken rather than the last element's own seq because a read is

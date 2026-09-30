@@ -28,7 +28,7 @@ export const ERROR_CODES = Object.freeze([
 /**
  * Refuse a code outside the vocabulary at its producer.
  *
- * Two shapes carry a code out of this plugin — the resolver's own refusal and the
+ * Two shapes carry a code out of this plugin — the internal refusal below and the
  * frozen wire envelope `failure()` builds — and both must refuse a typo in the
  * same words. Nothing decodes a result at runtime (spec §16.5), so this is the
  * only place such a typo can be caught.
@@ -39,4 +39,22 @@ export function assertCode(code) {
   if (!ERROR_CODES.includes(code)) {
     throw new TypeError(`dsh-resend: ${JSON.stringify(code)} is not one of the ${ERROR_CODES.length} result codes (spec §4.5)`)
   }
+}
+
+/**
+ * One business refusal, in the shape every internal stage of this plugin
+ * returns (spec §4.5).
+ *
+ * Not the wire envelope: `apply` freezes a code into `RemoteResult` at the
+ * boundary, and the optional `detail` here is a diagnostic for the host log
+ * that must not travel to the client. Two stages refuse — resolution and the
+ * write — and they share this one constructor so a code cannot enter the
+ * vocabulary through a second, unvalidated path.
+ * @param code - one of `ERROR_CODES`.
+ * @param detail - an optional diagnostic for the host log.
+ * @returns `{ ok: false, error: { code } }`, or the same with `detail`.
+ */
+export function refuse(code, detail) {
+  assertCode(code)
+  return { ok: false, error: detail === undefined ? { code } : { code, detail } }
 }

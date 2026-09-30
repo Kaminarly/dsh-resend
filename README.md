@@ -29,8 +29,8 @@ queued to the agent — is the next ticket's.
 
 | Target | Version |
 |---|---|
-| DSH Desktop | `2.0.16` |
-| `@deepseek-ai/dsh-*` | `0.2.0-rc.1` |
+| DSH Desktop | `2.0.17` |
+| `@deepseek-ai/dsh-*` | `0.2.0-rc.2` |
 | `@deepseek-ai/cordis` | `4.0.4` |
 
 Compatibility is decided by the **host surface**, not by semver alone: the
@@ -39,7 +39,10 @@ fails when one of the members it currently asserts is missing or has changed
 shape. The `peerDependencies` ranges in `package.json` are the enforced
 mechanism DSH evaluates (with `includePrerelease`), and they are bounded; a peer
 range the running runtime does not satisfy is reported by DSH as
-`incompatible-version`.
+`incompatible-version`. The table above is the generation this package was
+**verified** against (and the one its dev-dependencies are pinned to); the peer
+ranges are deliberately wider floors, because a range that excludes a host DSH
+still runs makes the Loader skip the bundle silently.
 
 ## Layout
 

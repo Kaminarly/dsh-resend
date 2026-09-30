@@ -169,15 +169,36 @@ const LEGACY_EVENT_VIEW_READ = /\.\s*events\b|\{\s*events\b/
 
 /**
  * §12 exempts *the log-reading module* from this invariant: that one module is
- * allowed to reach for the legacy view. The list is empty because the module
- * does not exist yet — the seam is here so ticket 03 adds its path here instead
- * of weakening the scan for the whole tree.
+ * allowed to reach for the host's raw event-list member, because the covering
+ * log has to be read through the host's own API before anything else in the
+ * plugin may look at it.
+ *
+ * The exemption is DERIVED, not listed, so it cannot be widened by editing a
+ * list here. A file is the log reader when it is `LOG_READER_SOURCE`, or when it
+ * is a generated artifact whose own `GENERATED FILE` banner names that source —
+ * and the banner is not something a hand edit can add to the shipped tree
+ * without failing `git diff --exit-code -- lib/`, which is why `lib/log-read.js`
+ * is emitted as its own artifact and kept external in `lib/index.js`
+ * (`scripts/build.mjs`). The exempt source must exist in each scanned directory:
+ * a stale exemption is drift, not a pass (§12's own rule).
  *
  * The pattern over-matches on purpose (§12: a false red is the safe direction):
  * it catches any `.events` member read and any `{ events }` destructuring, not
  * only reads through an identifier that happens to contain "session".
  */
-const LEGACY_READ_EXEMPT = []
+const LOG_READER_SOURCE = 'src/log-read.js'
+const GENERATED_BANNER = /GENERATED FILE[^\n]*built from ([^\s]+) by scripts\/build\.mjs/
+
+/**
+ * Whether one scanned file is the log-reading module.
+ * @param relative - the file's path relative to the plugin root.
+ * @param source - the file's text.
+ * @returns true when the file is the log-reader source, or an artifact built from it.
+ */
+function isLogReader(relative, source) {
+  if (relative === LOG_READER_SOURCE) return true
+  return source.slice(0, 400).match(GENERATED_BANNER)?.[1] === LOG_READER_SOURCE
+}
 
 let scannedFiles = 0
 
@@ -186,17 +207,28 @@ for (const dir of ['src', 'lib']) {
     fail(`plugin tree missing: ${dir}/ under ${relativePath(rootDir, pluginRoot) || '.'} — the legacy-read scan has nothing to scan, which is drift rather than a pass`)
     continue
   }
-  for (const file of walkJavaScript(path.join(pluginRoot, dir))) {
+  const files = walkJavaScript(path.join(pluginRoot, dir))
+  let logReaders = 0
+  for (const file of files) {
     scannedFiles += 1
     const relative = relativePath(pluginRoot, file)
-    if (LEGACY_READ_EXEMPT.includes(relative)) continue
-    readFileSync(file, 'utf8')
-      .split('\n')
-      .forEach((line, index) => {
-        if (LEGACY_EVENT_VIEW_READ.test(line)) {
-          fail(`plugin-side legacy read ${relative}:${index + 1} — reads a legacy event-view member; only ${LEGACY_READ_EXEMPT.join(', ') || 'the log-reading module'} may, and it is not this file`)
-        }
-      })
+    const source = readFileSync(file, 'utf8')
+    if (isLogReader(relative, source)) {
+      logReaders += 1
+      continue
+    }
+    source.split('\n').forEach((line, index) => {
+      if (LEGACY_EVENT_VIEW_READ.test(line)) {
+        fail(
+          `plugin-side legacy read ${relative}:${index + 1} — reads a legacy event-view member; only the log-reading module ${LOG_READER_SOURCE} may, and it is not this file`,
+        )
+      }
+    })
+  }
+  if (logReaders !== 1) {
+    fail(
+      `${dir}/ holds ${logReaders} log-reading module(s) — the exemption is for exactly the one module built from ${LOG_READER_SOURCE}, and a missing one is drift rather than a pass`,
+    )
   }
 }
 

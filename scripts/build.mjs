@@ -52,9 +52,28 @@ const clientFooter = `
  * The descriptor *client* face is one of them: it is an ES module the host
  * runtime loads (`exports["./typert-client"]`), not browser code — the name
  * says which half mounts it, not which runtime executes it.
+ *
+ * `host.js`, `log-read.js` and `resolve.js` are emitted as their own artifacts,
+ * and kept EXTERNAL in the others, for reasons that are not packaging taste:
+ *
+ *  - `log-read.js` is the one module allowed to read the host's raw event list,
+ *    and `scripts/check-host-contract.mjs` enforces that by exempting exactly
+ *    that path (spec §12). Inlining it into `lib/index.js` would exempt the
+ *    whole host half instead, turning a scoped invariant into a permanent hole.
+ *  - `host.js` and `resolve.js` are separate concerns with separate readers: the
+ *    host-access utilities are shared by every reader, and the resolver is the
+ *    seam the suite drives and the write (ticket 04) consumes, so neither
+ *    belongs inside the plugin's entry face. Inlining `host.js` would also ship
+ *    the same utilities inside two artifacts.
+ *
+ * All three are internal siblings, not export faces, so they are deliberately
+ * absent from `exports` in package.json.
  */
 const ESM_ENTRIES = [
-  { entry: 'src/index.js', out: 'index.js' },
+  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './resolve.js'] },
+  { entry: 'src/host.js', out: 'host.js' },
+  { entry: 'src/log-read.js', out: 'log-read.js', external: ['./host.js'] },
+  { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js'] },
   { entry: 'src/typert.host.js', out: 'typert.host.js' },
   { entry: 'src/typert.client.js', out: 'typert.client.js' },
 ]
@@ -76,7 +95,7 @@ await build({
   footer: { js: clientFooter },
 })
 
-for (const { entry, out } of ESM_ENTRIES) {
+for (const { entry, out, external } of ESM_ENTRIES) {
   await build({
     entryPoints: [path.join(rootDir, entry)],
     outfile: path.join(outDir, out),
@@ -86,6 +105,7 @@ for (const { entry, out } of ESM_ENTRIES) {
     platform: 'node',
     target: 'node22',
     packages: 'external',
+    ...(external === undefined ? {} : { external }),
     legalComments: 'none',
     banner: { js: generatedBanner(entry) },
   })

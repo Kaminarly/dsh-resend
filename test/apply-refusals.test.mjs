@@ -214,21 +214,23 @@ describe('a covering-read refusal keeps its own meaning through `apply` (§4.5)'
   })
 })
 
-describe('a resolved plan stops at the write boundary (ticket 03)', () => {
-  it('resolves, then refuses with `internal` rather than fabricating a success envelope', async () => {
-    // A request this build can resolve completely: it is the second round's
-    // prompt, on the surface, edited to non-blank text. What does NOT exist yet
-    // is the write — §5.1–§5.4 are ticket 04's — so the honest answer is the
-    // vocabulary's one bucket for "this build cannot serve it". A success
-    // envelope here would name a `carrierSeq` that was never minted.
+describe('a resolved plan is written, and the write is the only thing that changes the log (ticket 04)', () => {
+  it('lands the pair and answers the success envelope rather than refusing over a written surface', async () => {
+    // A request this build serves completely: it is the second round's prompt, on
+    // the surface, edited to non-blank text. The rewind is written — audit claim
+    // and carrier, adjacent, flushed once (§5.2) — and the envelope names the
+    // carrier the host minted. Reporting `internal` here would report failure
+    // over a surface the plugin had already changed (§9.4).
     const { envelope, host, session } = await apply(undefined, undefined, { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'edited' })
 
-    expect(envelope).toEqual({ ok: false, error: { code: 'internal' } })
-    expect(session.seq).toBe(4)
-    expect(auditCount(session)).toBe(0)
-    expect(host.host.calls.flushes).toBe(0)
-    // The write is where the resend will come from (ticket 05); nothing may
-    // reach the agent before the rewind has landed.
+    expect(envelope.ok).toBe(true)
+    expect(envelope.value.carrierSeq).toBe(5)
+    expect(envelope.value.shadowedSeqs).toEqual([2, 3])
+    expect(session.seq).toBe(6)
+    expect(auditCount(session)).toBe(1)
+    expect(host.host.calls.flushes).toBe(1)
+    // The resend is ticket 05's: nothing may reach the agent before the rewind
+    // has landed, and nothing does.
     expect(host.host.calls.followups).toBe(0)
   })
 
@@ -241,17 +243,20 @@ describe('a resolved plan stops at the write boundary (ticket 03)', () => {
     expect(auditCount(session)).toBe(0)
   })
 
-  it('resolves a regenerate the same way, from the same covering read', async () => {
+  it('resolves a regenerate the same way, from the same covering read, and writes it', async () => {
     const { envelope, session } = await apply(undefined, undefined, { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' })
 
-    expect(envelope).toEqual({ ok: false, error: { code: 'internal' } })
-    expect(session.seq).toBe(4)
+    expect(envelope.ok).toBe(true)
+    expect(envelope.value.shadowedSeqs).toEqual([2, 3])
+    expect(session.seq).toBe(6)
   })
 
   it('checks the agent before the target: a busy agent refuses even a resolvable edit (§4.4)', async () => {
-    const { envelope } = await apply({ agent: { status: 'running' } }, undefined, { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'edited' })
+    const { envelope, session } = await apply({ agent: { status: 'running' } }, undefined, { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'edited' })
 
     expect(envelope.error.code).toBe('agent-busy')
+    expect(session.seq).toBe(4)
+    expect(auditCount(session)).toBe(0)
   })
 
   it('never takes write ownership of the stored log, and only opens it when the facts are needed (spec §4.2)', async () => {

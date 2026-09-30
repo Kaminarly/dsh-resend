@@ -4,7 +4,7 @@ Edit-and-resend and regenerate for DeepSeek Harness conversations: reopen a sent
 user message and send the edit again, or produce an assistant reply again from
 the same prompt.
 
-**Status: the contract is live and the operation resolves; the write is next.**
+**Status: the contract is live, the operation resolves, and the rewind is written.**
 The package installs and loads — the Host plugin registers the Typert descriptor
 table and creates the `resend` service, the Client plugin mounts the same
 contribution with `ctx.remote.$mount` — so `resend.apply` is a real,
@@ -12,17 +12,18 @@ strictly-typed Remote call end to end, and **every refusal path is finished
 behaviour**: for any input it answers with the correct one of the twelve codes —
 an empty or unknown session, a missing or streaming agent, a target that never
 existed, one that is only pending, one that was already rewound, the wrong kind
-of message, a blank edit, an image-only prompt. It reads the session log
-through `sessionQuery` (and `sessionPersistence` for `fileMaxSeq`) and **writes
-nothing**.
+of message, a blank edit, an image-only prompt.
 
-The range and the resend text are resolved too — from one covering log read,
-folded with the official `foldSurface`, and asserted by the suite — but nothing
-on the wire reports them yet: a request that resolves completely stops at the
-write boundary and refuses with `internal` until the rewind and resend tickets
-land. (The host log says so, in those words, on each such call.) The success
-path is the next ticket's, and the result code cannot yet say "resolved but
-unwritable" — the closed vocabulary has no code for it.
+The range and the resend text are resolved from one covering log read, folded
+with the official `foldSurface` — and a request that resolves is **written**: the
+rewind is one pair of events, the audit claim (`compaction/prune`) and its
+carrier (a `user/message` carrying `surfaceOp` + `sourceEventSeqs`), validated
+together through the host's own replay *before* the first append, appended
+adjacently, and flushed exactly once. The carrier renders nothing; the replaced
+range leaves the model surface and stays in the transcript; and the audit claim
+carries the **official** shadow price, so the host's own token fold subtracts the
+range instead of silently overestimating it. The resend itself — the message
+queued to the agent — is the next ticket's.
 
 ## Targeted upstream
 
@@ -114,6 +115,21 @@ never imports it (the client half reaches it through `ctx.remote`, and
 `dsh.client.inject` only orders its arrival). It is pinned so the descriptor
 specs drive the real consumer — mount, dispatch, envelope — in CI, rather than
 only on a machine with an installed app.
+
+`@deepseek-ai/dsh-util-crypto` is a peer **and** a devDependency: the shipped
+host half imports its `randomUUID` to mint the marker ids the carrier and the
+resend message are identified by, because the id is the only place a plugin can
+put marker identity (spec §5.4). It is the module the host's own packages mint
+messages with, and it is why this package never calls `crypto.randomUUID`
+directly — that Web API is missing outside a secure context, which the module's
+own documentation records.
+
+`@deepseek-ai/dsh-token-meter` is a devDependency only, and deliberately not a
+peer: the shipped code never imports it. It resolves the meter through
+`ctx.get('tokenMeter')` and takes the **official** estimator off the service
+(spec §5.3), so the audit claim's price is the number the host's own fold
+subtracts. The suite imports the same package's estimator to check that price
+independently, and a missing estimator makes the suite throw rather than skip.
 
 `node-addon-require-builtin` is a devDependency with no import anywhere in this
 package: it is cordis's optional peer, and its presence is what lets the Loader

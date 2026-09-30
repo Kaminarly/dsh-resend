@@ -53,8 +53,9 @@ const clientFooter = `
  * runtime loads (`exports["./typert-client"]`), not browser code — the name
  * says which half mounts it, not which runtime executes it.
  *
- * `host.js`, `log-read.js` and `resolve.js` are emitted as their own artifacts,
- * and kept EXTERNAL in the others, for reasons that are not packaging taste:
+ * `host.js`, `log-read.js`, `resolve.js`, `shape-probe.js` and `write.js` are
+ * emitted as their own artifacts, and kept EXTERNAL in the others, for reasons
+ * that are not packaging taste:
  *
  *  - `log-read.js` is the one module allowed to read the host's raw event list,
  *    and `scripts/check-host-contract.mjs` enforces that by exempting exactly
@@ -62,18 +63,34 @@ const clientFooter = `
  *    whole host half instead, turning a scoped invariant into a permanent hole.
  *  - `host.js` and `resolve.js` are separate concerns with separate readers: the
  *    host-access utilities are shared by every reader, and the resolver is the
- *    seam the suite drives and the write (ticket 04) consumes, so neither
- *    belongs inside the plugin's entry face. Inlining `host.js` would also ship
- *    the same utilities inside two artifacts.
+ *    seam the suite drives and the write consumes, so neither belongs inside the
+ *    plugin's entry face. Inlining `host.js` would also ship the same utilities
+ *    inside two artifacts.
+ *  - `shape-probe.js` is the one module that spells the `surfaceOp` endpoint key
+ *    names (spec §5.4, §13.1 #7), and the suite holds that to the source: the
+ *    artifact has to be its own file for the probe to be a seam rather than a
+ *    literal inlined wherever a write happens.
+ *  - `write.js` is the write itself — the pair, its pre-write validation, the
+ *    flush and the orphan discipline — and the seam the suite drives end to end.
  *
- * All three are internal siblings, not export faces, so they are deliberately
+ * All five are internal siblings, not export faces, so they are deliberately
  * absent from `exports` in package.json.
+ *
+ * The modules those two entry points pull in stay INLINED, and that is also on
+ * purpose: `token-price.js` and `trace-text.js` have exactly one reader each
+ * (the write and the service), and `session-lock.js` must be the SAME instance
+ * wherever it is reached — one lock per session, not one per artifact — which
+ * only holds while there is a single place it is bundled into. A module earns
+ * an artifact (and a test-visible seam) when a second reader appears, not
+ * before.
  */
 const ESM_ENTRIES = [
-  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './resolve.js'] },
+  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './resolve.js', './write.js'] },
   { entry: 'src/host.js', out: 'host.js' },
   { entry: 'src/log-read.js', out: 'log-read.js', external: ['./host.js'] },
   { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js'] },
+  { entry: 'src/shape-probe.js', out: 'shape-probe.js' },
+  { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './shape-probe.js'] },
   { entry: 'src/typert.host.js', out: 'typert.host.js' },
   { entry: 'src/typert.client.js', out: 'typert.client.js' },
 ]

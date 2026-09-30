@@ -22,12 +22,18 @@
  *    is modelled as its own state, so the caller's fallback is exercised
  *    instead of being papered over by a double that always answers.
  *
- * The doubles stand at the four service seams the operation reads
- * (`sessions`, `agents`, `sessionQuery`, `sessionPersistence`) and nowhere
- * else.
+ * The doubles stand at the five service seams the operation reads
+ * (`sessions`, `agents`, `sessionQuery`, `sessionPersistence`, `locale`) plus
+ * the two host services the WRITE reads for real: the `tokenMeter` (whose
+ * official estimator is the audit claim's price, spec §5.3) and the projection
+ * registry it registers with. Those two are the shipped implementations, not
+ * doubles — the shadow-price protocol is the thing the suite is checking, so a
+ * stand-in would only prove that a stand-in agrees with itself.
  */
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Session } from '@deepseek-ai/dsh-session'
+import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
+import { TokenMeter } from '@deepseek-ai/dsh-token-meter'
 
 /** The fixture's first round. */
 export const FIRST_PROMPT = 'first prompt'
@@ -114,6 +120,36 @@ export function appendRewindPair(session, plan, { id = 'dsh-resend-edit-fixture'
 }
 
 /**
+ * The standard fixture with the turn/step lifecycle a real agent loop writes
+ * around every assistant settlement.
+ *
+ * The measurement planner (`tokenMeter.measure`) requires a matching
+ * `step/start` before any `assistant/message` — it throws otherwise — so the
+ * cross-check spec §13.1 #4 asks for cannot run against
+ * {@link sessionFixture}. The surface is the same shape
+ * (`0 user · 3 assistant · 6 user · 9 assistant`); only log-only lifecycle
+ * events sit between them.
+ * @param sessionId - the session identity to create it under.
+ * @returns a real `Session` the measurement planner can fold.
+ */
+export function measuredFixture(sessionId = SESSION_ID) {
+  const session = Session.create(sessionId)
+  appendUser(session, { id: 'u1', text: FIRST_PROMPT })
+  session.append('turn/start', { turn: 1 })
+  session.append('step/start', { turn: 1, step: 1 })
+  appendReply(session, { id: 'a1', text: FIRST_REPLY, turn: 1, step: 1 })
+  session.append('step/end', { turn: 1, step: 1 })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  appendUser(session, { id: 'u2', text: SECOND_PROMPT })
+  session.append('turn/start', { turn: 2 })
+  session.append('step/start', { turn: 2, step: 1 })
+  appendReply(session, { id: 'a2', text: SECOND_REPLY, turn: 2, step: 1 })
+  session.append('step/end', { turn: 2, step: 1 })
+  session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+  return session
+}
+
+/**
  * A fixture already rewound once: the second round was shadowed by a carrier,
  * so the surface ends `[0, 1, 5]` with 2 and 3 gone (spliced in place, §16.7).
  * @param sessionId - the session identity.
@@ -183,6 +219,124 @@ export function auditCount(session) {
 }
 
 /**
+ * A session-shaped view of a real `Session` whose append boundary is
+ * intercepted.
+ *
+ * The real `Session` is still the one that mints seqs and enforces the append
+ * contract, so a case built on this view still passes on the host's own rules
+ * (spec §13.2 #17). What moves is only the boundary itself: the cases that are
+ * about what the write does when an append is refused, when another host writer
+ * lands between its two appends, or when what it hands over has to be recorded.
+ * @param session - the real fixture session.
+ * @param options - `{ append }`: `(real, call) => event`, where `call` is
+ *   `{ type, data, options }`. Omitted, every append goes straight through.
+ * @returns a session-shaped view (`id`, `seq`, `surface`, `eventAt`,
+ *   `snapshotEvents`, `append`) — `seq` and `surface` stay live.
+ */
+export function sessionView(session, { append } = {}) {
+  return {
+    get id() {
+      return session.id
+    },
+    get seq() {
+      return session.seq
+    },
+    get surface() {
+      return session.surface
+    },
+    append: (type, data, options) => (append === undefined ? session.append(type, data, options) : append(session, { type, data, options })),
+    eventAt: (seq) => session.eventAt(seq),
+    snapshotEvents: (...range) => session.snapshotEvents(...range),
+  }
+}
+
+/**
+ * A live session with a host writer racing the rewind (spec §13.1 #9).
+ *
+ * The plugin plans its pair from `session.seq` and validates it, and between
+ * that plan and the carrier append another host plugin can append a log-only
+ * event (a title, a checkpoint, a telemetry row — none of them the plugin's
+ * business). This wrapper reproduces exactly that: one extra event lands right
+ * after the audit claim, so the carrier is no longer adjacent to the claim that
+ * prices it.
+ *
+ * The real `Session` still does every append, so the pair still satisfies the
+ * host's own append contract — which is the point: the corruption this models is
+ * silent at the append boundary and only visible in the minted seqs.
+ * @param session - the real fixture session.
+ * @param options - `{ onType, raceType, raceData }`.
+ * @returns a session-shaped view whose appends carry the race.
+ */
+export function withRacingAppend(session, { onType = 'compaction/prune', raceType = 'session/title', raceData = { title: 'a racing host writer' } } = {}) {
+  return sessionView(session, {
+    append: (real, { type, data, options }) => {
+      const event = real.append(type, data, options)
+      if (type === onType) real.append(raceType, { ...raceData })
+      return event
+    },
+  })
+}
+
+/**
+ * A live session whose SECOND append is refused (spec §5.2 step 3, §11).
+ *
+ * The audit claim has already landed when this fires, and the log cannot be
+ * rolled back — so this is the case that owes the user a flush of what was
+ * written plus a diagnosable orphan, never a silent half-write.
+ * @param session - the real fixture session.
+ * @param options - `{ onType, message }`.
+ * @returns a session-shaped view that refuses one append type.
+ */
+export function withRefusingAppend(session, { onType = 'user/message', message = 'the host refused this event' } = {}) {
+  return sessionView(session, {
+    append: (real, { type, data, options }) => {
+      if (type === onType) throw new Error(message)
+      return real.append(type, data, options)
+    },
+  })
+}
+
+/**
+ * An agent whose turn OPENS after the precondition has already read it idle.
+ *
+ * Spec §4.4's rule 4 refuses a busy agent, and §9.2 has the user stop a
+ * streaming reply themselves. This double models the one case neither covers:
+ * the turn starts between that check and the write, so the write boundary has to
+ * notice it rather than appending into an open turn.
+ * @param options - `{ afterReads }`, how many `status` reads stay idle.
+ * @returns an agent-shaped record that opens a turn on the read after that.
+ */
+export function openingTurnAgent({ afterReads = 1 } = {}) {
+  const agent = {
+    reads: 0,
+    cancels: [],
+    idles: 0,
+    open: false,
+    opened: false,
+    get status() {
+      agent.reads += 1
+      // The turn opens exactly ONCE — that is what makes it a race rather than
+      // a streaming reply — and stays closed once it has been cancelled.
+      if (!agent.opened && agent.reads > afterReads) {
+        agent.opened = true
+        agent.open = true
+      }
+      return agent.open ? 'running' : 'idle'
+    },
+    cancel(cause) {
+      agent.cancels.push(cause)
+      agent.open = false
+    },
+    async whenIdle() {
+      agent.idles += 1
+      agent.open = false
+    },
+    followup() {},
+  }
+  return agent
+}
+
+/**
  * The mutable state every double in one composition reads.
  *
  * Mutate it between calls to move the host: a test can make the stored log lag,
@@ -205,9 +359,19 @@ export function hostState(options = {}) {
      *    what `sessionQuery.readSession` returns on this host (§16.1);
      *  - `{ omit: [seq] }` — a read with a hole, i.e. one that does NOT cover
      *    those seqs (the shape §4.2's rule is about);
+     *  - `{ copy: [at, from] }` — a read of the SAME LENGTH that holds the
+     *    event at `from` twice, so the seq at `at` is simply absent: the shape
+     *    an indexed lookup answers with a neighbour;
      *  - `{ error }` — a refusal carrying that typed code.
      */
     covering: options.covering ?? 'live',
+    /**
+     * The locale a composition's locale service reports (spec §10). The shipped
+     * Desktop provides it from its CLIENT half, which is why the write reads it
+     * defensively and defaults to English; `'fr'` models a locale this plugin
+     * has no text for.
+     */
+    locale: options.locale ?? 'en',
     /**
      * How route (1) behaves:
      *  - `'mirror'` (default) — the stored log matches the live one;
@@ -219,7 +383,20 @@ export function hostState(options = {}) {
      */
     stored: options.stored ?? 'mirror',
     /** What the doubles were asked to do, for assertions like "zero flushes". */
-    calls: { coveringReads: 0, storedOpens: 0, storedAccess: [], storedReads: 0, storedCloses: 0, flushes: 0, followups: 0 },
+    calls: {
+      coveringReads: 0,
+      storedOpens: 0,
+      storedAccess: [],
+      storedReads: 0,
+      storedCloses: 0,
+      flushes: 0,
+      followups: 0,
+      /** The session's own `seq` observed AT each flush (spec §13.1 #9). */
+      flushLengths: [],
+      /** Flushes in flight right now, and the high-water mark of that count. */
+      activeFlushes: 0,
+      maxActiveFlushes: 0,
+    },
   }
 
   // The default agent carries the one method the RESEND calls (ticket 05),
@@ -231,25 +408,31 @@ export function hostState(options = {}) {
 }
 
 /**
- * Plug the four operation services into a context.
+ * Plug the operation's service seams into a context.
  *
  * One place, because two compositions need them: the bare one a shipped module
  * is driven against directly, and the full one the Gateway dispatches through.
+ * The last two are the SHIPPED host plugins the write reads through — the
+ * projection registry and the token meter — so every case below runs the real
+ * shadow-price protocol rather than a stand-in that agrees with itself.
  * @param ctx - the context to register them in.
- * @param state - a {@link hostState} record shared by all four.
- * @returns a promise settling once all four are registered.
+ * @param state - a {@link hostState} record shared by all five doubles.
+ * @returns a promise settling once every service is registered.
  */
 export async function plugHostDoubles(ctx, state) {
-  const { Sessions, Agents, SessionQuery, SessionPersistence } = hostDoubles(state)
-  for (const service of [Sessions, Agents, SessionQuery, SessionPersistence]) await ctx.plugin(service)
+  const { Sessions, Agents, SessionQuery, SessionPersistence, Locale } = hostDoubles(state)
+  for (const service of [Sessions, Agents, SessionQuery, SessionPersistence, Locale]) await ctx.plugin(service)
+  await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(TokenMeter)
 }
 
 /**
- * A bare composition: the four operation services and nothing else.
+ * A bare composition: the operation's services and the two host services the
+ * write reads, and nothing else.
  *
- * This is what a shipped module is driven against directly — `lib/log-read.js`
- * is its own artifact and is imported as such — without loading the plugin half
- * or the Gateway.
+ * This is what a shipped module is driven against directly — `lib/write.js` is
+ * its own artifact and is imported as such — without loading the plugin half or
+ * the Gateway.
  * @param state - a {@link hostState} record (default: the standard fixture).
  * @returns `{ ctx, state }`.
  */
@@ -257,6 +440,17 @@ export async function hostContext(state = hostState()) {
   const ctx = new Context()
   await plugHostDoubles(ctx, state)
   return { ctx, state }
+}
+
+/**
+ * Capture the host log lines a composition writes, for diagnostics assertions.
+ * @param ctx - the context whose logger to read.
+ * @returns an array the logger appends `{ name, type, args }` records to.
+ */
+export function captureLogs(ctx) {
+  const logs = []
+  ctx.logger.exporter({ levels: { default: 2 }, export: (message) => logs.push(message) })
+  return logs
 }
 
 /** An error shaped like the host's own not-found refusal for a stored session. */
@@ -275,9 +469,9 @@ function queryError(code, message) {
 }
 
 /**
- * The four service classes one composition plugs in.
- * @param state - a {@link hostState} record, shared by all four.
- * @returns `{ Sessions, Agents, SessionQuery, SessionPersistence }`.
+ * The five services one composition plugs in.
+ * @param state - a {@link hostState} record, shared by all five.
+ * @returns `{ Sessions, Agents, SessionQuery, SessionPersistence, Locale }`.
  */
 export function hostDoubles(state) {
   /** The live session store: `get(id)`, and the flush counter the suite asserts on. */
@@ -291,8 +485,20 @@ export function hostDoubles(state) {
       return id === state.session.id ? state.session : undefined
     }
 
-    async flush() {
-      state.calls.flushes += 1
+    async flush(session) {
+      const calls = state.calls
+      calls.flushes += 1
+      calls.flushLengths.push(session?.seq)
+      calls.activeFlushes += 1
+      calls.maxActiveFlushes = Math.max(calls.maxActiveFlushes, calls.activeFlushes)
+      try {
+        // Yield, so an UNserialized second operation really can overlap here:
+        // this is what gives the per-session-lock case (spec §4.6) its teeth —
+        // deleting the lock makes `maxActiveFlushes` 2, not this test vacuous.
+        await new Promise((resolve) => setTimeout(resolve, 2))
+      } finally {
+        calls.activeFlushes -= 1
+      }
     }
   }
 
@@ -338,8 +544,18 @@ export function hostDoubles(state) {
       }
 
       const events = state.session.snapshotEvents()
-      const selected = covering !== 'live' && Array.isArray(covering.omit) ? events.filter((event) => !covering.omit.includes(event.seq)) : events
-      return { session: { id: state.session.id, surface: { nodes: [] } }, inheritedEventCount: 0, events: selected }
+      if (covering !== 'live' && Array.isArray(covering.omit)) {
+        return { session: { id: state.session.id, surface: { nodes: [] } }, inheritedEventCount: 0, events: events.filter((event) => !covering.omit.includes(event.seq)) }
+      }
+      if (covering !== 'live' && Array.isArray(covering.copy)) {
+        // The same LENGTH, the wrong event at one seq: what an indexed lookup
+        // that trusts its own arithmetic answers with.
+        const [at, from] = covering.copy
+        const copied = [...events]
+        copied[at] = copied[from]
+        return { session: { id: state.session.id, surface: { nodes: [] } }, inheritedEventCount: 0, events: copied }
+      }
+      return { session: { id: state.session.id, surface: { nodes: [] } }, inheritedEventCount: 0, events }
     }
   }
 
@@ -374,5 +590,23 @@ export function hostDoubles(state) {
     }
   }
 
-  return { Sessions, Agents, SessionQuery, SessionPersistence }
+  /**
+   * The locale service a composition provides (spec §10).
+   *
+   * The shipped Desktop provides it from the CLIENT half, and the write reads it
+   * through the inject-free `ctx.get('locale')` accessor because the host fiber
+   * does not inject it — so this service is what makes "the trace text follows
+   * the active locale" observable at all, and `state.locale` moves it.
+   */
+  class Locale extends Service {
+    constructor(ctx) {
+      super(ctx, 'locale')
+    }
+
+    getSnapshot() {
+      return { active: state.locale, locales: [{ id: state.locale }], revision: 0 }
+    }
+  }
+
+  return { Sessions, Agents, SessionQuery, SessionPersistence, Locale }
 }

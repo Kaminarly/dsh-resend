@@ -98,13 +98,14 @@ describe('the export faces resolve in a real Node process', () => {
       const mod = await import('dsh-resend')
       console.log(JSON.stringify({ name: mod.name, apply: typeof mod.apply, inject: mod.inject }))
     `)
-    // The operation reads the live session, the agent, and both log routes
-    // (spec §3.1), so a composition that lacks any of them leaves the row
-    // PENDING rather than half-serving requests.
+    // The operation reads the live session, the agent, both log routes and the
+    // token meter the audit claim's price comes from (spec §3.1, §5.3), so a
+    // composition that lacks any of them leaves the row PENDING rather than
+    // half-serving requests.
     expect(JSON.parse(out)).toEqual({
       name: 'dsh-resend',
       apply: 'function',
-      inject: ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'typert'],
+      inject: ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'tokenMeter', 'typert'],
     })
   })
 

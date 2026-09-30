@@ -180,12 +180,13 @@ describe('no third-party contract package anywhere (spec §3)', () => {
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-session-format-catalog',
+      '@deepseek-ai/dsh-util-crypto',
       'zod',
     ])
     for (const packageName of imported) {
       expect(declared, `the shipped ESM artifacts import undeclared package ${packageName}`).toContain(packageName)
     }
-    expect([...siblings].sort()).toEqual(['./host.js', './log-read.js', './resolve.js'])
+    expect([...siblings].sort()).toEqual(['./host.js', './log-read.js', './resolve.js', './shape-probe.js', './write.js'])
     for (const specifier of siblings) {
       expect(existsSync(new URL(`../lib/${specifier.slice(2)}`, import.meta.url)), `${specifier} does not ship beside the artifact that imports it`).toBe(true)
     }

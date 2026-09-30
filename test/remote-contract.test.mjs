@@ -168,10 +168,12 @@ describe('the Client half mounts the same contribution and calls through', () =>
 
     const carried = await clientCtx.remote.resend.apply(request)
     expect(carried.ok).toBe(true)
-    // The contract is what this ticket delivers, so the business envelope is this
-    // build's one honest outcome: a refusal. Ticket 03 replaces this assertion
-    // with the resolution it lands.
+    // The resolution this build lands for this request: the fixture session log
+    // ends at seq 3, so seq 4 is a message the host cannot show yet (spec §4.5).
+    // Ticket 02 flagged this assertion for ticket 03 to replace with the
+    // resolution it lands; what this spec is about is that the command reached
+    // the business method at all.
     expect(carried.value.ok).toBe(false)
-    expect(carried.value.error.code).toBe('internal')
+    expect(carried.value.error.code).toBe('message-pending')
   })
 })

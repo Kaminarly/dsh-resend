@@ -15,17 +15,12 @@ import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
-import { rootDir, tmpDir } from './helpers/dsh.mjs'
+import { libArtifacts, rootDir, tmpDir } from './helpers/dsh.mjs'
 
 const libDir = path.join(rootDir, 'lib')
 
-/** Every file a build must produce, and the source it is built from. */
-const ARTIFACTS = [
-  { file: 'index.js', source: 'src/index.js' },
-  { file: 'client.bundle.js', source: 'src/client.js' },
-  { file: 'typert.host.js', source: 'src/typert.host.js' },
-  { file: 'typert.client.js', source: 'src/typert.client.js' },
-]
+/** Every file a build must produce, and the source it is built from (one shared manifest). */
+const ARTIFACTS = libArtifacts
 
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 
@@ -43,9 +38,25 @@ function runNode(code) {
 }
 
 describe('the build produces the committed artifact set', () => {
-  it('emits exactly the four files the exports map promises', () => {
+  it('emits exactly the artifacts the build declares, and nothing else', () => {
     const built = readdirSync(libDir).sort()
     expect(built).toEqual(ARTIFACTS.map((artifact) => artifact.file).sort())
+  })
+
+  it('commits every artifact it emits — an untracked one is invisible to the lib/ diff gate', () => {
+    // `git diff --exit-code -- lib/` only compares TRACKED files: an artifact a
+    // build wrote but nobody added is not a diff, so CI's artifact-honesty gate
+    // and every readdir-based assertion above would both stay green while the
+    // shipped tree was missing a file `lib/index.js` imports. Git is the only
+    // witness for this, hence the one place this suite reads it.
+    const tracked = execFileSync('git', ['ls-files', 'lib'], { cwd: rootDir, encoding: 'utf8' })
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((file) => path.basename(file))
+      .sort()
+
+    expect(tracked).toEqual(ARTIFACTS.map((artifact) => artifact.file).sort())
   })
 
   it('every artifact carries the GENERATED FILE banner naming its source', () => {
@@ -87,7 +98,14 @@ describe('the export faces resolve in a real Node process', () => {
       const mod = await import('dsh-resend')
       console.log(JSON.stringify({ name: mod.name, apply: typeof mod.apply, inject: mod.inject }))
     `)
-    expect(JSON.parse(out)).toEqual({ name: 'dsh-resend', apply: 'function', inject: ['typert'] })
+    // The operation reads the live session, the agent, and both log routes
+    // (spec §3.1), so a composition that lacks any of them leaves the row
+    // PENDING rather than half-serving requests.
+    expect(JSON.parse(out)).toEqual({
+      name: 'dsh-resend',
+      apply: 'function',
+      inject: ['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'typert'],
+    })
   })
 
   it('both descriptor faces resolve', () => {

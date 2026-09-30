@@ -27,3 +27,33 @@ export const patchRows = (() => {
   const patches = yaml.load(readFileSync(path.join(rootDir, 'cordis.patch.yml'), 'utf8'))
   return patches.flatMap((patch) => patch.insert ?? [])
 })()
+
+/**
+ * Every artifact a build produces under `lib/`, and the source it is built from.
+ *
+ * This is the one manifest the artifact-reading suites share, because a new
+ * artifact otherwise forces the same list to be edited in four places in
+ * lockstep (and one of them silently keeps passing when it is not).
+ *
+ * `host.js`, `log-read.js` and `resolve.js` are internal siblings rather than
+ * export faces: `lib/index.js` imports `host.js` and `resolve.js`, `resolve.js`
+ * and `log-read.js` import `host.js`, and `scripts/check-host-contract.mjs`
+ * exempts exactly `log-read.js` from §12's legacy-event-view invariant (see
+ * `scripts/build.mjs`).
+ */
+export const libArtifacts = Object.freeze([
+  { file: 'client.bundle.js', source: 'src/client.js' },
+  { file: 'host.js', source: 'src/host.js' },
+  { file: 'index.js', source: 'src/index.js' },
+  { file: 'log-read.js', source: 'src/log-read.js' },
+  { file: 'resolve.js', source: 'src/resolve.js' },
+  { file: 'typert.client.js', source: 'src/typert.client.js' },
+  { file: 'typert.host.js', source: 'src/typert.host.js' },
+])
+
+/**
+ * The host-side artifacts that are plain Node ESM, i.e. every artifact except
+ * the browser bundle (whose face is a classic script by design). These are the
+ * ones whose imports must be declared packages or shipped siblings.
+ */
+export const esmArtifacts = libArtifacts.filter((artifact) => artifact.file !== 'client.bundle.js')

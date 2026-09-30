@@ -12,7 +12,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { resolveHostApp } from '../scripts/host-app.mjs'
-import { rootDir, tmpDir as scratchDir } from './helpers/dsh.mjs'
+import { rootDir, libArtifacts, tmpDir as scratchDir } from './helpers/dsh.mjs'
 
 const tmpDir = path.join(scratchDir, 'gate-fixtures')
 
@@ -262,13 +262,17 @@ describe('check-typert > the mutation probes have teeth', () => {
 })
 
 /**
- * A faces directory that also holds the two artifacts which inline their own copy
+ * A faces directory that also holds the artifacts which inline their own copy
  * of the table — the real ones, optionally patched — so the gate's "the copies
  * that run match the faces" check can be seen failing.
+ *
+ * Every committed artifact comes along, sibling imports included: without them
+ * the host artifact would not even load, and this suite would be measuring a
+ * load failure instead of the drift it injected.
  */
 function facesWithArtifacts(name, patches = {}) {
   const files = {}
-  for (const file of ['typert.host.js', 'typert.client.js', 'index.js', 'client.bundle.js']) {
+  for (const { file } of libArtifacts) {
     const source = readFileSync(path.join(rootDir, 'lib', file), 'utf8')
     files[`${name}/${file}`] = patched(source, patches[file], `lib/${file}`)
   }
@@ -402,10 +406,22 @@ describe('check-host-contract', () => {
 })
 
 describe('check-host-contract > the plugin-side invariant', () => {
-  /** A plugin tree with one clean file in each scanned directory. */
+  /**
+   * The real log-reading module: its source, and the artifact whose generated
+   * banner names it. A fixture tree mirrors the tree the exemption is scoped to,
+   * so the exemption's own behaviour is what the failing cases below measure —
+   * not the absence of the module.
+   */
+  const logReader = () => ({
+    'src/log-read.js': readFileSync(path.join(rootDir, 'src/log-read.js'), 'utf8'),
+    'lib/log-read.js': readFileSync(path.join(rootDir, 'lib/log-read.js'), 'utf8'),
+  })
+
+  /** A plugin tree with one clean file in each scanned directory, plus the log reader. */
   const tree = (name) => ({
     [`${name}/src/index.js`]: 'export const apply = () => {}\n',
     [`${name}/lib/index.js`]: 'export const apply = () => {}\n',
+    ...Object.fromEntries(Object.entries(logReader()).map(([relative, content]) => [`${name}/${relative}`, content])),
   })
 
   it('passes a tree that reads the log through the accessors', () => {
@@ -445,6 +461,54 @@ describe('check-host-contract > the plugin-side invariant', () => {
 
     expect(status).toBe(1)
     expect(stderr).toContain('src/reads-log.js:1')
+  })
+
+  it('scopes the exemption to the module that declares it: the log reader passes, a copy of it does not', () => {
+    const dir = writeFixture({
+      ...fakeApp(),
+      ...tree('plugin-scoped'),
+      // Byte-identical to the log reader, but under a name whose banner does not
+      // claim the log-reader source — so it is not the exempt module.
+      'plugin-scoped/src/reads-log.js': readFileSync(path.join(rootDir, 'src', 'log-read.js'), 'utf8'),
+    })
+    const { status, stderr } = runGate('scripts/check-host-contract.mjs', ['--plugin-root', path.join(dir, 'plugin-scoped')], {
+      DSH_APP_ROOT: path.join(dir, 'fake-app'),
+    })
+
+    expect(status).toBe(1)
+    expect(stderr).toContain('src/reads-log.js:')
+  })
+
+  it('treats a tree with no log-reading module as drift — a stale exemption is never a pass', () => {
+    const dir = writeFixture({
+      ...fakeApp(),
+      'plugin-stale/src/index.js': 'export const apply = () => {}\n',
+      'plugin-stale/lib/index.js': 'export const apply = () => {}\n',
+    })
+    const { status, stderr } = runGate('scripts/check-host-contract.mjs', ['--plugin-root', path.join(dir, 'plugin-stale')], {
+      DSH_APP_ROOT: path.join(dir, 'fake-app'),
+    })
+
+    expect(status).toBe(1)
+    expect(stderr).toContain('0 log-reading module(s)')
+  })
+
+  it('refuses a second claimant of the exemption inside one directory', () => {
+    const dir = writeFixture({
+      ...fakeApp(),
+      ...tree('plugin-second'),
+      // The banner names the log-reader source, so this file claims the
+      // exemption too — and the singleton rule refuses the pair rather than
+      // silently letting a second file off the hook.
+      'plugin-second/lib/second-reader.js':
+        '/* GENERATED FILE — do not edit by hand; built from src/log-read.js by scripts/build.mjs */\nexport const rows = (log) => log.events\n',
+    })
+    const { status, stderr } = runGate('scripts/check-host-contract.mjs', ['--plugin-root', path.join(dir, 'plugin-second')], {
+      DSH_APP_ROOT: path.join(dir, 'fake-app'),
+    })
+
+    expect(status).toBe(1)
+    expect(stderr).toContain('2 log-reading module(s)')
   })
 
   it('fails when the scanned tree has no JavaScript at all — a vacuously green invariant', () => {

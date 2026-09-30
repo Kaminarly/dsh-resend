@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import semver from 'semver'
 import yaml from 'js-yaml'
 import { resolveHostApp } from '../scripts/host-app.mjs'
-import { patchRows, pkg } from './helpers/dsh.mjs'
+import { patchRows, esmArtifacts, pkg } from './helpers/dsh.mjs'
 
 const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
 
@@ -90,6 +90,7 @@ describe('peerDependencies are the enforced compatibility mechanism (spec §3)',
   const REQUIRED = [
     '@deepseek-ai/cordis',
     '@deepseek-ai/dsh-session',
+    '@deepseek-ai/dsh-session-format-catalog',
     '@deepseek-ai/dsh-client-ui-primitives',
     '@deepseek-ai/dsh-client-ui-slots',
     'react',
@@ -149,27 +150,44 @@ describe('no third-party contract package anywhere (spec §3)', () => {
     }
   })
 
-  it('every bare specifier the shipped ESM artifacts import is declared', () => {
+  it('every bare specifier the shipped ESM artifacts import is declared, and every sibling import ships', () => {
     // The Node-side artifacts are ESM bundles with their host packages left
     // external; a profile installs `dependencies` and expects `peerDependencies`
     // to come from the host, so an undeclared specifier is a load failure in the
-    // field and nowhere else.
+    // field and nowhere else. Relative specifiers are the other half of the same
+    // contract: `lib/index.js` imports its log-reading module as a sibling
+    // artifact (so §12's invariant can exempt one small file rather than the
+    // whole host half), and that file has to be in `lib/` to ship.
     const declared = new Set([...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})])
     const imported = new Set()
-    for (const file of ['index.js', 'typert.host.js', 'typert.client.js']) {
+    const siblings = new Set()
+    for (const { file } of esmArtifacts) {
       const source = read(`lib/${file}`)
       for (const match of source.matchAll(/(?:from|require\()\s*"([^"]+)"/g)) {
-        // `zod/mini` is the `zod` package; a subpath never changes which package must be declared.
         const specifier = match[1]
+        if (specifier.startsWith('.')) {
+          siblings.add(specifier)
+          continue
+        }
+        // `zod/mini` is the `zod` package; a subpath never changes which package must be declared.
         imported.add(specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0])
       }
     }
     // Assert the scan itself found the imports, not only that whatever it found
     // is declared: a quoting change would otherwise make this test scan nothing
     // and pass.
-    expect([...imported].sort()).toEqual(['@deepseek-ai/cordis', 'zod'])
+    expect([...imported].sort()).toEqual([
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-session',
+      '@deepseek-ai/dsh-session-format-catalog',
+      'zod',
+    ])
     for (const packageName of imported) {
       expect(declared, `the shipped ESM artifacts import undeclared package ${packageName}`).toContain(packageName)
+    }
+    expect([...siblings].sort()).toEqual(['./host.js', './log-read.js', './resolve.js'])
+    for (const specifier of siblings) {
+      expect(existsSync(new URL(`../lib/${specifier.slice(2)}`, import.meta.url)), `${specifier} does not ship beside the artifact that imports it`).toBe(true)
     }
   })
 })

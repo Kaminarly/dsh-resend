@@ -22,6 +22,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import * as registry from '@deepseek-ai/dsh-typert-registry'
 import * as gateway from '@deepseek-ai/dsh-api-gateway'
+import { hostState, plugHostDoubles } from './host.mjs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
@@ -69,17 +70,30 @@ export function carrierDouble(dispatch) {
 }
 
 /**
- * The Host composition: the registry, the Gateway, and the shipped host half.
- * @returns `{ ctx, fiber }` — `ctx.typertGateway` is what a carrier dispatches into.
+ * The Host composition: the registry, the Gateway, the operation's services and
+ * the shipped host half.
+ *
+ * The Host half declares `sessions`, `agents`, `sessionQuery` and
+ * `sessionPersistence` in its `inject` list (spec §3.1), so a composition
+ * without them leaves the row permanently PENDING and no call can reach it.
+ * They come from `./host.mjs`: a real `Session` behind the `sessions` seam and
+ * doubles shaped like the host for the two log routes and the agent registry.
+ * @param options - `{ host }`, a `hostState` record to drive the doubles with
+ *   (default: the standard two-round fixture, idle agent, a stored log that
+ *   mirrors the live one).
+ * @returns `{ ctx, fiber, host }` — `ctx.typertGateway` is what a carrier
+ *   dispatches into, and `host` is the mutable state the doubles read.
  */
-export async function hostComposition() {
+export async function hostComposition(options = {}) {
+  const host = options.host ?? hostState()
   const ctx = new Context()
   await ctx.plugin(registry.TypertRegistry)
   await ctx.plugin(gateway.TypertGatewayService)
+  await plugHostDoubles(ctx, host)
   const hostHalf = await import('../../lib/index.js')
   const fiber = ctx.plugin(hostHalf)
   await fiber
-  return { ctx, fiber }
+  return { ctx, fiber, host }
 }
 
 /**

@@ -55,6 +55,7 @@ import { resolveHostApp } from './host-app.mjs'
 import { optionValue } from './args.mjs'
 import { relativePath } from './walk-javascript.mjs'
 import { readClientContribution, describeError } from './client-bundle.mjs'
+import { provideStandInServices } from './host-services.mjs'
 import { ERROR_CODES as SOURCE_ERROR_CODES } from '../src/typert.js'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
@@ -124,10 +125,11 @@ function requiredLine(relativeFile, needle) {
 /**
  * A `file:line` pointer for a field, resolved against the hand-written sources
  * the generated face comes from — the face's own source first, then the shared
- * descriptor table.
+ * descriptor table, then the closed error vocabulary, which lives in its own
+ * module because two unrelated readers need exactly that list.
  */
 function pointer(needle, generatedFile) {
-  for (const candidate of [`src/${generatedFile}`, 'src/typert.js']) {
+  for (const candidate of [`src/${generatedFile}`, 'src/typert.js', 'src/error-codes.js']) {
     if (!existsSync(path.join(rootDir, candidate))) continue
     const location = lineOf(candidate, needle)
     // `lineOf` returns the bare path when the needle is absent.
@@ -524,6 +526,13 @@ if (JSON.stringify(SOURCE_ERROR_CODES) !== JSON.stringify(SPEC_ERROR_CODES)) {
  * would be a different realm's object graph. The registry is the same
  * implementation either way; this check is about which descriptors landed, not
  * about the rules that let them land.
+ *
+ * The operation's own services (`sessions`, `agents`, `sessionQuery`,
+ * `sessionPersistence` — spec §3.1) are supplied as name-only stand-ins, taken
+ * from the row's own `inject` list so this gate cannot drift from it: the row
+ * must activate for its registration to be readable, and no part of this gate
+ * calls the operation. What those services must do is the operation suite's
+ * subject, not this contract gate's.
  * @returns `{ descriptors }`, or `{ error }` naming why the row could not register.
  */
 async function registeredByHostHalf() {
@@ -533,6 +542,7 @@ async function registeredByHostHalf() {
   await ctx.plugin(registry.TypertRegistry)
   try {
     const row = await import(pathToFileURL(path.join(facesDir, 'index.js')).href)
+    await provideStandInServices(ctx, row, ['typert'])
     await ctx.plugin(row)
     return { descriptors: ctx.typert.local.list() }
   } catch (error) {

@@ -9,9 +9,12 @@
  * whole renderer refuses to boot. The negative control below (a fixture that
  * injects an absent service) proves this suite can see that state.
  *
- * Ticket 02 gives the row its one required service (`typert`, spec §3.1/§16.6),
- * so the composition under test provides the real Typert registry — the row's
- * inject edge is exactly what the PENDING negative control is about.
+ * The row declares five services (spec §3.1): the Typert registry it registers
+ * its descriptor with, and the four the operation reads. The composition under
+ * test provides the real registry and name-only stand-ins for the other four —
+ * what this suite is about is the row activating as a Loader row; the operation's
+ * own behaviour is asserted in `test/apply-refusals.test.mjs` and
+ * `test/resolution.test.mjs`.
  */
 import { afterAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -22,6 +25,7 @@ import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { FIBER_ACTIVE, FIBER_PENDING, patchRows, pkg, rootDir, tmpDir } from './helpers/dsh.mjs'
+import { provideStandInServices } from '../scripts/host-services.mjs'
 
 const roots = []
 
@@ -56,8 +60,13 @@ async function bootComposition(rows, baseUrl) {
   ctx.logger.exporter({ levels: { default: 2 }, export: (message) => logs.push(message) })
   await ctx.plugin(Loader)
   // The composition's own services, in the order a real profile provides them:
-  // the registry exists before the row that injects it.
+  // the registry exists before the row that injects it, and so do the four
+  // services the operation reads. They are name-only stand-ins (the same helper
+  // the descriptor gate uses): this suite is about the row activating as a
+  // Loader row, and the operation's behaviour is exercised against doubles that
+  // mirror the host in `test/resolution*.test.mjs`.
   await ctx.plugin(TypertRegistry)
+  await provideStandInServices(ctx, await import('../lib/index.js'), ['typert'])
   const loader = ctx.get('loader')
   expect(loader.internal, 'loader internals unavailable — profile-style bare specifier resolution cannot be exercised').toBeDefined()
   for (const row of rows) await loader.create(row)
@@ -111,9 +120,9 @@ describe('the Host plugin mounts as one Loader row from the shipped patch layer'
     expect(noisy).toEqual([])
   })
 
-  it('injects exactly `typert`, the one service it reads (spec §3.1, §16.6)', async () => {
+  it('injects the services the operation reads, plus `typert` (spec §3.1, §16.6)', async () => {
     const hostPlugin = await import('../lib/index.js')
-    expect(hostPlugin.inject).toEqual(['typert'])
+    expect(hostPlugin.inject).toEqual(['sessions', 'agents', 'sessionQuery', 'sessionPersistence', 'typert'])
     expect(hostPlugin.name).toBe(pkg.name)
     expect(typeof hostPlugin.apply).toBe('function')
   })
@@ -123,6 +132,10 @@ describe('the Host plugin mounts as one Loader row from the shipped patch layer'
     const ctx = new Context()
     ctx.baseUrl = pathToFileURL(dir).href + '/'
     await ctx.plugin(Loader)
+    // Everything the row declares EXCEPT the registry is present, so the PENDING
+    // state below is attributable to the missing inject edge and not to some
+    // other unresolved service.
+    await provideStandInServices(ctx, await import('../lib/index.js'), ['typert'])
     const loader = ctx.get('loader')
     for (const row of patchRows) await loader.create(row)
 

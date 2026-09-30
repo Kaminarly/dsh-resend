@@ -24,10 +24,10 @@ import { patchRows, esmArtifacts, pkg } from './helpers/dsh.mjs'
 
 const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8')
 
-/** Versions the spec pins ("Verified on DSH Desktop 2.0.16, dsh-* 0.2.0-rc.1"). */
-const TARGET_DSH_VERSION = '0.2.0-rc.1'
+/** Versions the spec pins ("Verified on DSH Desktop 2.0.17, dsh-* 0.2.0-rc.2"). */
+const TARGET_DSH_VERSION = '0.2.0-rc.2'
 const TARGET_CORDIS_VERSION = '4.0.4'
-const TARGET_DESKTOP_VERSION = '2.0.16'
+const TARGET_DESKTOP_VERSION = '2.0.17'
 /** App-relative path of the package whose version *is* the DSH runtime version. */
 const RUNTIME_PACKAGE = 'node_modules/@deepseek-ai/dsh-app-boot/package.json'
 

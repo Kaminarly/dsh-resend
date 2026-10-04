@@ -16,7 +16,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { FIBER_ACTIVE, FIBER_PENDING, pkg } from './helpers/dsh.mjs'
-import { clientHalf, evaluateBundle, materialize } from '../scripts/client-bundle.mjs'
+import { clientHalf, evaluateBundle, materialize, MODULE_TABLE } from '../scripts/client-bundle.mjs'
 
 /** A `remote` service that records the contributions the half asks it to mount. */
 function recordingRemote() {
@@ -49,16 +49,34 @@ describe('self-registration', () => {
   })
 })
 
+/** A module table that records every entry the bundle asks it for. */
+function recordingTable(asked) {
+  return new Proxy(MODULE_TABLE, {
+    has: (table, specifier) => specifier in table,
+    get: (table, specifier) => {
+      asked.push(String(specifier))
+      return table[specifier]
+    },
+  })
+}
+
 describe('materialized exports', () => {
   const { registration } = clientHalf()
 
-  it('needs no module-table entry (the descriptor table and its schemas are bundled)', () => {
-    // The require this double installs throws on any lookup, so materializing at
-    // all is the assertion — a drifted bundle fails here naming its specifier.
-    expect(() => materialize(registration)).not.toThrow()
+  it('needs exactly the two module-table entries a page provides, and no inlined copy of either', () => {
+    // The table the browser hands the factory has `react` (one instance for the
+    // whole page — an inlined copy would give these rows a different React from
+    // the host tree they render into) and the host's own UI primitives. Anything
+    // else the bundle asked for would be a real miss at load time, so the list is
+    // pinned here rather than discovered in a browser.
+    const asked = []
+    const exports = materialize(registration, recordingTable(asked))
+
+    expect(typeof exports.apply).toBe('function')
+    expect([...new Set(asked)].sort()).toEqual(['@deepseek-ai/dsh-client-ui-primitives', 'react'])
   })
 
-  it('the module-table double has teeth: a lookup is refused by name', () => {
+  it('the module-table double has teeth: a lookup outside that list is refused by name', () => {
     const needsCordis = { id: 'needs-cordis', factory: (require) => ({ cordis: require('@deepseek-ai/cordis') }) }
     expect(() => materialize(needsCordis)).toThrow(/module table miss: @deepseek-ai\/cordis/)
   })

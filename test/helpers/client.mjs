@@ -1,0 +1,180 @@
+/**
+ * The client-side doubles for the browser half's suite (ticket 05).
+ *
+ * The browser half has no Node-runnable host to drive it, so what stands in here
+ * are the four SERVICES it reads, one per seam, and each of them is deliberately
+ * small: what is under test is the plugin's own behaviour — which registrations
+ * it makes, with which options, and what it does with the answer to a Remote
+ * call — not a re-implementation of the client shell.
+ *
+ * Two rules keep these doubles honest:
+ *
+ * 1. **The plugin face itself is the shipped artifact.** Every case drives
+ *    `lib/client.bundle.js` (evaluated and materialized the way a page does), so
+ *    nothing here can pass against a source tree the browser never receives.
+ * 2. **A double that cannot answer says so.** The slot double calls its callback
+ *    immediately, because `ctx.slots.inject` defers until the slot is DECLARED
+ *    and this composition is the "declared" case; a case about a missing slot
+ *    would need the other case, and none is asserted here.
+ */
+import { Context, Service } from '@deepseek-ai/cordis'
+
+/**
+ * A `remote` service: it records the mount, and answers `resend.apply` from the
+ * script a case hands it.
+ *
+ * `results` is consumed one call at a time (the last one repeats), so a case can
+ * describe "the first attempt failed, the retry landed" without a callback.
+ * @param options - `{ results }`: the envelopes to answer with, in call order.
+ * @returns `{ RecordingRemote, mounted, calls }` — the service class, the
+ *   contributions it was asked to mount, and the requests it was asked to run.
+ */
+export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'dsh-resend-edit-fixture-resend' } }] } = {}) {
+  const mounted = []
+  const calls = []
+
+  class RecordingRemote extends Service {
+    constructor(ctx) {
+      super(ctx, 'remote')
+      this.resend = {
+        apply: async (request) => {
+          calls.push(request)
+          return results[Math.min(calls.length - 1, results.length - 1)]
+        },
+      }
+    }
+
+    $mount(contribution) {
+      mounted.push(contribution)
+      return async () => {}
+    }
+  }
+
+  return { RecordingRemote, mounted, calls }
+}
+
+/**
+ * The four client services a composition plugs in, sharing one record of what
+ * the plugin asked them for.
+ * @returns the service classes, all constructed around the same `record`.
+ */
+function clientDoubles() {
+  const record = {
+    /** `{ name, callback }` per `slots.inject`. */
+    injected: [],
+    /** `{ options, component }` per `slots.register`. */
+    mounts: [],
+    /** `{ namespace, dictionaries }` per `locale.register`. */
+    dictionaries: [],
+    /** The Definitions registered through `uiConversation`. */
+    definitions: [],
+    /** i18n keys any surface asked for that no dictionary defines. */
+    missingKeys: [],
+  }
+
+  /** The slot registry: `inject` mounts immediately (see the file head). */
+  class Slots extends Service {
+    constructor(ctx) {
+      super(ctx, 'slots')
+    }
+
+    inject(name, callback) {
+      record.injected.push(name)
+      return callback()
+    }
+
+    register(options, component) {
+      record.mounts.push({ options, component })
+      return () => {
+        record.mounts = record.mounts.filter((mount) => mount.options !== options)
+      }
+    }
+  }
+
+  /**
+   * The locale service: dictionaries in, a translator out.
+   *
+   * `bind` is what the SLOT OWNER uses to build the `t` prop a surface receives,
+   * so a case can hand a surface exactly the translator the host would.
+   */
+  class Locale extends Service {
+    constructor(ctx) {
+      super(ctx, 'locale')
+      this.active = 'en'
+    }
+
+    register(namespace, dictionaries) {
+      record.dictionaries.push({ namespace, dictionaries })
+      return () => {
+        record.dictionaries = record.dictionaries.filter((entry) => entry.namespace !== namespace)
+      }
+    }
+
+    bind(namespace) {
+      return (key) => {
+        for (const entry of record.dictionaries) {
+          if (entry.namespace !== namespace) continue
+          const table = entry.dictionaries[this.active] ?? entry.dictionaries.en ?? {}
+          if (typeof table[key] === 'string') return table[key]
+        }
+        record.missingKeys.push(key)
+        return key
+      }
+    }
+  }
+
+  /**
+   * The conversation service carrying the Definition registry.
+   *
+   * `shape` picks which generation this composition models: the current one keeps
+   * the registry on `events`, the older one exposed `register` on the service
+   * itself, and `'none'` models a service with no entry point this build
+   * understands.
+   * @param shape - `'events' | 'self' | 'none'`, default `'events'`.
+   */
+  function UiConversationFor(shape = 'events') {
+    class UiConversation extends Service {
+      constructor(ctx) {
+        super(ctx, 'uiConversation')
+        if (shape === 'events') {
+          this.events = {
+            register: (definition) => {
+              record.definitions.push(definition)
+              return () => {
+                record.definitions = record.definitions.filter((entry) => entry !== definition)
+              }
+            },
+          }
+        } else if (shape === 'self') {
+          this.register = (definition) => {
+            record.definitions.push(definition)
+            return () => {
+              record.definitions = record.definitions.filter((entry) => entry !== definition)
+            }
+          }
+        }
+      }
+    }
+    return UiConversation
+  }
+
+  return { record, Slots, Locale, UiConversationFor }
+}
+
+/**
+ * One client composition: the four services plus a recording `remote`, ready for
+ * the shipped browser half to activate against.
+ * @param options - `{ results, conversation }` forwarded to the doubles.
+ * @returns `{ ctx, record, mounted, calls }` — the context to activate the half
+ *   in, what the doubles were asked for, and the Remote calls that were made.
+ */
+export async function clientComposition({ results, conversation = 'events' } = {}) {
+  const { record, Slots, Locale, UiConversationFor } = clientDoubles()
+  const { RecordingRemote, mounted, calls } = recordingRemote(results === undefined ? {} : { results })
+  const ctx = new Context()
+  await ctx.plugin(RecordingRemote)
+  await ctx.plugin(Slots)
+  await ctx.plugin(Locale)
+  await ctx.plugin(UiConversationFor(conversation))
+  return { ctx, record, mounted, calls }
+}

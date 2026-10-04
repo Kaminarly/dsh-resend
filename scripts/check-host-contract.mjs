@@ -168,6 +168,24 @@ for (const { file, member } of ABSENT) {
 const LEGACY_EVENT_VIEW_READ = /\.\s*events\b|\{\s*events\b/
 
 /**
+ * The one read spelled `events` that is NOT the legacy event view.
+ *
+ * The CLIENT half registers its conversation Definitions through
+ * `ctx.uiConversation.events.register(definition)` — the official entry point on
+ * the current host, and the only way this plugin's rows can exist at all
+ * (spec §7). That member is a *registry*, not an event list, and the only thing a
+ * caller may take from it is its `register` method; the legacy member the
+ * invariant protects is read for its CONTENTS, and an event array has no
+ * `register` to take.
+ *
+ * So the exemption is an expression, not a file or a list: a line is exempt when
+ * it reads `register` off that member in the same expression. Anything that reads
+ * `.events` for its contents — in either half, in a source or in a shipped
+ * artifact — is still a failure naming its `file:line`.
+ */
+const CONVERSATION_REGISTRY_READ = /\.\s*events\s*\??\.\s*register\b/
+
+/**
  * §12 exempts *the log-reading module* from this invariant: that one module is
  * allowed to reach for the host's raw event-list member, because the covering
  * log has to be read through the host's own API before anything else in the
@@ -218,11 +236,11 @@ for (const dir of ['src', 'lib']) {
       continue
     }
     source.split('\n').forEach((line, index) => {
-      if (LEGACY_EVENT_VIEW_READ.test(line)) {
-        fail(
-          `plugin-side legacy read ${relative}:${index + 1} — reads a legacy event-view member; only the log-reading module ${LOG_READER_SOURCE} may, and it is not this file`,
-        )
-      }
+      if (!LEGACY_EVENT_VIEW_READ.test(line)) return
+      if (CONVERSATION_REGISTRY_READ.test(line)) return
+      fail(
+        `plugin-side legacy read ${relative}:${index + 1} — reads a legacy event-view member; only the log-reading module ${LOG_READER_SOURCE} may, and it is not this file`,
+      )
     })
   }
   if (logReaders !== 1) {

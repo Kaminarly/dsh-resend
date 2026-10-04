@@ -27,10 +27,55 @@
  */
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 /** The committed bundle, for callers that are not handed another one. */
 export const CLIENT_BUNDLE = fileURLToPath(new URL('../lib/client.bundle.js', import.meta.url))
+
+const require_ = createRequire(new URL('../package.json', import.meta.url))
+
+/**
+ * The module-table entries the bundle legitimately asks for, and NOTHING else.
+ *
+ * Two entries, and both are the ones a real page provides:
+ *
+ *  - `react` — the plugin's own peer, taken from this package's installation
+ *    exactly as the browser takes it from the module table. One React instance is
+ *    the point: an inlined copy would give the plugin's boundaries and rows a
+ *    different React from the host's tree they render into.
+ *  - `@deepseek-ai/dsh-client-ui-primitives` — the host's own atoms. The shipped
+ *    package is browser-only (its ESM imports `.module.css` and a workspace
+ *    package this repo does not install), so no Node spec can load it; this
+ *    stand-in is the smallest thing that preserves what a spec here needs to
+ *    observe — the icons are React components reached through the module table,
+ *    and the component a surface imported under a name is the very identity that
+ *    surface renders. `test/rewind-row.test.mjs` holds the names to the installed
+ *    package by reading it, which is what the stand-in cannot prove.
+ *
+ * Every other specifier still fails, by name: a bundle that reaches for something
+ * the host's table does not have is the drift this double exists to catch.
+ */
+export const MODULE_TABLE = Object.freeze({
+  react: require_('react'),
+  '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
+    IconWarningOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'warning-outline', ...props }),
+  }),
+})
+
+/**
+ * Materialize a registration with the module-table `require`.
+ * @param registration - one queue entry from {@link evaluateBundle}.
+ * @param table - the module table; defaults to {@link MODULE_TABLE}.
+ * @returns the module exports.
+ * @throws when the bundle asks the module table for any other specifier.
+ */
+export function materialize(registration, table = MODULE_TABLE) {
+  return registration.factory((specifier) => {
+    if (specifier in table) return table[specifier]
+    throw new Error(`module table miss: ${specifier}`)
+  })
+}
 
 /**
  * Evaluate a bundle the way the browser does: a classic script in a page.
@@ -51,24 +96,6 @@ export function evaluateBundle(source = readFileSync(CLIENT_BUNDLE, 'utf8')) {
   }
   vm.runInNewContext(source, { window: { __ModuleLoader__: moduleLoader } }, { filename: 'client.bundle.js' })
   return pendingQueue
-}
-
-/**
- * Materialize a registration with the module-table `require`.
- *
- * The `require` refuses every specifier, and names the one it was asked for: this
- * plugin's bundle imports nothing from the client module table (spec §6.6 — the
- * descriptor table and its schemas are bundled), so any lookup is exactly the
- * drift this double exists to catch, and it must not be swallowed into a
- * half-materialized face.
- * @param registration - one queue entry from {@link evaluateBundle}.
- * @returns the module exports.
- * @throws when the bundle asks the module table for any specifier.
- */
-export function materialize(registration) {
-  return registration.factory((specifier) => {
-    throw new Error(`module table miss: ${specifier}`)
-  })
 }
 
 /**

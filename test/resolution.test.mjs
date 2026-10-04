@@ -24,6 +24,8 @@ import {
   appendRewindPair,
   appendUser,
   sessionFixture,
+  completedRewindFixture,
+  foreignRewindFixture,
   hostContext,
   hostState,
   middleRewoundFixture,
@@ -90,7 +92,7 @@ describe('the range is the surface from the target to its end (§4.3)', () => {
 
     expect(result).toEqual({
       ok: true,
-      value: { op: 'edit', targetSeq: 2, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3], resendText: 'the edited prompt' },
+      value: { kind: 'rewind', op: 'edit', targetSeq: 2, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3], resendText: 'the edited prompt' },
     })
   })
 
@@ -107,7 +109,7 @@ describe('the range is the surface from the target to its end (§4.3)', () => {
 
     expect(result).toEqual({
       ok: true,
-      value: { op: 'regenerate', targetSeq: 3, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3], resendText: 'second prompt' },
+      value: { kind: 'rewind', op: 'regenerate', targetSeq: 3, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3], resendText: 'second prompt' },
     })
   })
 
@@ -284,9 +286,16 @@ describe('the resend text comes from the covering read, never from a sparse view
 
 describe('target-shadowed / message-pending / message-not-found are three verdicts (§4.3, §4.5, §13.1 #14)', () => {
   it('target-shadowed when a carrier’s range covers the target — decided from the log', async () => {
-    const { session } = rewoundFixture()
-    expect(await codeOf({ session, request: { targetSeq: 2, op: 'edit', text: 'x' } })).toBe('target-shadowed')
-    expect(await codeOf({ session, request: { targetSeq: 3, op: 'edit', text: 'x' } })).toBe('target-shadowed')
+    // Two carriers that are NOT this plugin's own pending one: a rewind another
+    // plugin wrote, and a finished rewind of ours whose resend message is in the
+    // log. (Our own carrier with no resend message is a `resend-only` plan —
+    // ticket 05, and `resend.test.mjs` holds that verdict.)
+    const foreign = foreignRewindFixture()
+    expect(await codeOf({ session: foreign.session, request: { targetSeq: 2, op: 'edit', text: 'x' } })).toBe('target-shadowed')
+    expect(await codeOf({ session: foreign.session, request: { targetSeq: 3, op: 'edit', text: 'x' } })).toBe('target-shadowed')
+
+    const completed = completedRewindFixture()
+    expect(await codeOf({ session: completed.session, request: { targetSeq: 2, op: 'edit', text: 'x' } })).toBe('target-shadowed')
   })
 
   it('target-shadowed when the target is off the active surface in both views', async () => {
@@ -421,7 +430,10 @@ describe('op-specific refusals, in the order §4.3 and §4.4 fix', () => {
   })
 
   it('target resolution runs first: a blank edit aimed at a shadowed message is `target-shadowed`', async () => {
-    const { session } = rewoundFixture()
+    // A foreign carrier, so the verdict really is the shadowed one: our OWN
+    // pending-resend carrier reaches §4.4 step 6's text check instead and refuses
+    // `blank-text`, which is the same order — resolution, then the text.
+    const { session } = foreignRewindFixture()
 
     expect(await codeOf({ session, request: { targetSeq: 2, op: 'edit', text: '   ' } })).toBe('target-shadowed')
   })

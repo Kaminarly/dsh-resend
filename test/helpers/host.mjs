@@ -29,6 +29,11 @@
  * registry it registers with. Those two are the shipped implementations, not
  * doubles — the shadow-price protocol is the thing the suite is checking, so a
  * stand-in would only prove that a stand-in agrees with itself.
+ *
+ * The `agents` seam is driven by MODE ({@link agentDoubles}: `'accepting'`,
+ * `'deaf'`, `'delivering'`), because what `followup` does with a prompt is the
+ * whole of what ticket 05 can observe — it returns nothing, so `status`
+ * afterwards is the only acceptance signal there is (spec §16.2).
  */
 import { Context, Service } from '@deepseek-ai/cordis'
 import { Session } from '@deepseek-ai/dsh-session'
@@ -96,16 +101,19 @@ export function sessionFixture(sessionId = SESSION_ID) {
  * through the real `append` API, so the fixture's already-rewound state is one
  * the host itself accepted (spec §5.2–§5.4).
  *
- * Used by the fixtures that need a shadowed earlier round, and by the suite as
- * the pre-flight that the PLANNED pair is acceptable write input: the real
- * append contract validates range membership, `sourceEventSeqs` completeness and
- * the `surfaceOp` shape, and rejects a wrong one loudly.
+ * The carrier id is spelled by the caller, and the resend message is a separate
+ * opt-in (`resendId`), because the two states they model are different under
+ * ticket 05's rules: a pair WITHOUT its resend message is the recoverable "the
+ * prompt never reached the agent" state (§9.4), and a pair WITH it is a finished
+ * operation. A fixture that got this wrong by accident would silently turn a
+ * `target-shadowed` case into a re-send.
  * @param session - the fixture session.
  * @param plan - a resolved plan (`rangeStartSeq`, `endSeq`, `shadowedSeqs`).
- * @param options - `{ id }` for the carrier's marker id.
- * @returns `{ audit, carrier }`, the two appended events.
+ * @param options - `{ id }` for the carrier's id, and `{ resendId }` to also
+ *   append the real user turn the resend queued.
+ * @returns `{ audit, carrier, resend }`, the appended events.
  */
-export function appendRewindPair(session, plan, { id = 'dsh-resend-edit-fixture' } = {}) {
+export function appendRewindPair(session, plan, { id = 'dsh-resend-edit-fixture', resendId } = {}) {
   const audit = session.append('compaction/prune', {
     shadowedRange: { start: plan.rangeStartSeq, end: plan.endSeq },
     shadowedSeqs: [...plan.shadowedSeqs],
@@ -116,7 +124,10 @@ export function appendRewindPair(session, plan, { id = 'dsh-resend-edit-fixture'
     { role: 'user', id, content: [{ type: 'text', text: '(a fixture rewind wrote this carrier)' }], source: { kind: 'cordis-host-runner' } },
     { surfaceOp: { op: 'replace', startSeq: plan.rangeStartSeq, endSeq: plan.endSeq }, sourceEventSeqs: [audit.seq, ...plan.shadowedSeqs] },
   )
-  return { audit, carrier }
+  const resend = resendId === undefined
+    ? undefined
+    : appendUser(session, { id: resendId, text: '(the fixture re-sent this prompt)' })
+  return { audit, carrier, resend }
 }
 
 /**
@@ -150,8 +161,13 @@ export function measuredFixture(sessionId = SESSION_ID) {
 }
 
 /**
- * A fixture already rewound once: the second round was shadowed by a carrier,
- * so the surface ends `[0, 1, 5]` with 2 and 3 gone (spliced in place, §16.7).
+ * A fixture already rewound once: the second round was shadowed by a carrier, so
+ * the surface ends `[0, 1, 5]` with 2 and 3 gone (spliced in place, §16.7).
+ *
+ * The carrier's resend message is deliberately ABSENT: this is a rewind of this
+ * plugin's whose prompt never reached the agent, i.e. exactly the state ticket
+ * 05's "Send again" is for. Cases about ordinary read-only history want
+ * {@link completedRewindFixture} or {@link foreignRewindFixture} instead.
  * @param sessionId - the session identity.
  * @returns `{ session, auditSeq: 4, carrierSeq: 5, shadowedSeqs: [2, 3] }`.
  */
@@ -159,6 +175,36 @@ export function rewoundFixture(sessionId = SESSION_ID) {
   const session = sessionFixture(sessionId)
   const { audit, carrier } = appendRewindPair(session, { rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3] })
   return { session, auditSeq: audit.seq, carrierSeq: carrier.seq, shadowedSeqs: [2, 3] }
+}
+
+/**
+ * The same rewind, FINISHED: the pair plus the resend message it queued.
+ *
+ * This is what a `resend.apply` that succeeded leaves behind, so its target is
+ * ordinary shadowed history — the `target-shadowed` case, not a retry.
+ * @param sessionId - the session identity.
+ * @returns `{ session, carrierSeq: 5, resendSeq: 6, shadowedSeqs: [2, 3] }`.
+ */
+export function completedRewindFixture(sessionId = SESSION_ID) {
+  const session = sessionFixture(sessionId)
+  const id = 'dsh-resend-edit-fixture'
+  const { carrier, resend } = appendRewindPair(session, { rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3] }, { id, resendId: `${id}-resend` })
+  return { session, carrierSeq: carrier.seq, resendSeq: resend.seq, shadowedSeqs: [2, 3] }
+}
+
+/**
+ * A rewind ANOTHER plugin wrote: the same replacement shape, an id that carries
+ * no plugin prefix of ours.
+ *
+ * Its target is read-only history for this plugin — recognizing it as a retry
+ * would re-send a prompt this plugin never sent.
+ * @param sessionId - the session identity.
+ * @returns `{ session, carrierSeq: 5 }`.
+ */
+export function foreignRewindFixture(sessionId = SESSION_ID) {
+  const session = sessionFixture(sessionId)
+  const { carrier } = appendRewindPair(session, { rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3] }, { id: 'another-plugin-carrier' })
+  return { session, carrierSeq: carrier.seq }
 }
 
 /**
@@ -349,8 +395,17 @@ export function openingTurnAgent({ afterReads = 1 } = {}) {
 export function hostState(options = {}) {
   const state = {
     session: options.session ?? sessionFixture(options.sessionId),
-    /** `undefined` models a session with no live agent (`agent-unavailable`). */
-    agent: 'agent' in options ? options.agent : undefined,
+    /**
+     * The session's live agent, as a mode name or as the object itself:
+     * `'accepting'` (default — idle, and it takes the prompt, so `status` flips
+     * to `running` as the measured host does), `'deaf'` (it never takes the
+     * prompt: the disposed-agent shape §16.2 measured), `'delivering'` (it takes
+     * the prompt and appends it as a real user message, i.e. the turn ran), or
+     * `undefined` for a session with no live agent (`agent-unavailable`).
+     * {@link agentDoubles} holds the factories, so a case that needs neither
+     * mode can build its own object.
+     */
+    agent: options.agent,
     sessionsThrow: options.sessionsThrow ?? false,
     agentThrows: options.agentThrows ?? false,
     /**
@@ -391,6 +446,14 @@ export function hostState(options = {}) {
       storedCloses: 0,
       flushes: 0,
       followups: 0,
+      /** The inputs `followup` was handed, in call order (spec §5.5). */
+      followupInputs: [],
+      /**
+       * What the doubles did, in order (`'flush'`, `'followup'`): the ordering
+       * §5.5 fixes — the prompt is queued only after the rewind is flushed, and
+       * a resend-only retry never flushes at all.
+       */
+      trace: [],
       /** The session's own `seq` observed AT each flush (spec §13.1 #9). */
       flushLengths: [],
       /** Flushes in flight right now, and the high-water mark of that count. */
@@ -399,12 +462,62 @@ export function hostState(options = {}) {
     },
   }
 
-  // The default agent carries the one method the RESEND calls (ticket 05),
-  // counted: a suite can then assert that a refusal never reached the agent at
-  // all, which is a stronger claim than "no message was visible".
-  if (!('agent' in options)) state.agent = { status: 'idle', followup: () => void (state.calls.followups += 1) }
+  // The agent is named by mode (`'accepting'` by default) or handed in whole, so
+  // a case that needs a shape neither mode describes — a turn that opens on the
+  // second read — still has the object form. See {@link agentDoubles} for what
+  // each mode means for the resend rather than for the refusal table.
+  state.agent = typeof options.agent === 'string'
+    ? agentDoubles(state)[options.agent]()
+    : ('agent' in options ? options.agent : agentDoubles(state).accepting())
 
   return state
+}
+
+/**
+ * The agent doubles a composition can be driven with (spec §4.4, §5.5, §9.4).
+ *
+ * The three modes differ ONLY in what `followup` does, because that is the whole
+ * of what ticket 05 can observe: `followup` returns `undefined` and does not
+ * throw, so `agent.status` immediately after the call is the one acceptance
+ * signal there is (§16.2). Each mode records the input it was handed, so a case
+ * can assert the shape that was handed over — including the id that must survive
+ * into the message the user ends up seeing.
+ *
+ * `'deaf'` is the disposed-agent shape: silent, non-throwing, never `running`.
+ * `'delivering'` does what the agent loop does with an accepted prompt — appends
+ * the claimed input VERBATIM as a real `user/message` through the host's own
+ * append contract (`@dsh-agent-loop/lib/index.js:1061`), which is what makes a
+ * wrong input shape fail loudly rather than pass a fixture nobody checks.
+ * @param state - the composition's shared state: the call counters and the session.
+ * @returns `{ accepting, deaf, delivering }`, one factory per mode.
+ */
+export function agentDoubles(state) {
+  const record = (input) => {
+    state.calls.followups += 1
+    state.calls.followupInputs.push(input)
+    state.calls.trace.push('followup')
+  }
+
+  return {
+    accepting() {
+      const agent = { status: 'idle', followup(input) { record(input); agent.status = 'running' } }
+      return agent
+    },
+    deaf() {
+      return { status: 'idle', followup(input) { record(input) } }
+    },
+    delivering() {
+      const agent = {
+        status: 'idle',
+        followup(input) {
+          record(input)
+          state.session.append('user/message', input, { surfaceOp: 'append' })
+          agent.status = 'running'
+        },
+      }
+      return agent
+    },
+  }
 }
 
 /**
@@ -489,6 +602,7 @@ export function hostDoubles(state) {
       const calls = state.calls
       calls.flushes += 1
       calls.flushLengths.push(session?.seq)
+      calls.trace.push('flush')
       calls.activeFlushes += 1
       calls.maxActiveFlushes = Math.max(calls.maxActiveFlushes, calls.activeFlushes)
       try {

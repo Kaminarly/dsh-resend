@@ -25,7 +25,8 @@ import { estimateMessage } from '@deepseek-ai/dsh-token-meter/estimate'
 import { resolveTarget } from '../lib/resolve.js'
 import { runtimeEndpointKeys } from '../lib/shape-probe.js'
 import { TYPERT } from '../lib/typert.host.js'
-import { markerId, planRewindPair, plannedEvents, validatePlannedPair, writeRewindPair } from '../lib/write.js'
+import { carrierIdFor } from '../lib/marker.js'
+import { planRewindPair, plannedEvents, validatePlannedPair, writeRewindPair } from '../lib/write.js'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
 import {
   appendReply,
@@ -50,6 +51,16 @@ import {
 
 /** The trace text these cases write. Honest, and not the shipped sentence. */
 const TRACE_TEXT = '(a test wrote this carrier)'
+
+/**
+ * A carrier id for a case that hands one to the write directly.
+ *
+ * The uuid is spelled here rather than generated, so a failing case names the
+ * same id twice; the counter only keeps two callers inside one session from
+ * colliding, and it is NOT a seq (a seq is the log's index).
+ */
+let carrierCounter = 0
+const markerId = (op) => carrierIdFor(op, `write-pair-${(carrierCounter += 1)}`)
 
 /**
  * The two shipped trace texts, restated from spec §5.4 ON PURPOSE: the suite's
@@ -526,7 +537,14 @@ describe('flush discipline, output faults and serialization (§4.6, §5.2, §13.
     expect(host.host.calls.flushes).toBe(1)
     expect(auditCount(session)).toBe(1)
     expect(envelopes.filter((envelope) => envelope.ok)).toHaveLength(1)
-    expect(envelopes.filter((envelope) => !envelope.ok).map((envelope) => envelope.error.code)).toEqual(['target-shadowed'])
+    // The loser is refused `agent-busy`, not `target-shadowed`, and ticket 05 is
+    // why: the winner's resend is inside the same lock and queues the prompt, so
+    // by the time the second call runs a turn IS open, and §4.4's rule 4 precedes
+    // target resolution. (The loser cannot be mistaken for ticket 05's retry
+    // either: its target's carrier has no resend message, which is exactly the
+    // retry state — the busy agent is what refuses it first.)
+    expect(envelopes.filter((envelope) => !envelope.ok).map((envelope) => envelope.error.code)).toEqual(['agent-busy'])
+    expect(host.host.calls.followups).toBe(1)
   })
 })
 
@@ -601,7 +619,11 @@ describe('the operation end to end through the Gateway (§4.1, §4.4, §5.5 seam
     expect(Object.keys(envelope.value)).toEqual(['carrierSeq', 'shadowedSeqs', 'resendMessageId'])
     expect(envelope.value.carrierSeq).toBe(carrier.seq)
     expect(envelope.value.shadowedSeqs).toEqual([2, 3])
-    expect(envelope.value.resendMessageId).toMatch(/^dsh-resend-edit-resend-/)
+    // The resend message's id is DERIVED from the carrier's (ticket 05, §9.4):
+    // the pairing is restated here rather than taken from the module that
+    // computes it, because "was this prompt ever queued?" is answered from it.
+    expect(envelope.value.resendMessageId).toBe(`${carrier.data.id}-resend`)
+    expect(carrier.data.id).toMatch(/^dsh-resend-edit-/)
     expect(envelope.value.resendMessageId).not.toBe(carrier.data.id)
     // The strict result codec is what turns a typo in a codec-visible field into
     // a boundary error instead of a silent unknown value on the wire.

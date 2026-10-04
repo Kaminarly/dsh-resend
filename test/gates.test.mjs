@@ -463,6 +463,34 @@ describe('check-host-contract > the plugin-side invariant', () => {
     expect(stderr).toContain('src/reads-log.js:1')
   })
 
+  it('exempts the conversation-definition REGISTRY read, and only that expression', () => {
+    // The client half must register its Definitions through
+    // `uiConversation.events.register(...)` (spec §7), which is a registry rather
+    // than an event list. A tree that takes `register` off that member passes…
+    const registry = writeFixture({
+      ...fakeApp(),
+      ...tree('plugin-registry'),
+      'plugin-registry/src/client.js': 'export const apply = (ctx) => ctx.uiConversation.events.register(definition)\n',
+    })
+    const passed = runGate('scripts/check-host-contract.mjs', ['--plugin-root', path.join(registry, 'plugin-registry')], {
+      DSH_APP_ROOT: path.join(registry, 'fake-app'),
+    })
+    expect(passed.status).toBe(0)
+
+    // …while the same member read for its CONTENTS, in the same file, still trips
+    // the invariant: the exemption is an expression, not a file.
+    const contents = writeFixture({
+      ...fakeApp(),
+      ...tree('plugin-registry'),
+      'plugin-registry/src/client.js': 'export const rows = (service) => service.events.map((event) => event.seq)\n',
+    })
+    const failed = runGate('scripts/check-host-contract.mjs', ['--plugin-root', path.join(contents, 'plugin-registry')], {
+      DSH_APP_ROOT: path.join(contents, 'fake-app'),
+    })
+    expect(failed.status).toBe(1)
+    expect(failed.stderr).toContain('plugin-side legacy read src/client.js:1')
+  })
+
   it('scopes the exemption to the module that declares it: the log reader passes, a copy of it does not', () => {
     const dir = writeFixture({
       ...fakeApp(),

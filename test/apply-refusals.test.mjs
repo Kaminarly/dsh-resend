@@ -16,7 +16,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TYPERT } from '../lib/typert.host.js'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
-import { appendReply, auditCount, sessionFixture, hostState, rewoundFixture, SESSION_ID } from './helpers/host.mjs'
+import { appendReply, auditCount, completedRewindFixture, sessionFixture, hostState, SESSION_ID } from './helpers/host.mjs'
 
 /**
  * The closed error vocabulary, restated from spec §4.5 *on purpose*: the suite's
@@ -68,7 +68,10 @@ const CASES = [
   {
     code: 'target-shadowed',
     why: 'a target a carrier’s range already covers',
-    fixture: () => rewoundFixture().session,
+    // A FINISHED rewind of this plugin's: the pair and the resend message it
+    // queued. (A pair whose resend message never landed is ticket 05's
+    // `resend-only` retry, not read-only history — see `resend.test.mjs`.)
+    fixture: () => completedRewindFixture().session,
     request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'x' },
   },
   { code: 'not-user-message', why: 'an edit aimed at an assistant reply', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'edit', text: 'x' } },
@@ -218,9 +221,10 @@ describe('a resolved plan is written, and the write is the only thing that chang
   it('lands the pair and answers the success envelope rather than refusing over a written surface', async () => {
     // A request this build serves completely: it is the second round's prompt, on
     // the surface, edited to non-blank text. The rewind is written — audit claim
-    // and carrier, adjacent, flushed once (§5.2) — and the envelope names the
-    // carrier the host minted. Reporting `internal` here would report failure
-    // over a surface the plugin had already changed (§9.4).
+    // and carrier, adjacent, flushed once (§5.2) — the prompt is queued to the
+    // agent (§5.5), and the envelope names the carrier the host minted and the
+    // message the agent took. Reporting `internal` here would report failure over
+    // a surface the plugin had already changed (§9.4).
     const { envelope, host, session } = await apply(undefined, undefined, { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'edited' })
 
     expect(envelope.ok).toBe(true)
@@ -229,9 +233,11 @@ describe('a resolved plan is written, and the write is the only thing that chang
     expect(session.seq).toBe(6)
     expect(auditCount(session)).toBe(1)
     expect(host.host.calls.flushes).toBe(1)
-    // The resend is ticket 05's: nothing may reach the agent before the rewind
-    // has landed, and nothing does.
-    expect(host.host.calls.followups).toBe(0)
+    // The resend is inside the same lock and after the flush, and the promise is
+    // never awaited — only the agent's own `status` says whether it was taken.
+    expect(host.host.calls.trace).toEqual(['flush', 'followup'])
+    expect(host.host.calls.followups).toBe(1)
+    expect(typeof envelope.value.resendMessageId).toBe('string')
   })
 
   it('a regenerate refused for `no-text` calls `followup` zero times and writes no marker (§13.1 #13)', async () => {

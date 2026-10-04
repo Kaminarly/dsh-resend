@@ -38,9 +38,28 @@ itself, in the transcript.
 
 The retry the button offers lives for the page load that recorded it, because the
 request it replays (including an edited message's text) is client state by
-construction. The affordances that produce a rewind — the action row under a user
-message, the regenerate control, the settings, and the row hiding — are the
-remaining tickets; today the client half renders only the rewind-point error row.
+construction. The client now registers an action row under user messages and
+hides the rows covered by a rewind. The inline editor's “Edit in the composer”
+action sends plain text through inputActions.setDraft(text) only: @ file
+references and / skills or commands are shown as literal text, and must be
+rebuilt from the composer trigger menu. Attachments are not copied into the
+draft; choose them again in the composer.
+If a future integration needs to preserve attachments, the supported upgrade
+path is to supply the file objects again through createDrafts(sessionId, File[])
+and pass the resulting attachment ids; this plugin does not invent or persist
+those files.
+
+The rewind removes the affected range from the model-visible surface. The
+human transcript is append-origin by design and is unaffected, so this plugin
+hides the affected rows itself with React-rendered CSS. This is deliberate
+plugin behaviour, not a platform delete. The user can dismiss the count notice,
+but its style rules remain mounted so the hidden rows cannot reappear.
+
+The proposed “hide at most 40% of the conversation” safety valve was rejected.
+A large rewind near the top of a long session is therefore visually destructive
+by design; the localized count notice is the only disclosure between the user
+and a mostly blank transcript. A hide-plan failure is reported in the affected
+row and in the diagnostic log rather than silently leaving an inconsistent view.
 
 ## Targeted upstream
 

@@ -58,7 +58,7 @@ export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5,
  * the plugin asked them for.
  * @returns the service classes, all constructed around the same `record`.
  */
-function clientDoubles() {
+function clientDoubles({ declared = true } = {}) {
   const record = {
     /** `{ name, callback }` per `slots.inject`. */
     injected: [],
@@ -70,6 +70,8 @@ function clientDoubles() {
     definitions: [],
     /** i18n keys any surface asked for that no dictionary defines. */
     missingKeys: [],
+    input: { phase: 'plain' },
+    draftWrites: [],
   }
 
   /** The slot registry: `inject` mounts immediately (see the file head). */
@@ -80,7 +82,7 @@ function clientDoubles() {
 
     inject(name, callback) {
       record.injected.push(name)
-      return callback()
+      return declared ? callback() : undefined
     }
 
     register(options, component) {
@@ -88,6 +90,18 @@ function clientDoubles() {
       return () => {
         record.mounts = record.mounts.filter((mount) => mount.options !== options)
       }
+    }
+  }
+
+  class Sessions extends Service {
+    constructor(ctx) { super(ctx, 'sessions') }
+    scope(sessionId) { return { sessionId } }
+  }
+
+  class Conversation extends Service {
+    constructor(ctx) {
+      super(ctx, 'conversation')
+      this.input = { for: () => ({ state: { getSnapshot: () => record.input } }) }
     }
   }
 
@@ -158,7 +172,7 @@ function clientDoubles() {
     return UiConversation
   }
 
-  return { record, Slots, Locale, UiConversationFor }
+  return { record, Slots, Locale, UiConversationFor, Sessions, Conversation }
 }
 
 /**
@@ -168,13 +182,15 @@ function clientDoubles() {
  * @returns `{ ctx, record, mounted, calls }` — the context to activate the half
  *   in, what the doubles were asked for, and the Remote calls that were made.
  */
-export async function clientComposition({ results, conversation = 'events' } = {}) {
-  const { record, Slots, Locale, UiConversationFor } = clientDoubles()
+export async function clientComposition({ results, conversation = 'events', declared = true } = {}) {
+  const { record, Slots, Locale, UiConversationFor, Sessions, Conversation } = clientDoubles({ declared })
   const { RecordingRemote, mounted, calls } = recordingRemote(results === undefined ? {} : { results })
   const ctx = new Context()
   await ctx.plugin(RecordingRemote)
   await ctx.plugin(Slots)
   await ctx.plugin(Locale)
   await ctx.plugin(UiConversationFor(conversation))
+  await ctx.plugin(Sessions)
+  await ctx.plugin(Conversation)
   return { ctx, record, mounted, calls }
 }

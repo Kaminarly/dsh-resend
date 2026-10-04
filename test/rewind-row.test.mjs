@@ -12,7 +12,7 @@
  *
  * The three claims this file exists for:
  *
- *  - a rewind point is EXACTLY one of two states: ticket 06's count notice, or
+ *  - a rewind point is EXACTLY one of two states: its count notice, or
  *    §9.4's error row — never both, never neither;
  *  - the error row says what happened (history was rewound, the re-send failed),
  *    carries the warning icon and a "Send again" button, and that button replays
@@ -63,6 +63,13 @@ const POINT = { sessionId: 'session-1', carrierSeq: 5 }
 const FAILED = Object.freeze({ carrierSeq: 5, shadowedSeqs: Object.freeze([2, 3]), status: 'resend-failed', request: REQUEST })
 /** The record a queued resend leaves. */
 const QUEUED = Object.freeze({ carrierSeq: 5, shadowedSeqs: Object.freeze([2, 3]), status: 'queued', request: REQUEST })
+const POINT_NODE = { key: 'point-5', kind: REWIND_ROW_KIND, anchorSeq: 5, data: { carrierSeq: 5, shadowedSeqs: [2, 3] } }
+const CHAT = { nodes: new Map([
+  ['user-2', { key: 'user-2', kind: 'user', anchorSeq: 2 }],
+  ['reply-3', { key: 'reply-3', kind: 'assistant-step', anchorSeq: 3 }],
+  [POINT_NODE.key, POINT_NODE],
+]) }
+const POINT_PROPS = { t: (key) => key, node: POINT_NODE, sessionId: 'session-1', useChat: (select) => select(CHAT) }
 
 /** Let the Cordis fibers a composition starts settle (they are promises). */
 async function settle() {
@@ -128,7 +135,7 @@ describe('the rewind point is a row at the carrier, and nothing else becomes one
     // the node's whole state comes from: the carrier's seq, and nothing the row
     // does not read.
     const state = REWIND_ROW_DEFINITION.start(undefined, { event: CARRIER })
-    expect(state).toEqual({ carrierSeq: 5 })
+    expect(state).toEqual({ carrierSeq: 5, range: { start: 2, end: 3 } })
 
     const context = {
       key: 'node-key',
@@ -165,15 +172,16 @@ describe('exactly one of the two states, at every input (§8.6, §9.4)', () => {
     }
   })
 
-  it('renders the error row for a failed re-send and nothing for the notice state', () => {
+  it('renders exactly the error row or the count notice for the state', () => {
     const failed = RewindRow({ outcome: FAILED, t: (key) => key, onSendAgain: () => {} })
 
     expect(failed).not.toBeNull()
     expect(failed.props.role).toBe('alert')
-    // Ticket 06 owns the count notice; until it lands, that state renders no row
-    // rather than a second claim at the same rewind point.
-    expect(RewindRow({ outcome: QUEUED, t: (key) => key, onSendAgain: () => {} })).toBeNull()
-    expect(RewindRow({ outcome: undefined, t: (key) => key, onSendAgain: () => {} })).toBeNull()
+    for (const outcome of [QUEUED, undefined]) {
+      const notice = RewindRow({ outcome, t: (key) => key, hidePlan: { count: 2 } })
+      expect(textIn(notice)).toContain('row.hiddenCount')
+      expect(textIn(notice)).not.toContain('row.resendFailed')
+    }
   })
 })
 
@@ -313,7 +321,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     const registration = record.mounts.find((entry) => entry.options.key === REWIND_ROW_KIND)
 
     const { html, thrown } = await mount(
-      createElement(registration.component, { t: (key) => key, node: { data: { carrierSeq: 5 } }, sessionId: 'session-1' }),
+      createElement(registration.component, POINT_PROPS),
     )
 
     // This page has recorded nothing at that point yet, so the rewind point is in
@@ -322,15 +330,18 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // that forgot to bind `operations` would render the failure panel's title
     // here instead of nothing.
     expect(thrown).toBeUndefined()
-    expect(html).toBe('')
+    expect(html).toContain('row.hiddenCount')
+    expect(html).not.toContain('panel.error.rewindRow')
   })
 
   it('renders the error row and the ordinary state through the shipped surface factory', async () => {
     // The components a real page renders are the ones this page registered, with
     // the props a slot provides. Driving the SHIPPED factory is what closes the
     // gap a hand-supplied `operations` would hide.
-    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED }), 'panel.error.rewindRow')
-    const slotProps = { t: (key) => key, node: { data: { carrierSeq: 5 } }, sessionId: 'session-1' }
+    const failedRecords = Object.freeze([FAILED])
+    const queuedRecords = Object.freeze([QUEUED])
+    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED, recordsFor: () => failedRecords }), 'panel.error.rewindRow')
+    const slotProps = POINT_PROPS
 
     const failed = await mount(createElement(row, slotProps))
 
@@ -341,10 +352,11 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // …and the same wiring at a QUEUED point shows no error row at all — the
     // exclusion is what the user sees, not only what a function returns.
     const queued = await mount(
-      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED }), 'panel.error.rewindRow'), slotProps),
+      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED, recordsFor: () => queuedRecords }), 'panel.error.rewindRow'), slotProps),
     )
     expect(queued.thrown).toBeUndefined()
-    expect(queued.html).toBe('')
+    expect(queued.html).toContain('row.hiddenCount')
+    expect(queued.html).not.toContain('row.resendFailed')
   })
 
   it('the error row itself, when its render throws, is contained and the rest keeps rendering (§7.4)', async () => {
@@ -397,16 +409,14 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     expect(html).toBe('')
   })
 
-  it('the source guard: the one registration site passes the shared factory and binds the operations', () => {
-    const source = readFileSync(path.join(rootDir, 'src', 'client.js'), 'utf8')
-
-    const registrations = source.match(/slots\.register\(\s*\{[^}]*\},\s*([^)]*)\)/g) ?? []
-    expect(registrations.length).toBeGreaterThan(0)
-    for (const registration of registrations) {
-      // No registration site passes a bare component, and none may pass the row
-      // surface unbound: the operations object is what the row reads its state
-      // from, and the slot does not provide it.
-      expect(registration).toMatch(/withPanelBoundary\(\s*rewindRowSurface\(/)
+  it('every actual registered surface uses the shared boundary and binds operations', async () => {
+    const { record } = await activated()
+    expect(record.mounts).toHaveLength(2)
+    for (const registration of record.mounts) {
+      const tree = registration.component(POINT_PROPS)
+      expect(typeof tree.type.getDerivedStateFromError).toBe('function')
+      const bound = tree.props.children.type(POINT_PROPS)
+      expect(typeof bound.props.operations.run).toBe('function')
     }
   })
 
@@ -440,7 +450,7 @@ describe('the browser half mounts only when the Remote contract did (§6.5, §7)
     expect(fiber.state).toBe(FIBER_ACTIVE)
     expect(face.remoteMountState().status).toBe('mounted')
     expect(mounted).toHaveLength(1)
-    expect(record.definitions).toHaveLength(1)
+    expect(record.definitions).toHaveLength(3)
     expect(record.definitions[0]).toBe(face.REWIND_ROW_DEFINITION)
     expect(record.injected).toContain('conversation.chat.node')
     // The three slot-side services are NOT in the static inject list: a host
@@ -451,7 +461,7 @@ describe('the browser half mounts only when the Remote contract did (§6.5, §7)
 
   it('accepts either generation of the definition registry, and says so when neither is there', async () => {
     const older = await activated({ conversation: 'self' })
-    expect(older.record.definitions).toHaveLength(1)
+    expect(older.record.definitions).toHaveLength(3)
     expect(older.record.definitions[0]).toBe(older.face.REWIND_ROW_DEFINITION)
 
     const none = await clientComposition({ conversation: 'none' })

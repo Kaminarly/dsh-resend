@@ -92,3 +92,37 @@ export async function mount(element) {
   container.remove()
   return { html, thrown, reported }
 }
+
+/** Keep a rendered tree alive while a test drives real events and CSS. */
+export async function renderDom(element) {
+  installDom()
+  const { createRoot, act } = await reactRenderer()
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => root.render(element))
+  return {
+    container,
+    act,
+    async render(next) {
+      await act(async () => root.render(next))
+    },
+    async click(target) {
+      await act(async () => target.dispatchEvent(new window.MouseEvent('click', { bubbles: true })))
+    },
+    async key(target, key, options = {}) {
+      await act(async () => target.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...options })))
+    },
+    async change(target, value) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+      await act(async () => {
+        setter.call(target, value)
+        target.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+    },
+    async cleanup() {
+      await act(async () => root.unmount())
+      container.remove()
+    },
+  }
+}

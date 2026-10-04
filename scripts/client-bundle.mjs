@@ -59,6 +59,10 @@ const require_ = createRequire(new URL('../package.json', import.meta.url))
 export const MODULE_TABLE = Object.freeze({
   react: require_('react'),
   '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
+    IconCloseOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'close-outline', ...props }),
+    IconEditOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'edit-outline', ...props }),
+    IconPaperPlaneOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'paper-plane-outline', ...props }),
+    IconRefreshOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'refresh-outline', ...props }),
     IconWarningOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'warning-outline', ...props }),
   }),
 })
@@ -94,7 +98,7 @@ export function evaluateBundle(source = readFileSync(CLIENT_BUNDLE, 'utf8')) {
       throw new Error('client-modules: a plugin bundle must never create the module system')
     },
   }
-  vm.runInNewContext(source, { window: { __ModuleLoader__: moduleLoader } }, { filename: 'client.bundle.js' })
+  vm.runInNewContext(source, { window: { __ModuleLoader__: moduleLoader }, console }, { filename: 'client.bundle.js' })
   return pendingQueue
 }
 

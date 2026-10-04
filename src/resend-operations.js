@@ -8,8 +8,7 @@
  * answers decides which of the two states a rewind point is in:
  *
  *  - `queued` — the envelope carried `resendMessageId`, so the prompt reached the
- *    agent, and the rewind point is ordinary (ticket 06 renders its count
- *    notice);
+ *    agent, and the rewind point is ordinary and renders its count notice;
  *  - `resend-failed` — the envelope was a SUCCESS without it, i.e. the rewind
  *    landed and the agent did not take the prompt. §9.4's error row, with the
  *    "Send again" button, is what the user gets, and pressing it replays this
@@ -44,6 +43,8 @@ export const RESEND_FAILED = 'resend-failed'
 export function createResendOperations(remote) {
   /** `sessionId` → `carrierSeq` → the frozen record of that rewind point. */
   const bySession = new Map()
+  const recordsBySession = new Map()
+  const emptyRecords = Object.freeze([])
   const listeners = new Set()
 
   const notify = () => {
@@ -78,6 +79,7 @@ export function createResendOperations(remote) {
         status: resendMessageId === undefined ? RESEND_FAILED : 'queued',
       }),
     )
+    recordsBySession.set(request.sessionId, Object.freeze([...records.values()]))
     notify()
   }
 
@@ -95,6 +97,7 @@ export function createResendOperations(remote) {
   return {
     run,
     outcomeOf,
+    recordsFor: (sessionId) => recordsBySession.get(sessionId) ?? emptyRecords,
     /**
      * "Send again" (spec §9.4): replay the SAME request, so the host re-sends the
      * prompt and performs no second rewind. A point with no record has nothing to
@@ -122,6 +125,7 @@ export function createResendOperations(remote) {
     /** Drop this page's records and listeners when the plugin unloads. */
     dispose() {
       bySession.clear()
+      recordsBySession.clear()
       listeners.clear()
     },
   }

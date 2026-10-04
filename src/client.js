@@ -29,6 +29,8 @@ import { withPanelBoundary } from './panel-boundary.js'
 import { createResendOperations } from './resend-operations.js'
 import { PACKAGE } from './typert.js'
 import { REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rewindRowSurface } from './rewind-row.js'
+import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText } from './user-actions.js'
+import { hidePlanFor, hideRulesFor, hiddenKeysFor } from './hide-plan.js'
 import { TYPERT_REMOTE } from './typert.client.js'
 
 /**
@@ -52,7 +54,24 @@ export { TYPERT_REMOTE }
  * page's operations into it, the shared boundary the registration went through,
  * and the operations object behind "Send again".
  */
-export { createResendOperations, REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rewindRowSurface, withPanelBoundary }
+export {
+  createResendOperations,
+  REWIND_ROW_DEFINITION,
+  REWIND_ROW_KIND,
+  RewindRow,
+  rewindPointView,
+  rewindRowSurface,
+  USER_ACTIONS_DEFINITION,
+  SURFACE_SHADOW_DEFINITION,
+  USER_ACTIONS_KIND,
+  UserActionsRow,
+  userActionsSurface,
+  userMessageText,
+  hiddenKeysFor,
+  hidePlanFor,
+  hideRulesFor,
+  withPanelBoundary,
+}
 
 export const name = PACKAGE
 
@@ -79,18 +98,48 @@ const DICTIONARIES = {
   zh: {
     'row.resendFailed': '历史已被重写，但重发失败：agent 没有接收这条提示词。',
     'row.sendAgain': '重新发送',
+    'row.edit': '编辑',
+    'row.editInput': '编辑消息',
+    'row.send': '发送',
+    'row.cancel': '取消',
+    'row.editInComposer': '在输入框中编辑',
+    'row.hiddenCount': '已隐藏 {count} 条消息',
+    'row.dismiss': '关闭',
+    'row.hideFailed': '重写后的消息无法隐藏',
+    'row.stopFirst': '请先停止回复',
+    'row.noText': '这条消息没有可编辑的文本',
+    'row.blankText': '消息不能为空',
+    'row.composerBusy': '输入框正在忙碌，请稍后再试',
+    'row.composerUnavailable': '当前输入框无法接收文本',
+    'row.operationFailed': '编辑并重发失败，请重试',
     'panel.errorTitle': '这个界面无法显示',
     'panel.errorHint': '其余界面不受影响。可以重试，或刷新页面。',
     'panel.retry': '重试',
     'panel.error.rewindRow': '重写点无法显示',
+    'panel.error.userActions': '用户消息操作无法显示',
   },
   en: {
     'row.resendFailed': 'History was rewound, but the re-send failed: the agent did not take the prompt.',
     'row.sendAgain': 'Send again',
+    'row.edit': 'Edit',
+    'row.editInput': 'Edit message',
+    'row.send': 'Send',
+    'row.cancel': 'Cancel',
+    'row.editInComposer': 'Edit in the composer',
+    'row.hiddenCount': '{count} messages hidden',
+    'row.dismiss': 'Dismiss',
+    'row.hideFailed': 'The rewound messages could not be hidden',
+    'row.stopFirst': 'Stop the reply first',
+    'row.noText': 'This message has no editable text',
+    'row.blankText': 'The message cannot be blank',
+    'row.composerBusy': 'The composer is busy; try again later',
+    'row.composerUnavailable': 'The composer cannot accept text',
+    'row.operationFailed': 'Edit and resend failed; try again',
     'panel.errorTitle': 'This panel could not be displayed',
     'panel.errorHint': 'The rest of the UI is unaffected. Retry, or reload the page.',
     'panel.retry': 'Retry',
     'panel.error.rewindRow': 'This rewind point could not be displayed',
+    'panel.error.userActions': 'User message actions could not be displayed',
   },
 }
 
@@ -156,33 +205,58 @@ function mountSurfaces(scope, ctx) {
   const operations = createResendOperations(ctx.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
 
-  // The rewind point exists as a chat node because a Definition says so; the
-  // keyed slot occupant below is only the renderer for the kind it produces.
+  // The rewind point and the user action row are both chat nodes because a
+  // Definition says so; the keyed slot occupants below render their kinds.
   const register = conversationRegistrar(scope.uiConversation)
+  const slot = 'conversation.chat.node'
   if (register === undefined) {
     ctx.root.logger?.('dsh-resend')?.warn(
       'dsh-resend: uiConversation exposes no definition registry this build understands; the rewind-point row will not mount',
     )
   } else {
-    const dispose = register(REWIND_ROW_DEFINITION)
-    scope.effect(
-      () => () => {
-        try {
-          dispose?.()
-        } catch {
-          // A definition disposer is idempotent by contract; a host that throws
-          // here must not take the rest of the teardown with it.
-        }
-      },
-      'dsh-resend: rewind-point definition',
-    )
+    for (const [definition, label] of [
+      [REWIND_ROW_DEFINITION, 'dsh-resend: rewind-point definition'],
+      [USER_ACTIONS_DEFINITION, 'dsh-resend: user-actions definition'],
+      [SURFACE_SHADOW_DEFINITION, 'dsh-resend: surface eligibility definition'],
+    ]) {
+      const dispose = register(definition)
+      scope.effect(
+        () => () => {
+          try {
+            dispose?.()
+          } catch {
+            // A definition disposer is idempotent by contract; a host that
+            // throws here must not take the rest of teardown with it.
+          }
+        },
+        label,
+      )
+    }
   }
+
+  scope.inject(['conversation', 'sessions'], (inputScope) => {
+    inputScope.slots.inject(slot, () =>
+      inputScope.slots.register(
+        {
+          name: slot, key: USER_ACTIONS_KIND, locale: NS,
+          inject: (sessionId) => ({
+            readInput: () => {
+              const input = inputScope.conversation?.input
+              const sessionScope = inputScope.sessions?.scope?.(sessionId)
+              if (typeof input?.for !== 'function' || sessionScope === undefined) return undefined
+              return input.for(sessionScope)?.state?.getSnapshot?.()
+            },
+          }),
+        },
+        withPanelBoundary(userActionsSurface(operations), 'panel.error.userActions'),
+      ),
+    )
+  })
 
   // §7.4: the row goes through the shared boundary like every other surface —
   // no registration site passes a bare component — and the factory below binds
   // this page's operations into it, because the slot's standard props do not
   // carry plugin state.
-  const slot = 'conversation.chat.node'
   scope.slots.inject(slot, () =>
     scope.slots.register(
       { name: slot, key: REWIND_ROW_KIND, locale: NS },

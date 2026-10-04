@@ -6,9 +6,8 @@
  * that renders NOTHING (spec §5.4) — so this Definition is what puts a row where
  * the model context now begins:
  *
- *  - the **count notice** (§8.6) when the rewind is ordinary — ticket 06 owns its
- *    content, because its count must equal the number of keys in the emitted hide
- *    plan;
+ *  - the **count notice** (§8.6) when the rewind is ordinary — its count equals
+ *    the number of keys in the emitted hide plan;
  *  - the **error row** (§9.4) when the resend this plugin queued for that carrier
  *    was not taken — the warning icon, a plain statement that history was rewound
  *    and the re-send failed, and a "Send again" button that replays the same
@@ -18,18 +17,16 @@
  * single-valued, and {@link RewindRow} renders its one branch — so the plugin can
  * never show both (two claims about one rewind point) at once.
  *
- * What the plugin CANNOT yet show is the notice's content: its count must equal
- * the number of keys in the emitted hide plan (§8.6), which is ticket 06's
- * machinery, so until then that state renders no row rather than a number nobody
- * can stand behind. The state a rewind point is in is decided from the record
- * THIS PAGE LOAD produced (`./resend-operations.js`), because the re-send the error
+ * The state a rewind point is in is decided from the record THIS PAGE LOAD
+ * produced (resend-operations.js), because the re-send the error
  * row offers replays a request that includes client-side text; a page that did
  * not issue the call has nothing to replay and falls back to the notice state.
  */
-import { createElement, useSyncExternalStore } from 'react'
+import { createElement, useEffect, useState, useSyncExternalStore } from 'react'
 import { IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { hasMarkerPrefix } from './marker.js'
 import { RESEND_FAILED } from './resend-operations.js'
+import { useHiding } from './use-hiding.js'
 
 /**
  * The node kind, and the `conversation.chat.node` key that renders it.
@@ -83,17 +80,24 @@ export function rewindPointView(outcome) {
  * The subscription lives one level up, in {@link RewindRowSurface}.
  * @param props - `{ outcome, t, onSendAgain }`: this carrier's record, the slot's
  *   translator, and the replay.
- * @returns the row's element tree, or `null` for the state ticket 06 fills in.
+ * @returns the row's element tree.
  */
-export function RewindRow({ outcome, t, onSendAgain }) {
+export function RewindRow({ outcome, t, onSendAgain, hidePlan, hideError, onDismiss }) {
   const view = rewindPointView(outcome)
 
+  if (hideError !== undefined) {
+    return createElement('div', { className: 'dsh-resend-row dsh-resend-row-error', role: 'alert' }, [
+      createElement(IconWarningOutlineRegular, { key: 'icon', className: 'dsh-resend-row-icon' }),
+      createElement('span', { key: 'message', className: 'dsh-resend-row-message' }, t('row.hideFailed')),
+      createElement('pre', { key: 'detail', className: 'dsh-resend-row-detail' }, hideError),
+    ])
+  }
+
   if (view.kind === 'notice') {
-    // §8.6's count notice, owned by ticket 06. Its count is the number of keys in
-    // the emitted hide plan — NOT the number of shadowed seqs — so approximating
-    // it here would put a wrong number on exactly the large rewinds where it is
-    // the user's only warning. Rendering nothing is the honest seam.
-    return null
+    return createElement('div', { className: 'dsh-resend-row dsh-resend-row-notice' }, [
+      createElement('span', { key: 'message', className: 'dsh-resend-row-message' }, String(t('row.hiddenCount')).replace('{count}', String(hidePlan?.count ?? 0))),
+      createElement('button', { key: 'dismiss', type: 'button', className: 'dsh-resend-chip', onClick: onDismiss }, t('row.dismiss')),
+    ])
   }
 
   return createElement('div', { className: 'dsh-resend-row dsh-resend-row-error', role: 'alert' }, [
@@ -135,20 +139,41 @@ export function rewindRowSurface(operations) {
  * @param props - the bound standard props plus `{ node, sessionId, operations }`.
  * @returns the row, wrapped by the caller in the shared boundary.
  */
-function RewindRowSurface({ node, sessionId, operations, t }) {
+function RewindRowSurface(props) {
+  const { node, sessionId, operations, t } = props
   const point = { sessionId, carrierSeq: node?.data?.carrierSeq }
   // `operations.subscribe` is passed as the method itself, not wrapped: React
   // re-subscribes whenever that argument's identity changes, so a fresh closure
   // per render would tear the subscription down and rebuild it on every pass.
   const outcome = useSyncExternalStore(operations.subscribe, () => operations.outcomeOf(point))
+  const { plan, css, error } = useHiding(props)
+  const [dismissed, setDismissed] = useState(false)
+  const hidePlan = plan?.byCarrier.get(point.carrierSeq)
+  const missingPlan = plan !== undefined && hidePlan === undefined && !plan.errors.has(point.carrierSeq)
+    ? 'range ' + JSON.stringify(node.data.range ?? [point.carrierSeq]) + ': the rewind point is missing from the Chat hide plan'
+    : undefined
+  const hideError = error ?? plan?.errors.get(point.carrierSeq)?.message ?? missingPlan
+  useEffect(() => {
+    if (missingPlan !== undefined) console.warn('[dsh-resend] session ' + sessionId + ': unable to hide rewind ' + missingPlan)
+  }, [missingPlan, sessionId])
 
-  return createElement(RewindRow, {
+  const row = createElement(RewindRow, {
     outcome,
     t,
+    hidePlan,
+    hideError,
+    onDismiss: () => setDismissed(true),
     onSendAgain: () => {
       void operations.sendAgain(point)
     },
   })
+  // Dismiss only removes the notice text. The style element belongs to the row
+  // tree and remains mounted for the lifetime of the rewind point.
+  return createElement('div', null, [
+    createElement('style', { key: 'rules', 'data-dsh-resend-hide-rules': 'true' }, css),
+    (!dismissed || rewindPointView(outcome).kind === 'resend-failed' || hideError !== undefined) &&
+      createElement('div', { key: 'row' }, row),
+  ])
 }
 
 /**
@@ -163,7 +188,14 @@ export const REWIND_ROW_DEFINITION = {
   kind: REWIND_ROW_KIND,
   target: 'chat',
   match: (event) => (isCarrierEvent(event) ? { id: `dsh-resend:${String(event.data.id)}`, role: 'start' } : null),
-  start: (_context, match) => ({ carrierSeq: match.event.seq }),
+  start: (_context, match) => {
+    const event = match.event
+    const state = { carrierSeq: event.seq, range: { start: event.surfaceOp.startSeq, end: event.surfaceOp.endSeq } }
+    // The audit is the first citation. Remote records take precedence over this
+    // cold-load fallback when the live operation was performed on this page.
+    if (Array.isArray(event.sourceEventSeqs)) state.shadowedSeqs = event.sourceEventSeqs.slice(1)
+    return state
+  },
   update: (context) => context.state,
   buildViewNode: (context) => {
     if (context.state === undefined) return null
@@ -173,7 +205,9 @@ export const REWIND_ROW_DEFINITION = {
       id: context.id,
       target: 'chat',
       anchorSeq: context.state.carrierSeq,
-      location: context.start?.location ?? context.matches?.[0]?.location ?? { kind: 'unresolved' },
+      // A plugin kind would otherwise enter a collapsible process group. The
+      // disclosure must stay independently visible at its seq.
+      location: { kind: 'unresolved' },
       visibility: 'visible',
       data: context.state,
     }

@@ -95,6 +95,17 @@ export function resendApplyRequestSchema() {
  * variant per code in {@link ERROR_CODES}. Every field is readonly and every
  * object is strict, so an unknown member is rejected rather than folded away.
  *
+ * `resendMessageId` is OPTIONAL, and that is deliberate (ticket 05, spec §4.1,
+ * §9.4): its own meaning is "the id of the message queued to the agent", so a
+ * rewind that landed but whose prompt the agent did not take has no such id to
+ * report. The alternative — answering `ok: false` — would report FAILURE over a
+ * surface this plugin has already changed, which §9.4 forbids outright, and it
+ * would also withhold `carrierSeq`/`shadowedSeqs` from a client that needs them
+ * (the hide plan is built from the shadowed set). So the two outcomes are one
+ * success with an optional member: present means the prompt was queued, absent
+ * means the rewind stands and the re-send did not, and the client renders the
+ * §9.4 row for the latter.
+ *
  * The client never runs this schema (spec §16.5: the generated result codec
  * carries no `decode`, so the host's value passes through unchanged). It is
  * written out in full anyway: it is what the Typert registry serves to tooling,
@@ -109,7 +120,7 @@ export function resendApplyResultSchema() {
       value: z.readonly(z.strictObject({
         carrierSeq: z.readonly(z.number()),
         shadowedSeqs: z.readonly(z.array(z.number())),
-        resendMessageId: z.readonly(z.string()),
+        resendMessageId: z.optional(z.readonly(z.string())),
       })),
     }),
     z.strictObject({

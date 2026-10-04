@@ -40,10 +40,10 @@
  */
 import { foldSurface } from '@deepseek-ai/dsh-session'
 import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
-import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { refuse } from './error-codes.js'
 import { describeError, logWarning } from './host.js'
 import { coveringRefusalCode, eventAtSeq, readCoveringLog } from './log-read.js'
+import { MARKER_PREFIX, hasMarkerPrefix } from './marker.js'
 import { OP_KEY, REPLACE_OP, runtimeShapeBinding } from './shape-probe.js'
 import { shadowPriceSource, shadowedTokenCount } from './token-price.js'
 
@@ -64,23 +64,9 @@ const CARRIER_TYPE = 'user/message'
  */
 const CARRIER_SOURCE_KIND = 'cordis-host-runner'
 
-/** The stable plugin prefix marker identity lives behind (spec §5.4). */
-const MARKER_PREFIX = 'dsh-resend-'
-
 /**
- * Mint one marker id for an event this plugin writes.
- *
- * The id is the only place marker identity can live: `MessageSourceMap` is a
- * closed union of 17 kinds and a plugin cannot invent a `source.kind`, so
- * "this event is mine" has to be readable from the id (spec §5.4).
- * @param kind - what the id identifies, e.g. the op (`edit`) or `edit-resend`.
- * @returns `dsh-resend-<kind>-<uuid>`.
+ * The audit claim's exact key set (spec §5.3) — extra keys are a violation.
  */
-export function markerId(kind) {
-  return `${MARKER_PREFIX}${kind}-${randomUUID()}`
-}
-
-/** The audit claim's exact key set (spec §5.3) — extra keys are a violation. */
 const AUDIT_KEYS = ['shadowedRange', 'shadowedSeqs', 'shadowedTokenCount']
 
 /**
@@ -185,7 +171,7 @@ function assertPairContract(pair, { plan, auditSeq, carrierSeq, binding = runtim
 
   assertKeySet(Object.keys(carrier), CARRIER_KEYS, 'the carrier’s data')
   if (carrier.role !== 'user') throw new Error(`the carrier’s role must be "user", got ${JSON.stringify(carrier.role)} (spec §5.4)`)
-  if (typeof carrier.id !== 'string' || !carrier.id.startsWith(MARKER_PREFIX)) {
+  if (!hasMarkerPrefix(carrier.id)) {
     throw new Error(`the carrier’s id must carry the ${MARKER_PREFIX} prefix, got ${JSON.stringify(carrier.id)} (spec §5.4)`)
   }
   if (!Array.isArray(carrier.content) || carrier.content.length === 0) {

@@ -53,9 +53,9 @@ const clientFooter = `
  * runtime loads (`exports["./typert-client"]`), not browser code — the name
  * says which half mounts it, not which runtime executes it.
  *
- * `host.js`, `log-read.js`, `resolve.js`, `shape-probe.js` and `write.js` are
- * emitted as their own artifacts, and kept EXTERNAL in the others, for reasons
- * that are not packaging taste:
+ * `host.js`, `log-read.js`, `marker.js`, `resolve.js`, `shape-probe.js` and
+ * `write.js` are emitted as their own artifacts, and kept EXTERNAL in the
+ * others, for reasons that are not packaging taste:
  *
  *  - `log-read.js` is the one module allowed to read the host's raw event list,
  *    and `scripts/check-host-contract.mjs` enforces that by exempting exactly
@@ -66,6 +66,12 @@ const clientFooter = `
  *    seam the suite drives and the write consumes, so neither belongs inside the
  *    plugin's entry face. Inlining `host.js` would also ship the same utilities
  *    inside two artifacts.
+ *  - `marker.js` is the plugin's own event identities — the carrier's id and the
+ *    resend message's id derived from it (spec §5.4, §9.4). Three host readers
+ *    need it (the write's prefix contract, the resolver's retry verdict, the
+ *    service's minting) AND the client bundle inlines the same source to
+ *    recognize the carrier it renders a row for, so a single spelling is the
+ *    point rather than a packaging accident.
  *  - `shape-probe.js` is the one module that spells the `surfaceOp` endpoint key
  *    names (spec §5.4, §13.1 #7), and the suite holds that to the source: the
  *    artifact has to be its own file for the probe to be a seam rather than a
@@ -73,7 +79,7 @@ const clientFooter = `
  *  - `write.js` is the write itself — the pair, its pre-write validation, the
  *    flush and the orphan discipline — and the seam the suite drives end to end.
  *
- * All five are internal siblings, not export faces, so they are deliberately
+ * All six are internal siblings, not export faces, so they are deliberately
  * absent from `exports` in package.json.
  *
  * The modules those two entry points pull in stay INLINED, and that is also on
@@ -85,12 +91,13 @@ const clientFooter = `
  * before.
  */
 const ESM_ENTRIES = [
-  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './resolve.js', './write.js'] },
+  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './marker.js', './resolve.js', './write.js'] },
   { entry: 'src/host.js', out: 'host.js' },
   { entry: 'src/log-read.js', out: 'log-read.js', external: ['./host.js'] },
-  { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js'] },
+  { entry: 'src/marker.js', out: 'marker.js' },
+  { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js', './marker.js'] },
   { entry: 'src/shape-probe.js', out: 'shape-probe.js' },
-  { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './shape-probe.js'] },
+  { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './marker.js', './shape-probe.js'] },
   { entry: 'src/typert.host.js', out: 'typert.host.js' },
   { entry: 'src/typert.client.js', out: 'typert.client.js' },
 ]
@@ -98,7 +105,19 @@ const ESM_ENTRIES = [
 await rm(outDir, { recursive: true, force: true })
 await mkdir(outDir, { recursive: true })
 
-/** Client half → self-registering loader entry (classic script, factory-form CJS). */
+/**
+ * Client half → self-registering loader entry (classic script, factory-form CJS).
+ *
+ * `react` and the UI primitives are EXTERNAL: the Web client provides exactly one
+ * React instance through the module table, and the plugin's rows are rendered
+ * inside the host's own tree — inlining a second copy would give the boundary and
+ * the rows a different React from the host's, which is the classic hooks failure.
+ * The primitives come from the same table because they are the host's own atoms
+ * (its icon set and controls). Everything else — the marker identities, the
+ * descriptor table and its schemas — is bundled, because a bundle that needs a
+ * module-table entry the host does not have is exactly the drift
+ * `scripts/client-bundle.mjs` refuses.
+ */
 await build({
   entryPoints: [path.join(rootDir, 'src/client.js')],
   outfile: path.join(outDir, 'client.bundle.js'),
@@ -107,6 +126,7 @@ await build({
   format: 'cjs',
   platform: 'browser',
   target: 'es2022',
+  external: ['react', '@deepseek-ai/dsh-client-ui-primitives'],
   legalComments: 'none',
   banner: { js: clientBanner },
   footer: { js: clientFooter },

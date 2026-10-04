@@ -1,6 +1,7 @@
 /**
- * Read-only resolution: where the target is, what the range is, and which code
- * to refuse with — writing nothing (spec §4.2–§4.5; ticket 03).
+ * Read-only resolution: where the target is, what the range is, which code to
+ * refuse with, and whether the request is really ticket 05's re-send with no
+ * rewind — writing nothing (spec §4.2–§4.5, §9.4; tickets 03 and 05).
  *
  * The whole point of this module is that the range and the resend text come
  * from **one** covering log read per operation (see `./log-read.js`), and that
@@ -25,6 +26,20 @@
  *
  * and `replay-failed` is never dressed as any of them.
  *
+ * **One state is not in that list, and it is the state §9.4 is about.** A target
+ * covered by THIS plugin's own carrier, whose paired resend message
+ * (`./marker.js`) is nowhere in the log, is not "history is read-only": the
+ * rewind landed and the prompt never reached the agent, which is exactly the
+ * failure the user's "Send again" button exists for. Resolving it as
+ * `target-shadowed` would tell that user their history is gone when the one
+ * thing they can still do is send the prompt. So the same shadowing test that
+ * produces `target-shadowed` first asks whether the shadowing carrier is ours
+ * and its resend never landed, and answers a `kind: 'resend-only'` plan when it
+ * is. The check is log-derived, so it survives a host restart, and the read that
+ * carries it is the agreed surface (see {@link resendOnlyPlan}) — a read that
+ * dropped the resend message disagrees with the live surface and refuses
+ * `message-pending` before this verdict is reached.
+ *
  * The one degradation this module performs, in one place: when the covering read
  * cannot be folded at all, the LIVE surface becomes the only surface view (see
  * the fold below). Everything else refuses.
@@ -34,6 +49,7 @@ import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-forma
 import { refuse } from './error-codes.js'
 import { asArray, describeError, logWarning } from './host.js'
 import { coveringRefusalCode, eventAtSeq, readCoveringLog, readFileMaxSeq } from './log-read.js'
+import { isCarrierIdFor, resendIdFor } from './marker.js'
 
 /**
  * The code for a target the covering log does not hold (spec §4.5).
@@ -134,6 +150,85 @@ function promptText(event) {
 }
 
 /**
+ * Whether the covering log holds the `user/message` with this id.
+ *
+ * The one question ticket 05's re-send rests on: §4.1's `resendMessageId` is "the
+ * id of the message queued to the agent", so a message carrying it is the proof
+ * that this carrier's prompt was queued — and its absence, from a read already
+ * shown to agree with the live surface, is the proof that it never was.
+ * @param log - the covering log.
+ * @param id - the id being searched for.
+ * @returns true when an event in the log carries that id.
+ */
+function logHoldsMessage(log, id) {
+  return log.some((event) => event?.type === 'user/message' && event?.data?.id === id)
+}
+
+/**
+ * Ticket 05's resend-only plan: the rewind already landed and its prompt never
+ * reached the agent, so the one thing owed is the re-send (spec §9.4).
+ *
+ * Three facts together, all from the covering log and its fold:
+ *
+ *  - the range covering the target belongs to a carrier of OURS, for THIS
+ *    operation (`./marker.js`) — another plugin's replacement, or an edit
+ *    carrier answering a regenerate, is ordinary read-only history;
+ *  - the resend message that carrier's id derives is nowhere in the log;
+ *  - the prompt is still readable, so the re-send is not a guess: for an edit it
+ *    is the request's own text (validated exactly as §4.4 step 6 validates it),
+ *    for a regenerate the range start's message, which is the round's prompt.
+ *
+ * `undefined` means "not a re-send" and leaves the caller's `target-shadowed`
+ * verdict in place.
+ * @param log - the covering log.
+ * @param fold - the official fold of that log, or `undefined` when it did not
+ *   replay. Without the fold there is no range membership to read, and this is
+ *   not a re-send.
+ * @param request - the boundary-validated `ResendApplyRequest`.
+ * @returns `{ ok: true, value }` with a `kind: 'resend-only'` plan, a refusal,
+ *   or `undefined` when the target is simply shadowed.
+ */
+function resendOnlyPlan(log, fold, request) {
+  if (fold === undefined) return undefined
+  const { op, targetSeq } = request
+
+  const replacement = fold.replacements.find((candidate) => candidate.shadowedSeqs.includes(targetSeq))
+  if (replacement === undefined) return undefined
+
+  const carrier = eventAtSeq(log, replacement.seq)
+  const carrierId = carrier?.data?.id
+  if (carrier?.type !== 'user/message' || !isCarrierIdFor(op, carrierId)) return undefined
+  if (logHoldsMessage(log, resendIdFor(carrierId))) return undefined
+
+  let resendText
+  if (op === 'edit') {
+    resendText = request.text
+    if (typeof resendText !== 'string') return refuse('bad-request', 'op "edit" requires text')
+    if (resendText.trim() === '') return refuse('blank-text', 'the edited text is empty or whitespace-only')
+  } else {
+    // The carrier's range start is the round's prompt — the same fact §4.3
+    // resolves a regenerate from, read from this same covering log.
+    resendText = promptText(eventAtSeq(log, replacement.start))
+    if (resendText === undefined) {
+      return refuse('no-text', `the rewind at seq ${replacement.seq} was resolved from a prompt with no text block`)
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      kind: 'resend-only',
+      op,
+      targetSeq,
+      carrierSeq: replacement.seq,
+      resendMessageId: resendIdFor(carrierId),
+      shadowedSeqs: [...replacement.shadowedSeqs],
+      resendText,
+    },
+  }
+}
+
+/**
  * Resolve the target and the range without writing anything (spec §4.3).
  *
  * The order of the checks is normative (§4.3): a missing target is decided
@@ -146,8 +241,11 @@ function promptText(event) {
  * @param liveSurfaceNodes - the LIVE session's current surface node seqs, in
  *   surface order (`session.surface.nodes`). §4.3 names the live surface as the
  *   surface; the covering read's own fold is the cross-check on it.
- * @returns `{ ok: true, value: plan }` with
- *   `{ op, targetSeq, rangeStartSeq, endSeq, shadowedSeqs, resendText }`, or
+ * @returns `{ ok: true, value: plan }` with `kind: 'rewind'` and
+ *   `{ op, targetSeq, rangeStartSeq, endSeq, shadowedSeqs, resendText }` — the
+ *   pair to write — or `kind: 'resend-only'` and
+ *   `{ op, targetSeq, carrierSeq, resendMessageId, shadowedSeqs, resendText }`,
+ *   the already-landed rewind whose prompt is still owed (spec §9.4), or
  *   `{ ok: false, error: { code, detail? } }` in spec §4.5's vocabulary.
  */
 export async function resolveTarget(ctx, request, liveSurfaceNodes) {
@@ -216,6 +314,13 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
   // the session's own view and knows nothing about what this read dropped, so a
   // read that cannot be folded can never make a rewound target look alive.
   if (coveredByCarrier || !liveNodes.includes(targetSeq)) {
+    // …unless the carrier that covers it is OUR OWN and its prompt never
+    // reached the agent: that is §9.4's recoverable failure, not read-only
+    // history, and the re-send is the whole of what the user is owed.
+    if (coveredByCarrier) {
+      const owed = resendOnlyPlan(log, fold, request)
+      if (owed !== undefined) return owed
+    }
     return refuse('target-shadowed', coveredByCarrier ? `a carrier's range covers seq ${targetSeq}` : `seq ${targetSeq} is off the active surface`)
   }
 
@@ -279,6 +384,7 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
   return {
     ok: true,
     value: {
+      kind: 'rewind',
       op,
       targetSeq,
       rangeStartSeq,

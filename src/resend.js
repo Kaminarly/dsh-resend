@@ -19,16 +19,24 @@
  * input, session, agent, target resolution, op-specific text. It NEVER rejects
  * for a business outcome (§4.5) — every refusal resolves a `RemoteResult`
  * failure carrying one of the closed vocabulary's codes — and what it writes is
- * one pair of events: the audit claim and its carrier (§5.2–§5.4). The resend
- * itself is ticket 05's.
+ * one pair of events: the audit claim and its carrier (§5.2–§5.4).
+ *
+ * From ticket 05 it also RESENDS: the carrier renders nothing, so the `followup`
+ * that queues the prompt is the only new row the user sees (§5.5). Two failure
+ * outcomes are deliberately separated (§9.4): a prompt the agent did not take
+ * leaves the rewind standing and is reported by the client's own error row, and
+ * a turn that was accepted and then failed is the agent's own reporting — this
+ * service makes no claim about it and invents no row for it.
  */
 import { Service } from '@deepseek-ai/cordis'
+import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertCode } from './error-codes.js'
 import { describeError, hostService, logWarning } from './host.js'
+import { carrierIdFor, resendIdFor } from './marker.js'
 import { resolveTarget } from './resolve.js'
 import { withSessionLock } from './session-lock.js'
 import { traceTextNow } from './trace-text.js'
-import { markerId, writeRewindPair } from './write.js'
+import { writeRewindPair } from './write.js'
 import { NAMESPACE, SERVICE } from './typert.js'
 
 /**
@@ -55,15 +63,6 @@ function failure(code) {
 }
 
 /**
- * Build the `ok: true` branch of the result envelope (spec §4.1).
- * @param value - `{ carrierSeq, shadowedSeqs, resendMessageId }`.
- * @returns a frozen `RemoteResult` success.
- */
-function success(value) {
-  return Object.freeze({ ok: true, value: Object.freeze(value) })
-}
-
-/**
  * Run one host read, mapping an unexpected throw to `internal` (spec §4.5).
  *
  * This is not the bare `try`/`catch` §4.5 forbids: it never invents a business
@@ -83,7 +82,70 @@ function guarded(read) {
 }
 
 /**
- * The locked body: resolve, write the pair, and answer.
+ * Hand the prompt to the agent, and report whether it was taken (spec §5.5,
+ * §9.4).
+ *
+ * `followup` is fire-and-forget: it returns `undefined` — not a thenable — so
+ * there is nothing to `await` and nothing to catch, and it does not even throw
+ * for a missing or disposed agent (§16.2). The ONE inference the call site has
+ * is `agent.status`, read immediately after the call: `running` means the turn
+ * was accepted, anything else means it was not.
+ *
+ * The input is the plain four-member message, passed through VERBATIM. The agent
+ * loop appends the claimed inbox input as the event's data
+ * (`@dsh-agent-loop/lib/index.js:1061`), which is what makes the id minted at
+ * write time the id of the row the user sees — and `createUserMessage` must NOT
+ * be used for it: the `createMessage` helper behind it does
+ * `{ ...input, id: brandString(randomUUID()) }`, which would silently disconnect
+ * `resendMessageId` from the message it names.
+ *
+ * Nothing here waits for the turn, and nothing here claims anything about how it
+ * ends. A turn that was accepted and then failed reports itself, in the
+ * transcript, at the same turn; this plugin owning that case would report one
+ * failure twice (§9.4).
+ * @param ctx - the host context.
+ * @param handoff - `{ agent, sessionId, resendMessageId, text }`.
+ * @returns true when the agent took the prompt.
+ */
+function handOffPrompt(ctx, { agent, sessionId, resendMessageId, text }) {
+  try {
+    agent.followup({ role: 'user', id: resendMessageId, content: [{ type: 'text', text }], source: { kind: 'user' } })
+    if (agent.status === 'running') return true
+    logWarning(
+      ctx,
+      `the rewind of ${JSON.stringify(sessionId)} stands, but the agent did not take the prompt (status ${JSON.stringify(agent.status)}): ` +
+        `the re-send is owed and the client offers it (spec §9.4)`,
+    )
+  } catch (error) {
+    // §16.2 measured no throw here at all — this branch exists so that IF one
+    // ever appears it cannot do the one thing §9.4 forbids: turn a rewind that
+    // already landed and was flushed into a reported failure. A call that threw
+    // queued nothing, and "not queued" is the state "Send again" can act on.
+    logWarning(ctx, `the re-send for ${JSON.stringify(sessionId)} could not be handed to the agent: ${describeError(error)}`)
+  }
+  return false
+}
+
+/**
+ * Build the `ok: true` branch of the result envelope (spec §4.1, §9.4).
+ *
+ * `resendMessageId` is present exactly when the prompt was queued: it is
+ * literally "the id of the message queued to the agent", so a rewind whose
+ * prompt was not taken has no such id to report — and the client renders its
+ * error row for the absence. Reporting a FAILURE here instead would report
+ * failure over a surface this plugin has already changed, which §9.4 forbids,
+ * and it would withhold the `carrierSeq`/`shadowedSeqs` the client needs.
+ * @param value - `{ carrierSeq, shadowedSeqs, resendMessageId }`; the last is
+ *   `undefined` when the agent did not take the prompt.
+ * @returns a frozen `RemoteResult` success.
+ */
+function rewindResult({ carrierSeq, shadowedSeqs, resendMessageId }) {
+  const value = resendMessageId === undefined ? { carrierSeq, shadowedSeqs } : { carrierSeq, shadowedSeqs, resendMessageId }
+  return Object.freeze({ ok: true, value: Object.freeze(value) })
+}
+
+/**
+ * The locked body: resolve, write the pair, resend, and answer.
  *
  * A module-level function rather than a private method on the Service: the
  * Gateway reaches this class through Cordis's service proxy, so `this` inside
@@ -121,6 +183,28 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     }
     const plan = resolution.value
 
+    // §9.4's "Send again": this target's rewind already landed and its prompt
+    // never reached the agent, so the re-send is the whole operation. No second
+    // audit claim, no second carrier, no flush — the log is already correct, and
+    // running the write path again would rewrite a surface the user still wants.
+    if (plan.kind === 'resend-only') {
+      // §4.4 rule 4, re-read here because this call may have waited behind
+      // another operation inside the lock: neither operation happens while a
+      // reply is streaming (§9.2). The re-send only queues a prompt and writes
+      // nothing, so it refuses — it never cancels the user's own turn, which is
+      // what the write boundary below may do for a turn that raced it.
+      if (agent.status !== 'idle') {
+        logWarning(ctx, `the re-send for ${JSON.stringify(sessionId)} was asked for while a turn was open on it (spec §4.4 rule 4)`)
+        return failure('agent-busy')
+      }
+      const taken = handOffPrompt(ctx, { agent, sessionId, resendMessageId: plan.resendMessageId, text: plan.resendText })
+      return rewindResult({
+        carrierSeq: plan.carrierSeq,
+        shadowedSeqs: plan.shadowedSeqs,
+        resendMessageId: taken ? plan.resendMessageId : undefined,
+      })
+    }
+
     // §4.4's defensive precondition, in the one place it can still matter: a
     // turn that opened between the rule-4 check and this write. The plugin never
     // cancels the user's streaming reply (that is rule 4, and §9.2 has the user
@@ -136,42 +220,49 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
       }
     }
 
-    // §5.2–§5.4 — the pair. The identity the carrier and the resend message are
-    // marked with is minted here, once per operation; the trace text is chosen
-    // here, once, and is immutable in the log from then on (§10).
-    const carrierMarker = markerId(op)
-    const resendMessageId = markerId(`${op}-resend`)
+    // §5.2–§5.4 — the pair. The carrier's id is minted here, once per operation,
+    // and the resend message's id is DERIVED from it (`./marker.js`): that
+    // derivation is what makes "was this carrier's prompt ever queued?"
+    // answerable from the log alone, which is the question §9.4's re-send rests
+    // on. The trace text is chosen here, once, and is immutable in the log from
+    // then on (§10).
+    const carrierId = carrierIdFor(op, randomUUID())
+    const resendMessageId = resendIdFor(carrierId)
     const write = await writeRewindPair(ctx, {
       sessions,
       session,
       sessionId,
       plan,
-      carrierId: carrierMarker,
+      carrierId,
       traceText: traceTextNow(ctx),
     })
     if (!write.ok) {
       if (write.error.code === 'internal') {
         logWarning(ctx, `resend.apply could not write the rewind pair for ${JSON.stringify(sessionId)}: ${write.error.detail ?? 'no detail'}`)
       }
+      // A write that did not land stays a FAILURE, and §11's own row for the carrier
+      // refused after the audit claim landed says "report failure, and show
+      // §9.4" — which cannot both be obeyed: §9.4's row describes a rewind that
+      // HAPPENED and a re-send that did not, and here no carrier landed, so there
+      // is no rewind point for such a row to sit at and claiming a rewound
+      // history would be the mirror image of the lie §9.4 forbids. §9.4 is the
+      // normative text on what that row may say, so the failure is reported as a
+      // failure, and the orphan claim is made diagnosable in the host log
+      // instead (`./write.js`, §11).
       return failure(write.error.code)
     }
 
-    // The resend is ticket 05's: the carrier renders nothing, so the message
-    // queued to the agent is the only new row the user sees. Until it lands,
-    // `resendMessageId` is the identity this operation reserved for it — and
-    // §4.1's field is literally "id of the message queued to the agent", so
-    // ticket 05 must hand THIS id to `followup` as the input's own `id` member:
-    // the agent loop appends the claimed inbox input verbatim
-    // (`@dsh-agent-loop/lib/index.js:1061`), so that member is what the queued
-    // `user/message` ends up carrying. Two traps for that ticket: the input must
-    // be the plain four-member message (`{ role, id, content, source }`), and it
-    // must NOT be routed through `createUserMessage` — the `createMessage`
-    // helper behind it overwrites `id` with a fresh UUID
-    // (`@deepseek-ai/dsh-llm`: `lib/index.js:37-42` on the pinned 0.2.0-rc.1,
-    // `lib/types/message.js` on 0.2.0-rc.2), which would disconnect the envelope
-    // from the row it names. Without both, ticket 05's own checklist and this
-    // field are mutually unsatisfiable.
-    return success({ carrierSeq: write.value.carrierSeq, shadowedSeqs: write.value.shadowedSeqs, resendMessageId })
+    // §5.5 — the resend, inside the same lock and after the flush: the carrier
+    // renders nothing, so the message queued to the agent is the only new row
+    // the user sees. The flush has already made the rewind durable, which is why
+    // a failure here can only ever be reported as "the re-send did not happen",
+    // never as a failure of the rewind itself (§9.4).
+    const taken = handOffPrompt(ctx, { agent, sessionId, resendMessageId, text: plan.resendText })
+    return rewindResult({
+      carrierSeq: write.value.carrierSeq,
+      shadowedSeqs: write.value.shadowedSeqs,
+      resendMessageId: taken ? resendMessageId : undefined,
+    })
   } catch (error) {
     logWarning(ctx, `resend.apply failed unexpectedly while rewinding ${JSON.stringify(sessionId)}: ${describeError(error)}`)
     return failure('internal')
@@ -196,8 +287,9 @@ export class ResendService extends Service {
   }
 
   /**
-   * One edit-and-resend or regenerate: rewind the range, then (ticket 05)
-   * resend the prompt.
+   * One edit-and-resend or regenerate: rewind the range, then resend the prompt
+   * — or, when the rewind already landed and its prompt never reached the agent,
+   * only the resend (spec §5.5, §9.4).
    *
    * Every diagnosable line for an unexpected fault goes through `logWarning`
    * (spec §11, §12); every business refusal is legible to the user as one of the

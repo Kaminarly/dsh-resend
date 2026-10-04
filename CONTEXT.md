@@ -76,6 +76,7 @@ _Avoid_: tree, variant, alternative, forked message — DSH has no session tree 
 **Replay turn**:
 The composite mechanism both features reduce to: rewind the model surface **in place**, in the same session, by appending a **pair** of events — the audit claim below, then the carrier — whose `surfaceOp` replaces the target message and everything after it, then `prompt` the replacement text as a fresh append. Regenerate replays with the original text; edit-and-resend replays with the edited text.
 **It does not fork.** `sessions.fork` exists but is not this mechanism — forking would move the user to a different session. The fresh append matters twice over: it is what prompts the model, and (because replacement carriers never render) it is also the only thing that makes the new text visible to the user.
+That append is the **resend message**, and its id is derived from the carrier's own id. The derivation is not bookkeeping: it is what lets a later reader answer "was this carrier's prompt ever queued?" from the log alone, which is the question the "Send again" affordance turns on.
 _Avoid_: rerun, resubmit, branch, fork
 
 **Audit claim**:
@@ -85,3 +86,7 @@ _Avoid_: prune event, tombstone, log entry
 **Carrier**:
 The `user/message` event that closes the pair: it consumes the claim, splices the replaced range out of the model surface, becomes the new surface tail, and renders **nothing** (it is not append-origin — see Transcript). Its `id` carries the plugin's marker prefix, and its `source.kind` is the host-plugin kind, never a human-turn kind.
 _Avoid_: replacement message, stub message, placeholder
+
+**Rewind point**:
+The position in the transcript where a replay turn's carrier sits — the seq the model surface now begins at. The plugin renders its own row there, and that row is exactly one of two things: the count notice, or the error row that offers "Send again" when the carrier's prompt never reached the agent. Which one it is follows from the log (the row exists because a carrier does), with the one page-local exception the error row's own retry text creates.
+_Avoid_: marker row, notice row, boundary marker

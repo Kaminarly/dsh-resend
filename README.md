@@ -4,7 +4,7 @@ Edit-and-resend and regenerate for DeepSeek Harness conversations: reopen a sent
 user message and send the edit again, or produce an assistant reply again from
 the same prompt.
 
-**Status: the contract is live, the operation resolves, and the rewind is written.**
+**Status: the contract is live, the operation resolves, the rewind is written, and the prompt is sent.**
 The package installs and loads — the Host plugin registers the Typert descriptor
 table and creates the `resend` service, the Client plugin mounts the same
 contribution with `ctx.remote.$mount` — so `resend.apply` is a real,
@@ -22,8 +22,25 @@ together through the host's own replay *before* the first append, appended
 adjacently, and flushed exactly once. The carrier renders nothing; the replaced
 range leaves the model surface and stays in the transcript; and the audit claim
 carries the **official** shadow price, so the host's own token fold subtracts the
-range instead of silently overestimating it. The resend itself — the message
-queued to the agent — is the next ticket's.
+range instead of silently overestimating it.
+
+**The resend is live too.** After that flush the prompt is queued to the agent
+with `agent.followup`, and the result envelope reports the id of the message that
+was queued — that message is the only new row the user sees, because the carrier
+renders nothing. `followup` is fire-and-forget and returns `undefined`, so the
+one acceptance signal is `agent.status`, read immediately after the call: when
+the agent did not take the prompt, the rewind **stands** and the envelope simply
+omits that id. The client then renders an error row at the rewind point with a
+"Send again" button, and pressing it replays the same request — the host re-sends
+the prompt and performs **no** second rewind. A turn the agent accepted and which
+then failed is deliberately not this plugin's to report: the agent reports it
+itself, in the transcript.
+
+The retry the button offers lives for the page load that recorded it, because the
+request it replays (including an edited message's text) is client state by
+construction. The affordances that produce a rewind — the action row under a user
+message, the regenerate control, the settings, and the row hiding — are the
+remaining tickets; today the client half renders only the rewind-point error row.
 
 ## Targeted upstream
 
@@ -133,6 +150,16 @@ peer: the shipped code never imports it. It resolves the meter through
 (spec §5.3), so the audit claim's price is the number the host's own fold
 subtracts. The suite imports the same package's estimator to check that price
 independently, and a missing estimator makes the suite throw rather than skip.
+
+`react-dom` and `jsdom` are devDependencies only, and no shipped artifact imports
+either: they are the DOM the client-half suite renders into. The claim they exist
+for — a render throw inside one registered surface becomes that surface's own
+failure row while everything else keeps rendering — can only be answered where
+React's boundary semantics actually run, and neither server renderer can answer
+it (the legacy one propagates the throw, the streaming one makes a throw during
+the shell fatal). `react` itself is a peer instead, because the page provides
+exactly one instance through the module table: a second copy in the bundle is the
+classic hooks failure, not a test detail.
 
 `node-addon-require-builtin` is a devDependency with no import anywhere in this
 package: it is cordis's optional peer, and its presence is what lets the Loader

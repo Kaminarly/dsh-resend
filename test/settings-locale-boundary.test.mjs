@@ -1,0 +1,430 @@
+/**
+ * Settings, localization, and the one shared error boundary (ticket 08; spec
+ * §7 registration 4, §7.4, §10, §13.3 #19–#21).
+ *
+ * The end-to-end behaviour this ticket owns: three preferences that take
+ * effect immediately in the very pass that flips them; a UI that is exactly
+ * one of two languages at any moment, with slot-projected labels provided as
+ * thunks so a language switch needs no re-registration; the trace text, whose
+ * language is picked at WRITE time and is immutable once written; and the one
+ * boundary implementation every registered surface goes through — so a render
+ * throw in one surface becomes that surface's own failure row, never a blank
+ * page.
+ *
+ * As in the sibling files, everything drives the shipped bundle
+ * (`clientHalf()`), never `src/` — the suite holds the tree the browser
+ * actually receives.
+ */
+import { describe, expect, it, vi } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+import { createElement } from 'react'
+import { clientHalf } from '../scripts/client-bundle.mjs'
+import { clientComposition } from './helpers/client.mjs'
+import { mount, renderDom } from './helpers/render.mjs'
+import { rootDir } from './helpers/dsh.mjs'
+import { TRACE_TEXT, traceTextNow } from '../lib/trace-text.js'
+
+/** The bundle's published seams, materialized once for the whole file. */
+const face = clientHalf().exports
+
+/**
+ * One activated composition: the shipped half against the four client doubles.
+ * Each call materializes a FRESH module instance, so the preferences store a
+ * toggle test mutates never leaks into the next test's defaults.
+ */
+async function activated(options = {}) {
+  const composition = await clientComposition(options)
+  const page = clientHalf().exports
+  await composition.ctx.plugin(page)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  return composition
+}
+
+/** The settings registration, found by its id. */
+const settingsOf = (composition) => composition.record.mounts.find((entry) => entry.options.id === 'dsh-resend-preferences')
+
+/** The action-row registration, found by its key. */
+const actionsOf = (composition) => composition.record.mounts.find((entry) => entry.options.key === 'dsh-resend-user-actions')
+
+/** The rewind-point registration, found by its key. */
+const rewindOf = (composition) => composition.record.mounts.find((entry) => entry.options.key === 'dsh-resend-error')
+
+/** The regenerate registration, found by its id. */
+const regenerateOf = (composition) => composition.record.mounts.find((entry) => entry.options.id === 'dsh-resend-regenerate')
+
+/**
+ * One snapshot that answers every surface in this file: the user row, the
+ * action row, the reply row, and the rewind point whose record shadows seqs
+ * 2 and 3 (the default recording-remote result, once an edit is sent).
+ */
+const SNAPSHOT_NODES = new Map([
+  ['user-2', { key: 'user-2', kind: 'user', anchorSeq: 2 }],
+  ['assigned-actions', { key: 'assigned-actions', kind: 'dsh-resend-user-actions', anchorSeq: 2, data: { seq: 2, text: 'original' } }],
+  ['reply-3', { key: 'reply-3', kind: 'assistant-step', anchorSeq: 3 }],
+  ['point-5', { key: 'point-5', kind: 'dsh-resend-error', anchorSeq: 5, data: { carrierSeq: 5, shadowedSeqs: [2, 3] } }],
+])
+const SNAPSHOT = { nodes: SNAPSHOT_NODES }
+
+/**
+ * The same transcript without the carrier node: until an edit lands, nothing is
+ * shadowed, so the action row is visible — the Edit chip is present and clickable.
+ */
+const LIVE_NODES = new Map([...SNAPSHOT_NODES].filter(([key]) => key !== 'point-5'))
+const LIVE = { nodes: LIVE_NODES }
+
+/** The standard slot props the action row registration receives, for one snapshot. */
+function actionProps(composition, snapshot = LIVE) {
+  const registration = actionsOf(composition)
+  return {
+    node: SNAPSHOT_NODES.get('assigned-actions'),
+    sessionId: 'session-1',
+    t: composition.ctx.get('locale').bind('dsh-resend'),
+    useChat: (select) => select(snapshot),
+    useInput: (select) => select(composition.record.input),
+    useSession: (select) => select({ running: false }),
+    inputActions: { setDraft: (text) => composition.record.draftWrites.push(text) },
+    ...registration.options.inject('session-1'),
+  }
+}
+
+/** The snapshot the rewind point reads its count from. */
+function rewindProps(composition) {
+  return {
+    node: SNAPSHOT_NODES.get('point-5'),
+    sessionId: 'session-1',
+    t: composition.ctx.get('locale').bind('dsh-resend'),
+    useChat: (select) => select(SNAPSHOT),
+  }
+}
+
+/** The last-reply companion snapshot, the way the regenerate fixture builds one. */
+const REGENERATE_SNAPSHOT = { nodes: new Map([
+  ['step-2', { key: 'step-2', kind: 'assistant-step', anchorSeq: 2 }],
+  ['companion-2', { key: 'companion-2', kind: 'dsh-resend-regenerate', anchorSeq: 2, visibility: 'hidden', data: { seq: 2, id: 'reply-2', prevSeq: null, prompt: { seq: 1, isAppend: true, sourceKind: 'user', hasText: true } } }],
+  ['step-6', { key: 'step-6', kind: 'assistant-step', anchorSeq: 6 }],
+  ['companion-6', { key: 'companion-6', kind: 'dsh-resend-regenerate', anchorSeq: 6, visibility: 'hidden', data: { seq: 6, id: 'reply-6', prevSeq: 2, prompt: { seq: 5, isAppend: true, sourceKind: 'user', hasText: true } } }],
+])}
+const regenerateProps = (composition) => ({
+  messageId: 'reply-6',
+  sessionId: 'session-1',
+  t: composition.ctx.get('locale').bind('dsh-resend'),
+  useChat: (select) => select(REGENERATE_SNAPSHOT),
+  useSession: (select) => select({ running: false }),
+})
+
+/** One button in a rendered tree, by its visible text; `null` when absent. */
+const buttonIn = (container, text) => [...container.querySelectorAll('button')].find((button) => button.textContent === text) ?? null
+
+/** One settings toggle, by its field. */
+const toggleIn = (container, field) => container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
+
+describe('registration 4: the three preferences (spec §7)', () => {
+  it('registers the settings row under its own id, with a thunk label and no owner props', async () => {
+    const composition = await activated()
+    const registration = settingsOf(composition)
+    expect(registration).not.toBeUndefined()
+    expect(registration.options).toEqual({
+      name: 'settings.general.item',
+      id: 'dsh-resend-preferences',
+      order: expect.any(Number),
+      locale: 'dsh-resend',
+      label: expect.any(Function),
+    })
+    expect(registration.options.id).not.toBe('dsh-resend-regenerate')
+    expect(typeof registration.component).toBe('function')
+  })
+
+  it('defaults are all on, and a toggle takes effect in the very pass that flips it — hide off leaves rows visible with the notice row', async () => {
+    const composition = await activated()
+    const settingsDom = await renderDom(createElement(settingsOf(composition).component))
+    const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
+    try {
+      // Every preference starts on.
+      for (const field of ['hideReplacedMessages', 'inlineEditorBeneathMessage', 'regenerateLastReply']) {
+        const toggle = settingsDom.container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
+        expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+      }
+
+      // Send one edit so this page has a record: seqs 2 and 3 are shadowed.
+      await chatDom.click(buttonIn(chatDom.container, 'Edit'))
+      await chatDom.change(chatDom.container.querySelector('textarea'), 'edited')
+      await chatDom.key(chatDom.container.querySelector('textarea'), 'Enter')
+      expect(composition.calls).toHaveLength(1)
+
+      // Hide on: the rules hide the replaced rows.
+      let style = chatDom.container.querySelector('style[data-dsh-resend-hide-rules]')
+      expect(style.textContent).toContain('user-2')
+      expect(style.textContent).toContain('display:none')
+
+      // The notice row reports the count.
+      const noticeDom = await renderDom(createElement(rewindOf(composition).component, rewindProps(composition)))
+      try {
+        expect(noticeDom.container.textContent).toContain('3 messages hidden')
+      } finally {
+        await noticeDom.cleanup()
+      }
+
+      // Off, from the settings row: the chat root re-renders in the same pass.
+      await settingsDom.click(toggleIn(settingsDom.container, 'hideReplacedMessages'))
+      await chatDom.act(async () => {})
+      expect(toggleIn(settingsDom.container, 'hideReplacedMessages')?.getAttribute('aria-pressed')).toBe('false')
+      style = chatDom.container.querySelector('style[data-dsh-resend-hide-rules]')
+      expect(style.textContent).toBe('')
+
+      // The notice row is what remains — the count, not the hiding.
+      const noticeAgain = await renderDom(createElement(rewindOf(composition).component, rewindProps(composition)))
+      try {
+        expect(noticeAgain.container.textContent).toContain('3 messages hidden')
+      } finally {
+        await noticeAgain.cleanup()
+      }
+    } finally {
+      await chatDom.cleanup()
+      await settingsDom.cleanup()
+    }
+  })
+
+  it('inline editor off removes the editor from the row and keeps the composer handoff', async () => {
+    const composition = await activated()
+    const settingsDom = await renderDom(createElement(settingsOf(composition).component))
+    const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
+    try {
+      // On: the row opens an inline editor.
+      await chatDom.click(buttonIn(chatDom.container, 'Edit'))
+      expect(chatDom.container.querySelector('textarea')).not.toBeNull()
+      await chatDom.click(buttonIn(chatDom.container, 'Cancel'))
+
+      // Off: the editor is gone and the handoff remains.
+      await settingsDom.click(toggleIn(settingsDom.container, 'inlineEditorBeneathMessage'))
+      await chatDom.act(async () => {})
+      expect(chatDom.container.querySelector('textarea')).toBeNull()
+      const composer = buttonIn(chatDom.container, 'Edit in the composer')
+      expect(composer).not.toBeNull()
+      expect(composer.disabled).toBe(false)
+      expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
+    } finally {
+      await chatDom.cleanup()
+      await settingsDom.cleanup()
+    }
+  })
+
+  it('regenerate off hides the control entirely', async () => {
+    const composition = await activated()
+    const settingsDom = await renderDom(createElement(settingsOf(composition).component))
+    const stripDom = await renderDom(createElement(regenerateOf(composition).component, regenerateProps(composition)))
+    try {
+      expect(buttonIn(stripDom.container, 'Regenerate')).not.toBeNull()
+
+      await settingsDom.click(toggleIn(settingsDom.container, 'regenerateLastReply'))
+      await stripDom.act(async () => {})
+      expect(stripDom.container.innerHTML).toBe('')
+      expect(stripDom.container.querySelector('button')).toBeNull()
+    } finally {
+      await stripDom.cleanup()
+      await settingsDom.cleanup()
+    }
+  })
+})
+
+describe('localization: one language at a time, labels by thunk (spec §10)', () => {
+  it('a language switch re-reads every label without re-registering', async () => {
+    const composition = await activated()
+    const locale = composition.ctx.get('locale')
+    expect(locale.active).toBe('en')
+    const registration = settingsOf(composition)
+    const strip = regenerateOf(composition)
+
+    // The slot-projected labels are thunks, and they read the live locale.
+    expect(typeof registration.options.label).toBe('function')
+    expect(registration.options.label()).toBe('Message editing settings')
+    expect(typeof strip.options.label).toBe('function')
+    expect(strip.options.label()).toBe('Regenerate')
+
+    // The settings row is English; its owner passes no props at all.
+    const settingsDom = await renderDom(createElement(registration.component))
+    // And the chat surfaces are English through the slot's own translator.
+    const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
+    try {
+      expect(settingsDom.container.textContent).toContain('Hide replaced messages')
+      expect(buttonIn(chatDom.container, 'Edit')).not.toBeNull()
+
+      // One language at a time: flip the active locale. No register call follows.
+      locale.active = 'zh'
+      await settingsDom.render(createElement(registration.component))
+      await chatDom.render(createElement(actionsOf(composition).component, actionProps(composition)))
+      expect(settingsDom.container.textContent).toContain('隐藏被替换的消息')
+      expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
+      expect(buttonIn(chatDom.container, '编辑')).not.toBeNull()
+      expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
+      expect(registration.options.label()).toBe('消息编辑设置')
+      expect(strip.options.label()).toBe('重新生成')
+      expect(composition.record.dictionaries).toHaveLength(1)
+      expect(composition.record.mounts).toHaveLength(4)
+    } finally {
+      await chatDom.cleanup()
+      await settingsDom.cleanup()
+    }
+  })
+
+  it('carries the new keys in both dictionaries', async () => {
+    const composition = await activated()
+    const entry = composition.record.dictionaries.find((item) => item.namespace === 'dsh-resend')
+    expect(Object.keys(entry.dictionaries).sort()).toEqual(['en', 'zh'])
+    for (const key of [
+      'settings.heading', 'settings.hideReplacedMessages', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
+      'settings.on', 'settings.off',
+      'panel.error.inlineEditor', 'panel.error.hideRules', 'panel.error.settings',
+    ]) {
+      expect(Object.keys(entry.dictionaries.en)).toContain(key)
+      expect(Object.keys(entry.dictionaries.zh)).toContain(key)
+    }
+  })
+})
+
+describe('the trace text picks its language at write time (spec §5.4, §10)', () => {
+  const ctxWith = (active) => ({ get: (name) => (name === 'locale' ? { getSnapshot: () => ({ active }) } : undefined) })
+
+  it('records the active locale at write time, and defaults to English', () => {
+    expect(traceTextNow(ctxWith('zh'))).toBe(TRACE_TEXT.zh)
+    expect(traceTextNow(ctxWith('en'))).toBe(TRACE_TEXT.en)
+    expect(traceTextNow({ get: () => undefined })).toBe(TRACE_TEXT.en)
+    expect(traceTextNow(ctxWith('fr'))).toBe(TRACE_TEXT.en)
+  })
+
+  it('is immutable once written: the recorded text is a frozen constant', () => {
+    expect(Object.isFrozen(TRACE_TEXT)).toBe(true)
+    expect(Object.isFrozen(TRACE_TEXT.en)).toBe(true)
+    expect(Object.isFrozen(TRACE_TEXT.zh)).toBe(true)
+    const written = traceTextNow(ctxWith('zh'))
+    // A later locale change cannot reach back into what was already written.
+    expect(traceTextNow(ctxWith('en'))).toBe(TRACE_TEXT.en)
+    expect(written).toBe(TRACE_TEXT.zh)
+  })
+})
+
+describe('the one shared boundary across all six registered surfaces (spec §7.4)', () => {
+  const SIX_TITLES = Object.freeze([
+    'panel.error.userActions',
+    'panel.error.inlineEditor',
+    'panel.error.rewindRow',
+    'panel.error.regenerate',
+    'panel.error.settings',
+    'panel.error.hideRules',
+  ])
+
+  it('wraps every surface through the same implementation, each with its own localized title', async () => {
+    const composition = await activated()
+    const t = composition.ctx.get('locale').bind('dsh-resend')
+    function ThrowingSurface() {
+      throw new Error('surface boom')
+    }
+    const warn = vi.spyOn(console, 'warn')
+    try {
+      for (const titleKey of SIX_TITLES) {
+        const { html, thrown } = await mount(
+          createElement(face.withPanelBoundary(ThrowingSurface, titleKey), { t }),
+        )
+        expect(thrown, titleKey).toBeUndefined()
+        expect(html, titleKey).toContain('dsh-resend-panel-error')
+        expect(html, titleKey).toContain('role="alert"')
+        expect(html, titleKey).toContain(t(titleKey))
+        expect(html, titleKey).toContain('surface boom')
+        expect(html, titleKey).toContain(t('panel.retry'))
+      }
+      // One implementation: the one shared console message, six times.
+      expect(warn.mock.calls).toHaveLength(SIX_TITLES.length)
+      for (const call of warn.mock.calls) {
+        // The thrown error is created in the test's realm, so the boundary sees a
+        // foreign error and reports it as `Error: <message>` — assert the shared
+        // prefix and the message, not the exact string.
+        expect(call[0].startsWith('[dsh-resend] a registered surface failed to render: ')).toBe(true)
+        expect(call[0]).toContain('surface boom')
+      }
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('offers a retry that re-renders the surface', async () => {
+    const composition = await activated()
+    const t = composition.ctx.get('locale').bind('dsh-resend')
+    let broken = true
+    function FlakySurface() {
+      if (broken) throw new Error('surface boom')
+      return createElement('div', { className: 'dsh-resend-recovered' }, 'back')
+    }
+    const dom = await renderDom(createElement(face.withPanelBoundary(FlakySurface, 'panel.error.userActions'), { t }))
+    try {
+      expect(dom.container.querySelector('.dsh-resend-panel-error')).not.toBeNull()
+      broken = false
+      await dom.click(dom.container.querySelector('button.dsh-resend-chip'))
+      expect(dom.container.querySelector('.dsh-resend-recovered')).not.toBeNull()
+      expect(dom.container.querySelector('.dsh-resend-panel-error')).toBeNull()
+    } finally {
+      await dom.cleanup()
+    }
+  })
+
+  it('no registration site passes a bare component (source guard)', () => {
+    const srcDir = path.join(rootDir, 'src')
+    const files = readdirSync(srcDir).filter((file) => file.endsWith('.js'))
+    const texts = files.map((file) => readFileSync(path.join(srcDir, file), 'utf8'))
+
+    // Exactly one boundary implementation in the whole half.
+    expect(texts.join('\n').match(/class PanelBoundary/g)).toHaveLength(1)
+
+    // Every slots.register site hands its component through the factory.
+    const client = texts.find((text) => text.includes('function mountSurfaces'))
+    expect(client).not.toBeUndefined()
+    const registerSites = client.split('slots.register(').length - 1
+    expect(registerSites).toBe(4)
+    for (const chunk of client.split(/slots\.register\(/).slice(1)) {
+      expect(chunk.slice(0, 800)).toContain('withPanelBoundary(')
+    }
+
+    // The sub-surfaces are factory products too, not inline elements: the file
+    // that DEFINES each (not one that merely re-exports it) binds it to the factory.
+    expect(texts.some((text) => /HideRulesSurface\s*=\s*withPanelBoundary\(/.test(text))).toBe(true)
+    expect(texts.some((text) => /InlineEditorSurface\s*=\s*withPanelBoundary\(/.test(text))).toBe(true)
+  })
+
+  it('a deliberately throwing surface leaves the other surfaces intact; without the boundary the same component throws out of the render', async () => {
+    const composition = await activated()
+    const t = composition.ctx.get('locale').bind('dsh-resend')
+    const throwingOperations = {
+      subscribe: () => () => {},
+      recordsFor: () => {
+        throw new Error('this surface read a path that was permanently undefined')
+      },
+    }
+    const props = { ...actionProps(composition), operations: throwingOperations, preferences: face.preferences }
+
+    // One edit lands so the sibling has a record to count: seqs 2 and 3 shadowed.
+    const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
+    await chatDom.click(buttonIn(chatDom.container, 'Edit'))
+    await chatDom.change(chatDom.container.querySelector('textarea'), 'edited')
+    await chatDom.key(chatDom.container.querySelector('textarea'), 'Enter')
+    expect(composition.calls).toHaveLength(1)
+
+    // (a) wrapped, beside a working sibling surface: only the thrower fails.
+    const wrapped = face.withPanelBoundary(face.userActionsSurface(throwingOperations, face.preferences), 'panel.error.userActions')
+    const { html, thrown } = await mount(createElement('div', null, [
+      createElement(rewindOf(composition).component, { key: 'sibling', ...rewindProps(composition) }),
+      createElement(wrapped, { key: 'row', t, node: SNAPSHOT_NODES.get('assigned-actions'), sessionId: 'session-1',
+        useChat: (select) => select(SNAPSHOT), useInput: (select) => select(composition.record.input),
+        useSession: (select) => select({ running: false }), inputActions: { setDraft: () => {} },
+        readInput: () => ({ phase: 'plain' }) }),
+    ]))
+    await chatDom.cleanup()
+    expect(thrown).toBeUndefined()
+    expect(html).toContain('messages hidden')
+    expect(html).toContain(t('panel.error.userActions'))
+    expect(html).toContain('this surface read a path that was permanently undefined')
+
+    // (b) the same component without the boundary: the throw escapes the render.
+    const unboundaried = await mount(createElement(face.UserActionsRow, props))
+    expect(unboundaried.thrown).toBeDefined()
+    expect(unboundaried.html).toBe('')
+  })
+})

@@ -28,6 +28,7 @@
  * dialog.
  */
 import { createElement, useRef, useState } from 'react'
+import { usePreferences } from './preferences.js'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useHiding } from './use-hiding.js'
 
@@ -124,10 +125,11 @@ const REASON_TEXT = Object.freeze({
  * `id`, the same durable value the host's strip renders per reply.
  */
 export function RegenerateControl(props) {
-  const { messageId, sessionId, operations, t, useChat, useSession, useConversation } = props
+  const { messageId, sessionId, operations, preferences, t, useChat, useSession, useConversation } = props
   const chat = typeof useChat === 'function' ? useChat(identity) : undefined
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
   const { plan } = useHiding({ useChat, useConversation, sessionId, operations, suppressError: true })
+  const prefs = usePreferences(preferences)
 
   const states = companionStates(chat)
   const state = states.find((candidate) => candidate.id === messageId) ?? null
@@ -156,6 +158,9 @@ export function RegenerateControl(props) {
     }
   }
 
+  // The regenerate preference (ticket 08): off, the control disappears entirely —
+  // not a greyed chip, nothing at all, the same shape as the not-last verdict.
+  if (prefs.regenerateLastReply === false) return null
   if (reason === 'notLast') return null
   const disabledReason = reason === null ? undefined : t(REASON_TEXT[reason])
   return createElement('div', { className: 'dsh-resend-regenerate' }, [
@@ -177,9 +182,9 @@ export function RegenerateControl(props) {
 }
 
 /** Bind the plugin's operations into the control, the way the other surfaces are bound. */
-export function regenerateSurface(operations) {
+export function regenerateSurface(operations, preferences) {
   return function BoundRegenerate(props) {
-    return createElement(RegenerateControl, { ...props, operations })
+    return createElement(RegenerateControl, { ...props, operations, preferences })
   }
 }
 

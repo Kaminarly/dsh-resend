@@ -35,11 +35,11 @@ export const patchRows = (() => {
  * artifact otherwise forces the same list to be edited in four places in
  * lockstep (and one of them silently keeps passing when it is not).
  *
- * `host.js`, `log-read.js`, `marker.js`, `resolve.js`, `shape-probe.js` and
- * `write.js` are internal siblings rather than export faces: `lib/index.js`
- * imports `host.js`, `marker.js`, `resolve.js` and `write.js`, `resolve.js`,
- * `write.js` and `log-read.js` import `host.js`, `write.js` imports
- * `shape-probe.js` and `marker.js` as well, and
+ * `host.js`, `log-read.js`, `marker.js`, `resolve.js`, `shape-probe.js`,
+ * `trace-text.js` and `write.js` are internal siblings rather than export faces:
+ * `lib/index.js` imports `host.js`, `marker.js`, `resolve.js`, `trace-text.js`
+ * and `write.js`, `resolve.js`, `write.js` and `log-read.js` import `host.js`,
+ * `write.js` imports `shape-probe.js` and `marker.js` as well, and
  * `scripts/check-host-contract.mjs` exempts exactly `log-read.js` from §12's
  * legacy-event-view invariant (see `scripts/build.mjs`).
  */
@@ -51,6 +51,7 @@ export const libArtifacts = Object.freeze([
   { file: 'marker.js', source: 'src/marker.js' },
   { file: 'resolve.js', source: 'src/resolve.js' },
   { file: 'shape-probe.js', source: 'src/shape-probe.js' },
+  { file: 'trace-text.js', source: 'src/trace-text.js' },
   { file: 'write.js', source: 'src/write.js' },
   { file: 'typert.client.js', source: 'src/typert.client.js' },
   { file: 'typert.host.js', source: 'src/typert.host.js' },

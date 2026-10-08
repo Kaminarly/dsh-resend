@@ -26,6 +26,7 @@
  * corresponding feature is absent and nothing else is affected.
  */
 import { withPanelBoundary } from './panel-boundary.js'
+import { createPreferences } from './preferences.js'
 import { createResendOperations } from './resend-operations.js'
 import {
   ASSISTANT_ACTIONS_DEFINITION,
@@ -38,9 +39,11 @@ import {
   regenerateReason,
   regenerateSurface,
 } from './regenerate.js'
+import { SETTINGS_ROW_ID, SettingsRow, settingsSurface } from './settings-row.js'
+import { HideRulesSurface } from './hide-rules.js'
 import { PACKAGE } from './typert.js'
 import { REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rewindRowSurface } from './rewind-row.js'
-import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText } from './user-actions.js'
+import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText, InlineEditorSurface } from './user-actions.js'
 import { hidePlanFor, hideRulesFor, hiddenKeysFor } from './hide-plan.js'
 import { TYPERT_REMOTE } from './typert.client.js'
 
@@ -91,6 +94,13 @@ export {
   hidePlanFor,
   hideRulesFor,
   withPanelBoundary,
+  createPreferences,
+  preferences,
+  SettingsRow,
+  settingsSurface,
+  SETTINGS_ROW_ID,
+  HideRulesSurface,
+  InlineEditorSurface,
 }
 
 export const name = PACKAGE
@@ -107,6 +117,16 @@ export const inject = ['remote']
 
 /** The dictionary namespace this plugin owns (spec §10). */
 const NS = PACKAGE
+
+/**
+ * This page's preferences store, created once per materialization (ticket 08,
+ * spec §7 registration 4). Every chat surface and the settings row read the same
+ * store, so a toggle in the settings row is immediate everywhere; and because
+ * the store exists even when the host has no `settings.general.item` slot, a
+ * missing slot means the feature simply runs on the defaults — "槽位缺失时用默认
+ * 值，没有设置界面" — nothing else is affected.
+ */
+const preferences = createPreferences()
 
 /**
  * The two dictionaries (spec §10: Chinese and English, never both at once).
@@ -143,6 +163,15 @@ const DICTIONARIES = {
     'panel.error.rewindRow': '重写点无法显示',
     'panel.error.userActions': '用户消息操作无法显示',
     'panel.error.regenerate': '重生成功能无法显示',
+    'panel.error.inlineEditor': '内联编辑器无法显示',
+    'panel.error.hideRules': '隐藏规则无法显示',
+    'panel.error.settings': '设置行无法显示',
+    'settings.heading': '消息编辑设置',
+    'settings.hideReplacedMessages': '隐藏被替换的消息',
+    'settings.inlineEditorBeneathMessage': '消息下方的内联编辑器',
+    'settings.regenerateLastReply': '最后一条回复上的重新生成',
+    'settings.on': '开',
+    'settings.off': '关',
   },
   en: {
     'row.resendFailed': 'History was rewound, but the re-send failed: the agent did not take the prompt.',
@@ -172,6 +201,15 @@ const DICTIONARIES = {
     'panel.error.rewindRow': 'This rewind point could not be displayed',
     'panel.error.userActions': 'User message actions could not be displayed',
     'panel.error.regenerate': 'The regenerate control could not be displayed',
+    'panel.error.inlineEditor': 'The inline editor could not be displayed',
+    'panel.error.hideRules': 'The hide rules could not be displayed',
+    'panel.error.settings': 'The settings row could not be displayed',
+    'settings.heading': 'Message editing settings',
+    'settings.hideReplacedMessages': 'Hide replaced messages',
+    'settings.inlineEditorBeneathMessage': 'Inline editor beneath the message',
+    'settings.regenerateLastReply': 'Regenerate on the last reply',
+    'settings.on': 'On',
+    'settings.off': 'Off',
   },
 }
 
@@ -235,6 +273,11 @@ function conversationRegistrar(service) {
 function mountSurfaces(scope, ctx) {
   scope.effect(() => scope.locale.register(NS, DICTIONARIES), 'dsh-resend: dictionaries')
 
+  // The live translator: every label this half projects re-reads the active
+  // locale on each call, so a language switch needs no re-registration — the
+  // registered option carries a THUNK, never a projected string (spec §10).
+  const translate = scope.locale.bind(NS)
+
   const operations = createResendOperations(ctx.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
 
@@ -282,7 +325,7 @@ function mountSurfaces(scope, ctx) {
             },
           }),
         },
-        withPanelBoundary(userActionsSurface(operations), 'panel.error.userActions'),
+        withPanelBoundary(userActionsSurface(operations, preferences), 'panel.error.userActions'),
       ),
     )
   })
@@ -294,7 +337,7 @@ function mountSurfaces(scope, ctx) {
   scope.slots.inject(slot, () =>
     scope.slots.register(
       { name: slot, key: REWIND_ROW_KIND, locale: NS },
-      withPanelBoundary(rewindRowSurface(operations), 'panel.error.rewindRow'),
+      withPanelBoundary(rewindRowSurface(operations, preferences), 'panel.error.rewindRow'),
     ),
   )
 
@@ -307,8 +350,20 @@ function mountSurfaces(scope, ctx) {
   const actionsSlot = 'conversation.chat.assistant-actions'
   scope.slots.inject(actionsSlot, () =>
     scope.slots.register(
-      { name: actionsSlot, id: ASSISTANT_ACTIONS_ID, order: 100, locale: NS },
-      withPanelBoundary(regenerateSurface(operations), 'panel.error.regenerate'),
+      { name: actionsSlot, id: ASSISTANT_ACTIONS_ID, order: 100, locale: NS, label: () => translate('row.regenerate') },
+      withPanelBoundary(regenerateSurface(operations, preferences), 'panel.error.regenerate'),
+    ),
+  )
+
+  // Registration 4 (ticket 08): the settings row, on the ROOT scope's own
+  // settings slot. The owner passes no props at all, so the boundary factory
+  // takes the live translator as its third argument — a prop-less surface must
+  // still be able to draw its own failure row.
+  const settingsSlot = 'settings.general.item'
+  scope.slots.inject(settingsSlot, () =>
+    scope.slots.register(
+      { name: settingsSlot, id: SETTINGS_ROW_ID, order: 100, locale: NS, label: () => translate('settings.heading') },
+      withPanelBoundary(settingsSurface(preferences, translate), 'panel.error.settings', translate),
     ),
   )
 }

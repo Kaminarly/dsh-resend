@@ -112,7 +112,7 @@ describe('hide rules at the transcript boundary', () => {
     const chat = { nodes: new Map([...snapshot.nodes, [pointNode.key, pointNode]]) }
     const rows = [...snapshot.nodes.values()].map((node) => createElement('div', { key: node.key, 'data-chat-anchor-key': node.key }, 'old'))
     const t = (key) => ({ 'row.hiddenCount': '已隐藏 {count} 条消息', 'row.dismiss': '关闭' })[key] ?? key
-    const dom = await renderDom(createElement('div', null, [...rows, createElement(face.rewindRowSurface(operations), {
+    const dom = await renderDom(createElement('div', null, [...rows, createElement(face.rewindRowSurface(operations, face.preferences), {
       key: 'point', node: pointNode, sessionId: 'session-1', t, useChat: (select) => select(chat),
     })]))
     try {
@@ -134,7 +134,7 @@ describe('hide rules at the transcript boundary', () => {
     const node = face.REWIND_ROW_DEFINITION.buildViewNode({ key: 'cold', id: 'cold', state })
     const chat = { nodes: new Map([...snapshot.nodes, ['cold', node]]) }
     const operations = face.createResendOperations({})
-    const row = face.rewindRowSurface(operations)
+    const row = face.rewindRowSurface(operations, face.preferences)
     const props = { node, sessionId: 'cold-session', t: (key) => key === 'row.hiddenCount' ? '{count} messages hidden' : key,
       useChat: (select) => select(chat) }
     const dom = await renderDom(createElement(row, props))
@@ -157,7 +157,7 @@ describe('hide rules at the transcript boundary', () => {
     const rewindNode = { key: 'rewind-5', kind: 'dsh-resend-error', anchorSeq: 5,
       data: { carrierSeq: 5, range: { start: 2, end: 3 } } }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const dom = await renderDom(createElement(face.rewindRowSurface(operations), {
+    const dom = await renderDom(createElement(face.rewindRowSurface(operations, face.preferences), {
       node: rewindNode, sessionId: 'session-1', t: (key) => key, useChat: (select) => select({}),
     }))
     try {
@@ -179,7 +179,7 @@ describe('hide rules at the transcript boundary', () => {
       ['user-4', { key: 'user-4', kind: 'user', anchorSeq: 4 }],
       ...rows.map((node) => [node.key, node]),
     ]) }
-    const component = face.userActionsSurface(brokenOperations)
+    const component = face.userActionsSurface(brokenOperations, face.preferences)
     const dom = await renderDom(createElement('div', null, rows.map((node) => createElement(component, {
       key: node.key, node, sessionId: 'session-1', t: (key) => key,
       useChat: (select) => select(chat), useInput: (select) => select({ phase: 'plain' }),

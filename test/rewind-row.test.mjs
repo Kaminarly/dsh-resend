@@ -35,6 +35,7 @@ const {
   REWIND_ROW_DEFINITION,
   REWIND_ROW_KIND,
   RewindRow,
+  createPreferences,
   createResendOperations,
   inject,
   rewindPointView,
@@ -340,7 +341,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // gap a hand-supplied `operations` would hide.
     const failedRecords = Object.freeze([FAILED])
     const queuedRecords = Object.freeze([QUEUED])
-    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED, recordsFor: () => failedRecords }), 'panel.error.rewindRow')
+    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED, recordsFor: () => failedRecords }, createPreferences()), 'panel.error.rewindRow')
     const slotProps = POINT_PROPS
 
     const failed = await mount(createElement(row, slotProps))
@@ -352,7 +353,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // …and the same wiring at a QUEUED point shows no error row at all — the
     // exclusion is what the user sees, not only what a function returns.
     const queued = await mount(
-      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED, recordsFor: () => queuedRecords }), 'panel.error.rewindRow'), slotProps),
+      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED, recordsFor: () => queuedRecords }, createPreferences()), 'panel.error.rewindRow'), slotProps),
     )
     expect(queued.thrown).toBeUndefined()
     expect(queued.html).toContain('row.hiddenCount')
@@ -366,7 +367,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
       },
       outcomeOf: () => FAILED,
     }
-    const row = withPanelBoundary(rewindRowSurface(operations), 'panel.error.rewindRow')
+    const row = withPanelBoundary(rewindRowSurface(operations, createPreferences()), 'panel.error.rewindRow')
 
     const { html, thrown } = await mount(
       createElement('div', null, [
@@ -409,16 +410,21 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     expect(html).toBe('')
   })
 
-  it('every actual registered surface uses the shared boundary and binds operations', async () => {
+  it('every actual registered surface uses the shared boundary and binds its own state', async () => {
     const { record } = await activated()
-    // Ticket 07 adds the assistant-actions list entry, so the half now registers
-    // three slot occupants (the two keyed rows and the list entry).
-    expect(record.mounts).toHaveLength(3)
+    // Ticket 08 adds the settings row, so the half now registers four slot
+    // occupants (the two keyed rows, the list entry, and the settings row).
+    expect(record.mounts).toHaveLength(4)
     for (const registration of record.mounts) {
       const tree = registration.component(POINT_PROPS)
       expect(typeof tree.type.getDerivedStateFromError).toBe('function')
       const bound = tree.props.children.type(POINT_PROPS)
-      expect(typeof bound.props.operations.run).toBe('function')
+      if (registration.options.id === 'dsh-resend-preferences') {
+        // The settings row binds the preferences store, not the operations.
+        expect(typeof bound.props.preferences.set).toBe('function')
+      } else {
+        expect(typeof bound.props.operations.run).toBe('function')
+      }
     }
   })
 

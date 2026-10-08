@@ -83,20 +83,23 @@ const clientFooter = `
  * absent from `exports` in package.json.
  *
  * The modules those two entry points pull in stay INLINED, and that is also on
- * purpose: `token-price.js` and `trace-text.js` have exactly one reader each
- * (the write and the service), and `session-lock.js` must be the SAME instance
- * wherever it is reached — one lock per session, not one per artifact — which
- * only holds while there is a single place it is bundled into. A module earns
- * an artifact (and a test-visible seam) when a second reader appears, not
- * before.
+ * purpose: `token-price.js` has exactly one reader (the write) and `session-lock.js`
+ * must be the SAME instance wherever it is reached — one lock per session, not
+ * one per artifact — which only holds while there is a single place it is
+ * bundled into. A module earns an artifact (and a test-visible seam) when a
+ * second reader appears, not before. `trace-text.js` was inlined into the write
+ * until ticket 08: the suite now drives the trace text through the SHIPPED
+ * `lib/trace-text.js` seam, so it becomes its own artifact and stays external in
+ * `index.js`, exactly like its siblings.
  */
 const ESM_ENTRIES = [
-  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './marker.js', './resolve.js', './write.js'] },
+  { entry: 'src/index.js', out: 'index.js', external: ['./host.js', './log-read.js', './marker.js', './resolve.js', './trace-text.js', './write.js'] },
   { entry: 'src/host.js', out: 'host.js' },
   { entry: 'src/log-read.js', out: 'log-read.js', external: ['./host.js'] },
   { entry: 'src/marker.js', out: 'marker.js' },
   { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js', './marker.js'] },
   { entry: 'src/shape-probe.js', out: 'shape-probe.js' },
+  { entry: 'src/trace-text.js', out: 'trace-text.js' },
   { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './marker.js', './shape-probe.js'] },
   { entry: 'src/typert.host.js', out: 'typert.host.js' },
   { entry: 'src/typert.client.js', out: 'typert.client.js' },

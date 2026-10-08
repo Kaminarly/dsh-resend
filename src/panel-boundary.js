@@ -90,13 +90,20 @@ class PanelBoundary extends Component {
  * `titleKey` is that surface's own localized failure title, so a broken panel
  * says which panel it is — and `t` is taken from the slot's own props, because
  * the failure row is rendered before any plugin store is trustworthy.
+ *
+ * A slot that hands the component NOTHING (the settings row's owner passes no
+ * props at all, §7 registration 4) has no `t` to take — that surface's factory
+ * passes `baseTranslate`, the live translator the factory bound itself, as the
+ * third argument. It is a FALLBACK the slot's translator always outranks, so a
+ * surface registered through a normal chat slot is unaffected by it.
  * @param Surface - the surface component.
  * @param titleKey - the i18n key of this surface's failure title.
+ * @param baseTranslate - optional: the translator a prop-less registration uses.
  * @returns the component a registration site may pass.
  */
-export function withPanelBoundary(Surface, titleKey) {
+export function withPanelBoundary(Surface, titleKey, baseTranslate) {
   return function Panel({ t, ...props }) {
-    const translate = translatorOrKey(t)
+    const translate = translatorOrKey(t ?? baseTranslate)
     return createElement(
       PanelBoundary,
       { t: translate, title: translate(titleKey) },

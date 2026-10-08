@@ -1,6 +1,9 @@
 /** The user-message action row, plain-text editor and chat-node Definition. */
 import { createElement, useRef, useState } from 'react'
 import { IconCloseOutlineRegular, IconEditOutlineRegular, IconPaperPlaneOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { usePreferences } from './preferences.js'
+import { HideRulesSurface } from './hide-rules.js'
+import { withPanelBoundary } from './panel-boundary.js'
 import { useHiding } from './use-hiding.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
@@ -11,15 +14,55 @@ export function userMessageText(eventOrData) {
   return Array.isArray(content) ? content.filter((part) => part?.type === 'text').map((part) => part.text).join('\n') : ''
 }
 
-export function userActionsSurface(operations) {
+export function userActionsSurface(operations, preferences) {
   return function BoundUserActions(props) {
-    return createElement(UserActionsRow, { ...props, operations })
+    return createElement(UserActionsRow, { ...props, operations, preferences })
   }
 }
 
+/**
+ * One grey-able chip: disabled while the row is in flight or the reason says
+ * no, and the reason on hover. A module-level helper — the row and the inline
+ * editor are two surfaces now, and both draw the same control.
+ * @param key - the React key of the chip in its array.
+ * @param label - the chip's visible text.
+ * @param icon - the icon element, or nothing for a text-only chip.
+ * @param onClick - the chip's action.
+ * @param reason - the hover reason, or undefined for a live chip. A reason
+ *   also greys the chip out — it explains why the chip cannot act.
+ * @param disabled - whether the chip is greyed out, independent of reason.
+ */
+const control = (key, label, icon, onClick, reason, disabled) => createElement('button', {
+  key, type: 'button', className: 'dsh-resend-chip', onClick,
+  disabled: disabled || reason !== undefined, title: reason,
+}, icon === undefined ? label : [
+  createElement(icon, { key: 'icon', size: 14 }),
+  createElement('span', { key: 'label' }, label),
+])
+
+/**
+ * Surface 2: the inline editor, a sub-surface of the action row (ticket 08,
+ * spec §7.4). It is its own boundary-wrapped component so a throw while
+ * editing — the one place this surface reads live data — fails as the editor's
+ * own row, not the whole action row. It renders an ARRAY (no wrapper div), so
+ * the row's DOM is the editor's DOM: the same four children, in the same place.
+ */
+function InlineEditor({ t, value, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+  return [
+    createElement('textarea', { key: 'textarea', value, rows: 3, autoFocus: true,
+      disabled, 'aria-label': t('row.editInput'), onChange: onText, onKeyDown }),
+    control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
+    control('composer', t('row.editInComposer'), undefined, onComposer, composerReason, disabled),
+    control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
+  ]
+}
+
+export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.inlineEditor')
+
 export function UserActionsRow(props) {
-  const { node, sessionId, inputActions, useInput, useSession, readInput, operations, t } = props
-  const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
+  const { node, sessionId, inputActions, useInput, useSession, readInput, operations, preferences, t } = props
+  const prefs = usePreferences(preferences)
+  const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true, hide: prefs.hideReplacedMessages })
   const data = node.data
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(data.text)
@@ -84,35 +127,36 @@ export function UserActionsRow(props) {
       void send()
     }
   }
-  const style = createElement('style', { key: 'rules', 'data-dsh-resend-hide-rules': 'true' }, css)
+  const inlineOn = prefs.inlineEditorBeneathMessage
+  // Surface 6: the hide-rules element, now a boundary-wrapped surface, is the
+  // one DOM node the transcript hides with. It is created here and reused at
+  // every site that used to carry the raw <style>.
+  const rules = createElement(HideRulesSurface, { key: 'rules', t, css })
   // A hide failure belongs to the rewind point that produced the range. This
   // action row must remain usable when another rewind point has bad data.
   const localDiagnostics = hideError ?? diagnostics.find((entry) => entry.shadowedSeqs.includes(data.seq))?.message
   if (localDiagnostics !== undefined) {
-    return createElement('div', { role: 'alert', className: 'dsh-resend-row-error' }, [style,
+    return createElement('div', { role: 'alert', className: 'dsh-resend-row-error' }, [
+      createElement(HideRulesSurface, { key: 'rules', t, css }),
       createElement('span', { key: 'message' }, t('row.hideFailed')),
       createElement('pre', { key: 'detail' }, localDiagnostics),
     ])
   }
-  if (hidden || !plan?.userSeqs.has(data.seq)) return style
+  if (hidden || !plan?.userSeqs.has(data.seq)) return rules
 
-  const control = (key, label, icon, onClick, reason) => createElement('button', {
-    key, type: 'button', className: 'dsh-resend-chip', onClick, disabled: pending || reason !== undefined,
-    title: reason,
-  }, icon === undefined ? label : [
-    createElement(icon, { key: 'icon', size: 14 }),
-    createElement('span', { key: 'label' }, label),
-  ])
-
+  const idle = !inlineOn
+    ? [control('composer', t('row.editInComposer'), undefined, editInComposer, stopReason ?? composerReason, pending)]
+    : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending)]
+  const body = !editing
+    ? idle
+    : [createElement(InlineEditorSurface, {
+      key: 'inline', t, value: text, disabled: pending, stopReason, composerReason,
+      onText: (event) => setText(event.target.value),
+      onSend: () => { void send() }, onComposer: editInComposer, onCancel: cancel, onKeyDown,
+    })]
   return createElement('div', { className: 'dsh-resend-user-actions' }, [
-    style,
-    ...(!editing ? [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason)] : [
-      createElement('textarea', { key: 'textarea', value: text, rows: 3, autoFocus: true,
-        disabled: pending, 'aria-label': t('row.editInput'), onChange: (event) => setText(event.target.value), onKeyDown }),
-      control('send', t('row.send'), IconPaperPlaneOutlineRegular, () => { void send() }, stopReason ?? (text.trim() === '' ? t('row.blankText') : undefined)),
-      control('composer', t('row.editInComposer'), undefined, editInComposer, composerReason),
-      control('cancel', t('row.cancel'), IconCloseOutlineRegular, cancel),
-    ]),
+    rules,
+    ...body,
     error === undefined ? null : createElement('span', { key: 'error', role: 'alert' }, error),
   ])
 }

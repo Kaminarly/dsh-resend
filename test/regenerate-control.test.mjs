@@ -231,6 +231,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
       id: 'dsh-resend-regenerate',
       order: expect.any(Number),
       locale: 'dsh-resend',
+      label: expect.any(Function),
     })
     expect(registration.options.id).not.toBe('dsh-resend-user-actions')
     expect(registration.options.key).toBeUndefined()
@@ -349,7 +350,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
         throw new Error('unreachable')
       },
     }
-    const wrapped = face.withPanelBoundary(face.regenerateSurface(throwing), 'panel.error.regenerate')
+    const wrapped = face.withPanelBoundary(face.regenerateSurface(throwing, face.preferences), 'panel.error.regenerate')
     const t = (key) => (key === 'panel.error.regenerate' ? 'The regenerate control could not be displayed' : key)
     const snapshot = { nodes: new Map([['step-6', assistantStep(6)]]) }
 
@@ -368,7 +369,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
 
     // Without the boundary the same throw escapes the render, §13.3 #20.
     const unboundaried = await mount(
-      createElement(face.regenerateSurface(throwing), {
+      createElement(face.regenerateSurface(throwing, face.preferences), {
         messageId: 'reply-6',
         sessionId: 'session-1',
         t,

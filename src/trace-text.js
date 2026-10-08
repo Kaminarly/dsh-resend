@@ -24,8 +24,8 @@
  * is ticket 08's, and this function is the seam it completes.
  */
 
-/** The two trace texts, in the spec's own words (spec §5.4). */
-const TRACE_TEXT = Object.freeze({
+/** The two trace texts, in the spec's own words (spec §5.4). Frozen once: the log is append-only. */
+export const TRACE_TEXT = Object.freeze({
   en: '(this message was replaced by an edit; the original is archived in the session log)',
   zh: '（此处内容已被撤回：原消息已归档，可在恢复视图中查看）',
 })

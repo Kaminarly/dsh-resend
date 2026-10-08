@@ -23,8 +23,10 @@
  * not issue the call has nothing to replay and falls back to the notice state.
  */
 import { createElement, useEffect, useState, useSyncExternalStore } from 'react'
+import { usePreferences } from './preferences.js'
 import { IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { hasMarkerPrefix } from './marker.js'
+import { HideRulesSurface } from './hide-rules.js'
 import { RESEND_FAILED } from './resend-operations.js'
 import { useHiding } from './use-hiding.js'
 
@@ -123,9 +125,9 @@ export function RewindRow({ outcome, t, onSendAgain, hidePlan, hideError, onDism
  * @param operations - the page's `createResendOperations` object.
  * @returns the slot component to wrap in the shared boundary.
  */
-export function rewindRowSurface(operations) {
+export function rewindRowSurface(operations, preferences) {
   return function BoundRewindRow(props) {
-    return createElement(RewindRowSurface, { ...props, operations })
+    return createElement(RewindRowSurface, { ...props, operations, preferences })
   }
 }
 
@@ -140,13 +142,14 @@ export function rewindRowSurface(operations) {
  * @returns the row, wrapped by the caller in the shared boundary.
  */
 function RewindRowSurface(props) {
-  const { node, sessionId, operations, t } = props
+  const { node, sessionId, operations, preferences, t } = props
   const point = { sessionId, carrierSeq: node?.data?.carrierSeq }
   // `operations.subscribe` is passed as the method itself, not wrapped: React
   // re-subscribes whenever that argument's identity changes, so a fresh closure
   // per render would tear the subscription down and rebuild it on every pass.
   const outcome = useSyncExternalStore(operations.subscribe, () => operations.outcomeOf(point))
-  const { plan, css, error } = useHiding(props)
+  const prefs = usePreferences(preferences)
+  const { plan, css, error } = useHiding({ ...props, hide: prefs.hideReplacedMessages })
   const [dismissed, setDismissed] = useState(false)
   const hidePlan = plan?.byCarrier.get(point.carrierSeq)
   const missingPlan = plan !== undefined && hidePlan === undefined && !plan.errors.has(point.carrierSeq)
@@ -167,10 +170,11 @@ function RewindRowSurface(props) {
       void operations.sendAgain(point)
     },
   })
-  // Dismiss only removes the notice text. The style element belongs to the row
-  // tree and remains mounted for the lifetime of the rewind point.
+  // Dismiss only removes the notice text. Surface 6 — the hide-rules element —
+  // belongs to the row tree and remains mounted for the lifetime of the rewind
+  // point, hiding the rows it covers.
   return createElement('div', null, [
-    createElement('style', { key: 'rules', 'data-dsh-resend-hide-rules': 'true' }, css),
+    createElement(HideRulesSurface, { key: 'rules', t, css }),
     (!dismissed || rewindPointView(outcome).kind === 'resend-failed' || hideError !== undefined) &&
       createElement('div', { key: 'row' }, row),
   ])

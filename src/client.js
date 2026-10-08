@@ -27,6 +27,17 @@
  */
 import { withPanelBoundary } from './panel-boundary.js'
 import { createResendOperations } from './resend-operations.js'
+import {
+  ASSISTANT_ACTIONS_DEFINITION,
+  ASSISTANT_ACTIONS_ID,
+  ASSISTANT_ACTIONS_KIND,
+  RegenerateControl,
+  companionStates,
+  isLastReply,
+  promptRefusal,
+  regenerateReason,
+  regenerateSurface,
+} from './regenerate.js'
 import { PACKAGE } from './typert.js'
 import { REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rewindRowSurface } from './rewind-row.js'
 import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText } from './user-actions.js'
@@ -67,6 +78,15 @@ export {
   UserActionsRow,
   userActionsSurface,
   userMessageText,
+  ASSISTANT_ACTIONS_DEFINITION,
+  ASSISTANT_ACTIONS_ID,
+  ASSISTANT_ACTIONS_KIND,
+  companionStates,
+  isLastReply,
+  promptRefusal,
+  regenerateReason,
+  RegenerateControl,
+  regenerateSurface,
   hiddenKeysFor,
   hidePlanFor,
   hideRulesFor,
@@ -112,11 +132,17 @@ const DICTIONARIES = {
     'row.composerBusy': '输入框正在忙碌，请稍后再试',
     'row.composerUnavailable': '当前输入框无法接收文本',
     'row.operationFailed': '编辑并重发失败，请重试',
+    'row.regenerate': '重新生成',
+    'row.shadowed': '这条回复已被重写',
+    'row.imageOnly': '这条提示词没有可重发的文本',
+    'row.offSurface': '这条回复不在当前对话面上',
+    'row.regenerateFailed': '重新生成失败，请重试',
     'panel.errorTitle': '这个界面无法显示',
     'panel.errorHint': '其余界面不受影响。可以重试，或刷新页面。',
     'panel.retry': '重试',
     'panel.error.rewindRow': '重写点无法显示',
     'panel.error.userActions': '用户消息操作无法显示',
+    'panel.error.regenerate': '重生成功能无法显示',
   },
   en: {
     'row.resendFailed': 'History was rewound, but the re-send failed: the agent did not take the prompt.',
@@ -135,11 +161,17 @@ const DICTIONARIES = {
     'row.composerBusy': 'The composer is busy; try again later',
     'row.composerUnavailable': 'The composer cannot accept text',
     'row.operationFailed': 'Edit and resend failed; try again',
+    'row.regenerate': 'Regenerate',
+    'row.shadowed': 'This reply was already rewound',
+    'row.imageOnly': 'The prompt has no text to re-send',
+    'row.offSurface': 'This reply is off the current surface',
+    'row.regenerateFailed': 'Regenerate failed; try again',
     'panel.errorTitle': 'This panel could not be displayed',
     'panel.errorHint': 'The rest of the UI is unaffected. Retry, or reload the page.',
     'panel.retry': 'Retry',
     'panel.error.rewindRow': 'This rewind point could not be displayed',
     'panel.error.userActions': 'User message actions could not be displayed',
+    'panel.error.regenerate': 'The regenerate control could not be displayed',
   },
 }
 
@@ -194,8 +226,9 @@ function conversationRegistrar(service) {
  *
  * Ticket 05 owns registration 2, the row at a rewind point. Ticket 06 adds
  * registration 1 (the action row beneath a user message), the hide rules and the
- * count notice; ticket 08 wraps the remaining surfaces and completes the
- * localization.
+ * count notice. Ticket 07 adds registration 3, the regenerate control in the
+ * assistant-actions list slot, and its invisible companion Definition; ticket 08
+ * wraps the remaining surfaces and completes the localization.
  * @param scope - the child context carrying `slots`, `locale` and `uiConversation`.
  * @param ctx - this row's own context, for the Remote service.
  */
@@ -218,6 +251,7 @@ function mountSurfaces(scope, ctx) {
       [REWIND_ROW_DEFINITION, 'dsh-resend: rewind-point definition'],
       [USER_ACTIONS_DEFINITION, 'dsh-resend: user-actions definition'],
       [SURFACE_SHADOW_DEFINITION, 'dsh-resend: surface eligibility definition'],
+      [ASSISTANT_ACTIONS_DEFINITION, 'dsh-resend: regenerate-companion definition'],
     ]) {
       const dispose = register(definition)
       scope.effect(
@@ -261,6 +295,20 @@ function mountSurfaces(scope, ctx) {
     scope.slots.register(
       { name: slot, key: REWIND_ROW_KIND, locale: NS },
       withPanelBoundary(rewindRowSurface(operations), 'panel.error.rewindRow'),
+    ),
+  )
+
+  // Registration 3 (ticket 07): the regenerate control, one entry in the shipped
+  // assistant-actions LIST slot. Unlike the keyed slots above, a list entry is
+  // identified by `id` (never a shipped entry's) and receives `{ messageId }` —
+  // the reply's durable id — alongside the standard props. The companion
+  // Definition the assembler builds gives the control its verdict inputs; the
+  // slot's owner renders it beside every assistant reply it knows.
+  const actionsSlot = 'conversation.chat.assistant-actions'
+  scope.slots.inject(actionsSlot, () =>
+    scope.slots.register(
+      { name: actionsSlot, id: ASSISTANT_ACTIONS_ID, order: 100, locale: NS },
+      withPanelBoundary(regenerateSurface(operations), 'panel.error.regenerate'),
     ),
   )
 }

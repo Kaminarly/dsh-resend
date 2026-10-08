@@ -411,7 +411,9 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
 
   it('every actual registered surface uses the shared boundary and binds operations', async () => {
     const { record } = await activated()
-    expect(record.mounts).toHaveLength(2)
+    // Ticket 07 adds the assistant-actions list entry, so the half now registers
+    // three slot occupants (the two keyed rows and the list entry).
+    expect(record.mounts).toHaveLength(3)
     for (const registration of record.mounts) {
       const tree = registration.component(POINT_PROPS)
       expect(typeof tree.type.getDerivedStateFromError).toBe('function')
@@ -450,7 +452,8 @@ describe('the browser half mounts only when the Remote contract did (§6.5, §7)
     expect(fiber.state).toBe(FIBER_ACTIVE)
     expect(face.remoteMountState().status).toBe('mounted')
     expect(mounted).toHaveLength(1)
-    expect(record.definitions).toHaveLength(3)
+    // Ticket 07 adds the regenerate companion Definition, so four register.
+    expect(record.definitions).toHaveLength(4)
     expect(record.definitions[0]).toBe(face.REWIND_ROW_DEFINITION)
     expect(record.injected).toContain('conversation.chat.node')
     // The three slot-side services are NOT in the static inject list: a host
@@ -461,7 +464,7 @@ describe('the browser half mounts only when the Remote contract did (§6.5, §7)
 
   it('accepts either generation of the definition registry, and says so when neither is there', async () => {
     const older = await activated({ conversation: 'self' })
-    expect(older.record.definitions).toHaveLength(3)
+    expect(older.record.definitions).toHaveLength(4)
     expect(older.record.definitions[0]).toBe(older.face.REWIND_ROW_DEFINITION)
 
     const none = await clientComposition({ conversation: 'none' })

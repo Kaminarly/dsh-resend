@@ -1,92 +1,92 @@
-# DSH Resend Plugin
+# DSH Resend 插件
 
-A third-party plugin for DSH Desktop that lets a user edit an already-sent message and send it again, and lets a user regenerate an assistant reply. This glossary exists because the platform's vocabulary collides with the vocabulary of the tools this feature is modelled on — most damagingly on the word "branch".
+这是一个用于 DSH Desktop 的第三方插件。它允许用户编辑已经发送的消息并再次发送，也允许用户重新生成助手回复。之所以维护这份术语表，是因为平台词汇与本功能所参考的工具词汇存在冲突，其中影响最大的是「branch」一词。
 
-## Platform vocabulary
+## 平台术语
 
-DSH's own terms. Use these spellings; do not invent synonyms.
+以下是 DSH 自有术语。请使用这些拼写，不要自行创造同义词。
 
-**Bundle**:
-The installable unit of a DSH plugin: an npm package whose `cordis.patch.yml` inserts rows into the Loader.
-_Avoid_: plugin package, extension
+**Bundle**：
+DSH 插件的可安装单元：一个 npm 包，其 `cordis.patch.yml` 会向 Loader 插入行。
+_避免使用：plugin package、extension_
 
-**Profile**:
-An installed Harness environment at `$DSH_HOME/profiles/<name>`, holding the bundles installed into it. This effort targets the `desktop` profile.
-_Avoid_: workspace, environment
+**Profile**：
+位于 `$DSH_HOME/profiles/<name>` 的已安装 Harness 环境，其中保存安装到该环境的 Bundle。本项目面向 `desktop` Profile。
+_避免使用：workspace、environment_
 
-**Host plugin** / **Client plugin**:
-The two faces of one bundle. The Host plugin is the `main` export and runs as Node ESM; the Client plugin is the `./client` export and runs as browser JavaScript. They are separable — one may be empty.
-_Avoid_: server plugin, frontend plugin
+**Host plugin** / **Client plugin**：
+同一个 Bundle 的两个侧面。Host plugin 是 `main` 导出项，以 Node ESM 运行；Client plugin 是 `./client` 导出项，以浏览器 JavaScript 运行。两者可以彼此独立，其中一方可以为空。
+_避免使用：server plugin、frontend plugin_
 
-**Slot**:
-A named hole in the Client render tree that a plugin may register a React component into. A slot must be *declared* before it can be registered into; `ctx.slots.inject` defers registration until its declaration appears.
-_Avoid_: extension point, hook, mount point
+**Slot**：
+Client 渲染树中的具名空位，插件可以向其中注册 React 组件。Slot 必须先声明，之后才能注册；`ctx.slots.inject` 会把注册操作延后到声明出现为止。
+_避免使用：extension point、hook、mount point_
 
-**Cell**, **occupant**, **shadowing**:
-A cell is one addressable position in a slot — the slot itself for `single`, one per `key` for `keyed`, one per `id` for `list`. Registering into an occupied cell at a lower priority *shadows* the existing occupant; for `keyed` and `list` this is the documented way to replace host UI.
-_Avoid_: override, monkey-patch
+**Cell**、**occupant**、**shadowing**：
+Cell 是 Slot 中一个可寻址的位置：对于 `single`，Slot 本身就是一个 Cell；对于 `keyed`，每个 `key` 对应一个 Cell；对于 `list`，每个 `id` 对应一个 Cell。在较低优先级的已占用 Cell 中注册内容，会对现有 occupant 形成 *shadowing*；对于 `keyed` 和 `list`，这是替换宿主 UI 的文档化方式。
+_避免使用：override、monkey-patch_
 
-**Owner props**:
-The typed values a slot's owner passes down to its occupants — its contract with them. `conversation.chat.node` passes `forkAt`, `openFile`, `openSkill`, `renderMessageImages`.
-_Avoid_: props, context
+**Owner props**：
+Slot 的 owner 向 occupant 传递的类型化值，也就是 owner 与 occupant 之间的契约。`conversation.chat.node` 会传递 `forkAt`、`openFile`、`openSkill`、`renderMessageImages`。
+_避免使用：props、context_
 
-**Chat row**:
-One rendered entry in the transcript, despatched by the `conversation.chat.node` slot under a `ChatNodeKind` key (`user`, `assistant-step`, `tool-call`, `turn-tail`, …).
-_Avoid_: message component, bubble
+**Chat row**：
+Transcript 中渲染的一条记录，由 `conversation.chat.node` Slot 在 `ChatNodeKind` 键（`user`、`assistant-step`、`tool-call`、`turn-tail` 等）下分派。
+_避免使用：message component、bubble_
 
-**Turn**:
-A unit of conversation bounded by a trigger and its closing — the granularity that forking and `turnTail` actions operate on.
-_Avoid_: exchange, round
+**Turn**：
+由触发事件和结束事件界定的一段会话单元，是 fork 和 `turnTail` 操作所使用的粒度。
+_避免使用：exchange、round_
 
-**seq**:
-The monotone, contiguous index of an event in a session's log. The only ordering metadata; the only address for cutting history.
-_Avoid_: offset, index, cursor
+**seq**：
+会话日志中事件的单调递增且连续的序号。它是唯一的排序元数据，也是切割历史的唯一地址。
+_避免使用：offset、index、cursor_
 
-**Session log**:
-The append-only, `seq`-numbered event log that is the single source of truth for a session. Committed events are never rewritten, and there is no delete or truncate operation.
-_Avoid_: history, database, store
+**Session log**：
+会话唯一的事实来源：一个只追加、按 `seq` 编号的事件日志。已提交的事件永远不会重写，也不存在 delete 或 truncate 操作。
+_避免使用：history、database、store_
 
-**Transcript**:
-What the human sees of the session log, which is deliberately narrower than the log: only events with `surfaceOp === 'append'` are rendered.
-This is **append-origin, not the surface fold**, and the difference is the point: a node that a later replacement shadowed keeps `surfaceOp === 'append'` and **keeps rendering**, while the replacement that carries its new content renders **nothing at all**. The model's view loses the node; the human's does not. Hiding a replaced row is therefore the plugin's own job, never a platform behaviour.
-_Avoid_: view, conversation, surface
+**Transcript**：
+用户看到的 Session log 内容。它有意比日志更窄：只有 `surfaceOp === 'append'` 的事件会被渲染。
+这指的是**追加来源，而不是 surface fold**，两者的区别正是关键：被后续 replacement shadow 的节点仍保留 `surfaceOp === 'append'`，因此**仍会渲染**；承载新内容的 replacement 则完全不渲染。模型看到的内容会失去该节点，用户看到的内容不会。因此，隐藏被替换的行始终是插件自己的职责，不是平台行为。
+_避免使用：view、conversation、surface_
 
-**Composer**:
-The message input surface, owning the draft, attachment chips, and the `@`/`/` trigger system.
-_Avoid_: input box, editor, textarea
+**Composer**：
+消息输入界面，负责 draft、附件标签以及 `@`/`/` 触发系统。
+_避免使用：input box、editor、textarea_
 
-**Trigger**:
-The completion mechanism behind `@` file references and `/` skills and commands. Registrable by plugins via `ctx.inputTriggers.registerSource`.
-_Avoid_: autocomplete, mention
+**Trigger**：
+`@` 文件引用和 `/` 技能与命令背后的补全机制。插件可通过 `ctx.inputTriggers.registerSource` 注册 Trigger。
+_避免使用：autocomplete、mention_
 
-## This effort's vocabulary
+## 本项目术语
 
-**Edit-and-resend**:
-The feature: a user message already in the transcript is reopened for editing, and sending the edit produces a continuation in which that message reads differently.
-_Avoid_: edit message, resend, retry
+**Edit-and-resend**：
+本功能的一种形式：重新打开 Transcript 中已经发送的用户消息进行编辑，发送编辑结果后，得到一段其中该消息内容已经改变的续接会话。
+_避免使用：edit message、resend、retry_
 
-**Regenerate**:
-The feature: an assistant reply is produced again from the same preceding user message.
-_Avoid_: retry, re-roll, resend
+**Regenerate**：
+本功能的另一种形式：基于同一条前置用户消息，再次生成一条助手回复。
+_避免使用：retry、re-roll、resend_
 
-**Branch** — **read this one carefully**:
-In DSH, a branch is a *new sibling session* created by `fork({ sessionId, atSeq })`, which copies the inclusive event prefix `0..atSeq` into that child and closes open turns with synthetic enders. It is not a tree node within the current session.
-_Avoid_: tree, variant, alternative, forked message — DSH has no session tree beyond fork; a ChatGPT-style in-thread branch with next/previous navigation does not exist here and is explicitly deferred upstream.
+**Branch** —— **请仔细阅读这一项**：
+在 DSH 中，Branch 是通过 `fork({ sessionId, atSeq })` 创建的**新的同级 Session**。它会把包含端点在内的事件前缀 `0..atSeq` 复制到子 Session，并用合成的结束事件关闭未结束的 Turn。Branch 不是当前 Session 内的树节点。
+_避免使用：tree、variant、alternative、forked message —— DSH 除了 fork 之外没有 Session 树；类似 ChatGPT 的、在同一线程内通过上一条/下一条导航的 Branch 已由上游明确延后。_
 
-**Replay turn**:
-The composite mechanism both features reduce to: rewind the model surface **in place**, in the same session, by appending a **pair** of events — the audit claim below, then the carrier — whose `surfaceOp` replaces the target message and everything after it, then `prompt` the replacement text as a fresh append. Regenerate replays with the original text; edit-and-resend replays with the edited text.
-**It does not fork.** `sessions.fork` exists but is not this mechanism — forking would move the user to a different session. The fresh append matters twice over: it is what prompts the model, and (because replacement carriers never render) it is also the only thing that makes the new text visible to the user.
-That append is the **resend message**, and its id is derived from the carrier's own id. The derivation is not bookkeeping: it is what lets a later reader answer "was this carrier's prompt ever queued?" from the log alone, which is the question the "Send again" affordance turns on.
-_Avoid_: rerun, resubmit, branch, fork
+**Replay turn**：
+这是两个功能共同使用的复合机制：在同一个 Session 中通过追加**一对**事件原地回退模型 surface——先追加下方的 audit claim，再追加 carrier。两者的 `surfaceOp` 会替换目标消息及其后的所有内容，随后再以全新的 append 发送 prompt。Regenerate 使用原文本重放；Edit-and-resend 使用编辑后的文本重放。
+**它不会 fork。** `sessions.fork` 确实存在，但不是本机制；fork 会把用户带到另一个 Session。全新的 append 有双重作用：它负责触发模型，而且由于 replacement carrier 永远不渲染，它也是让新文本对用户可见的唯一方式。
+这条 append 就是 **resend message**，其 id 由 carrier 自身的 id 推导而来。这种推导不是简单的记录工作：它让后续读取者仅凭日志回答「这个 carrier 的 prompt 是否曾经排入队列」，而这正是「再次发送」操作是否可用所依据的问题。
+_避免使用：rerun、resubmit、branch、fork_
 
-**Audit claim**:
-The `compaction/prune` event that opens the pair: log-only, never a surface node. It states the shadowed range and the **official** shadow price of the nodes that range removes, which is what **arms** the host's own token fold to subtract them; a replacement with no adjacent claim folds exactly zero, and a claim for a different range makes that fold throw. So the two events are one write: a claim that lands without its carrier is an orphan, and a carrier that lands without a claim is a silent overestimate.
-_Avoid_: prune event, tombstone, log entry
+**Audit claim**：
+开启这一对事件的 `compaction/prune` 事件：只存在于日志中，永远不是 surface 节点。它记录被 shadow 的范围以及该范围移除节点的**官方** shadow price；这会**使能**宿主自身的 token fold 去扣除这些节点。没有相邻 claim 的 replacement 折叠出的值恰好为零，而范围不同的 claim 会使该折叠抛错。因此，这两个事件必须作为一次写入：claim 单独到达会产生孤立 claim，carrier 单独到达会产生静默的高估。
+_避免使用：prune event、tombstone、log entry_
 
-**Carrier**:
-The `user/message` event that closes the pair: it consumes the claim, splices the replaced range out of the model surface, becomes the new surface tail, and renders **nothing** (it is not append-origin — see Transcript). Its `id` carries the plugin's marker prefix, and its `source.kind` is the host-plugin kind, never a human-turn kind.
-_Avoid_: replacement message, stub message, placeholder
+**Carrier**：
+结束这一对事件的 `user/message` 事件：它消费 claim，把被替换的范围从模型 surface 中拼接移除，成为新的 surface 尾部，并且**什么也不渲染**（它不是追加来源，参见 Transcript）。它的 `id` 带有插件的标记前缀，`source.kind` 使用 Host plugin 类型，绝不能使用 human-turn 类型。
+_避免使用：replacement message、stub message、placeholder_
 
-**Rewind point**:
-The position in the transcript where a replay turn's carrier sits — the seq the model surface now begins at. The plugin renders its own row there, and that row is exactly one of two things: the count notice, or the error row that offers "Send again" when the carrier's prompt never reached the agent. Which one it is follows from the log (the row exists because a carrier does), with the one page-local exception the error row's own retry text creates.
-_Avoid_: marker row, notice row, boundary marker
+**Rewind point**：
+Replay turn 的 carrier 所在的 Transcript 位置，也就是模型 surface 现在开始的 `seq`。插件会在这里渲染自己的行，该行严格是两者之一：计数通知，或在 carrier 的 prompt 从未到达 agent 时提供「再次发送」的错误行。具体是哪一种由日志决定（该行之所以存在，是因为 carrier 存在），唯一的页面内例外是错误行自身的重试文本所产生的内容。
+_避免使用：marker row、notice row、boundary marker_

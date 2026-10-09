@@ -1,7 +1,7 @@
 /**
  * Built-in `app.asar` reader — no dependency, per spec §12.
  *
- * Layout, verified against real archives on disk:
+ * Layout, as Electron writes it:
  *
  *   u32LE @0  = 4                 pickle size header
  *   u32LE @4  = header payload    file data base = 8 + this value
@@ -12,11 +12,17 @@
  * NOTE — spec discrepancy worth recording: §12 states file data begins at
  * `17 + headerSize`. Measured against real archives the base is `8 + u32LE@4`,
  * which equals `align4(16 + headerSize)`; `17 + headerSize` lands short by the
- * pickle alignment padding (3 bytes in the archive measured), which would make
- * every entry read start mid-record. The verified formula is used here.
+ * pickle alignment padding unless that padding happens to be 1, which would make
+ * every entry read start mid-record. The measured base is used whenever the
+ * header carries a self-consistent pickle payload size, and §12's compact base
+ * is the fallback for an archive that carries none.
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync } from 'node:fs'
 import path from 'node:path'
+
+// Electron's asar shim intercepts filesystem calls whose path ends in
+// `.asar`. The contract reader must see the archive as ordinary bytes.
+process.noAsar = true
 
 /**
  * Open an asar archive for random reads.
@@ -32,7 +38,12 @@ export function openAsar(archivePath) {
   const headerBuffer = Buffer.alloc(headerSize)
   readSync(fd, headerBuffer, 0, headerSize, 16)
   const header = JSON.parse(headerBuffer.toString('utf8'))
-  const dataBase = 8 + payloadSize
+  // A pickle header announces itself twice: the leading size header is 4, and
+  // the payload size it records is the one repeated at offset 8 minus that
+  // header. Both must hold before the pickle base is trusted — reading a compact
+  // archive through the pickle base would start past every entry.
+  const pickleHeader = head.readUInt32LE(0) === 4 && head.readUInt32LE(8) === payloadSize - 4
+  const dataBase = pickleHeader ? 8 + payloadSize : 17 + headerSize
 
   const entryOf = (relativePath) => {
     let node = header

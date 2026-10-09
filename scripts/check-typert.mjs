@@ -52,7 +52,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { resolveHostApp } from './host-app.mjs'
-import { optionValue } from './args.mjs'
+import { optionValue, rejectUnknownOptions } from './args.mjs'
 import { relativePath } from './walk-javascript.mjs'
 import { readClientContribution, describeError } from './client-bundle.mjs'
 import { provideStandInServices } from './host-services.mjs'
@@ -61,14 +61,8 @@ import { ERROR_CODES as SOURCE_ERROR_CODES } from '../src/typert.js'
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
 const argv = process.argv.slice(2)
 
-/** The options this gate takes. Anything else on the command line is a usage error. */
-const KNOWN_OPTIONS = ['--faces']
-for (const [index, arg] of argv.entries()) {
-  if (argv[index - 1] === '--faces') continue // the previous option's value
-  if (!arg.startsWith('--') || KNOWN_OPTIONS.includes(arg)) continue
-  console.error(`check-typert: FAIL — unknown option ${arg} (usage: check-typert [--faces <dir>])`)
-  process.exit(2)
-}
+// The gate takes `--faces <dir>` and nothing else; anything else is a usage error.
+rejectUnknownOptions(argv, { bin: 'check-typert', known: ['--faces'], valued: ['--faces'], usage: 'usage: check-typert [--faces <dir>]' })
 
 const facesDir = path.resolve(rootDir, optionValue(argv, '--faces', { bin: 'check-typert', fallback: 'lib' }))
 

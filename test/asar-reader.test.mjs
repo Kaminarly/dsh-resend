@@ -3,16 +3,18 @@
  * (a packed DSH Desktop installation) is absent from both this machine and CI,
  * so it is covered two ways:
  *
- *  - a synthetic archive written here in the container format Electron produces
- *    (u32LE@4 = header payload, u32LE@12 = JSON length, data at `8 + payload`),
- *    which also drives the packed-app path of the gate;
+ *  - a synthetic archive in the container format Electron produces (u32LE@4 =
+ *    header payload, u32LE@12 = JSON length, data at `8 + payload`), written by
+ *    `test/helpers/asar.mjs`, which also drives the packed-app path of the gate;
  *  - a cross-check against a real Electron archive when this machine happens to
  *    have one, because a reader and a writer that share one author's
  *    understanding of the format can agree with each other and still be wrong.
  *
  * Spec §12 states the data base as `17 + headerSize`; the measured base is
  * `align4(16 + headerSize)`. The real-archive case below is what keeps that
- * correction honest rather than a matter of opinion.
+ * correction honest rather than a matter of opinion, and `scripts/asar.mjs`
+ * keeps the spec's compact base as the fallback for an archive that carries no
+ * pickle payload size — the last describe covers that branch directly.
  */
 import { describe, expect, it } from 'vitest'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
@@ -20,6 +22,8 @@ import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { openAsar } from '../scripts/asar.mjs'
 import { resolveHostApp } from '../scripts/host-app.mjs'
+import { writeAsar } from './helpers/asar.mjs'
+import { hostFixture } from './helpers/host-contract.mjs'
 import { rootDir, tmpDir } from './helpers/dsh.mjs'
 
 /** Scratch location for the archives these tests write. */
@@ -65,48 +69,6 @@ function findRealArchive() {
 }
 
 const REAL_ARCHIVE = findRealArchive()
-
-/**
- * Write a minimal but faithful asar: a pickle header, the nested JSON index, then
- * the file payloads, with entry offsets relative to the data base. Directory
- * levels are nested `files` objects, exactly as Electron writes them.
- */
-function writeAsar(target, files) {
-  const index = { files: {} }
-  const payloads = []
-  let offset = 0
-
-  for (const [name, contents] of Object.entries(files)) {
-    const body = Buffer.from(contents, 'utf8')
-    const segments = name.split('/')
-    const leaf = segments.pop()
-    let node = index
-    for (const segment of segments) {
-      node.files[segment] ??= { files: {} }
-      node = node.files[segment]
-    }
-    node.files[leaf] = { size: body.length, offset: String(offset) }
-    payloads.push(body)
-    offset += body.length
-  }
-
-  const json = Buffer.from(JSON.stringify(index), 'utf8')
-  // The pickle pads the header JSON to a 4-byte boundary; the data base is
-  // 8 + payloadSize, which is exactly align4(16 + json.length).
-  const padding = (4 - (json.length % 4)) % 4
-  const payloadSize = 8 + json.length + padding
-  const header = Buffer.alloc(8 + payloadSize)
-
-  header.writeUInt32LE(4, 0)
-  header.writeUInt32LE(payloadSize, 4)
-  header.writeUInt32LE(payloadSize - 4, 8)
-  header.writeUInt32LE(json.length, 12)
-  json.copy(header, 16)
-
-  mkdirSync(path.dirname(target), { recursive: true })
-  writeFileSync(target, Buffer.concat([header, ...payloads]))
-  return { dataBase: 8 + payloadSize, headerSize: json.length }
-}
 
 describe('reading a synthetic archive', () => {
   const archivePath = path.join(asarDir, 'synthetic.asar')
@@ -211,13 +173,11 @@ describe.runIf(REAL_ARCHIVE !== undefined)('cross-check against a real Electron 
 describe('the packed-app path through the gate', () => {
   it('check-host-contract reads a packed installation and reports drift with a pointer', () => {
     const drifted = path.join(asarDir, 'gate-packed.asar')
-    writeAsar(drifted, {
-      'package.json': JSON.stringify({ name: 'dsh-plugin-desktop', version: '9.9.9' }),
-      'node_modules/@deepseek-ai/dsh-session/package.json': JSON.stringify({ name: '@deepseek-ai/dsh-session', version: '0.2.0-rc.1' }),
-      // `eventAt` is deliberately absent: the gate must notice, and it must say
-      // which file and member, even when the file lives inside an archive.
-      'node_modules/@deepseek-ai/dsh-session/lib/index.js': 'export class Session {\n\tsnapshotEvents() { return [] }\n}\n',
-    })
+    // The contract's own table builds the installation, so this archive carries
+    // every member the gate asserts but one: the gate must notice that one, and
+    // it must say which file and member even though the file lives inside an
+    // archive.
+    writeAsar(drifted, hostFixture({ omitMembers: ['Session.eventAt'] }))
 
     const result = spawnSync(process.execPath, ['scripts/check-host-contract.mjs'], {
       cwd: rootDir,
@@ -227,6 +187,41 @@ describe('the packed-app path through the gate', () => {
 
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('PRESENT eventAt')
+    expect(result.stderr).toContain('node_modules/@deepseek-ai/dsh-session/lib/index.js')
     expect(result.stderr).toContain('packed app')
+    // One assertion broke; a scoping bug inside an archive would fail neighbours.
+    expect(result.stderr.match(/FAIL PRESENT /g) ?? []).toHaveLength(1)
+  })
+})
+
+describe('the compact header layout, and Electron’s asar wrapper', () => {
+  it('reads the compact layout §12 describes, where the pickle payload size is absent', () => {
+    const archive = path.join(asarDir, 'compact-layout.asar')
+    const json = Buffer.from(JSON.stringify({ files: { 'marker.txt': { size: 3, offset: '0' } } }))
+    const bytes = Buffer.alloc(17 + json.length + 3)
+    bytes.writeUInt32LE(json.length, 12)
+    json.copy(bytes, 16)
+    Buffer.from('abc').copy(bytes, 17 + json.length)
+    writeFileSync(archive, bytes)
+
+    const opened = openAsar(archive)
+    expect(opened.dataBase).toBe(17 + json.length)
+    expect(opened.readFile('marker.txt').toString('utf8')).toBe('abc')
+    opened.close()
+  })
+
+  it('sets process.noAsar before any path is opened', () => {
+    // Running a fresh process that clears the flag and imports the module is the
+    // only honest probe: under Electron's Node the interception is global and the
+    // flag has to be set before the first `.asar` path is touched. Both modules
+    // that can open a path are checked — either one being intercepted would read
+    // as "no installed app" rather than as a failure.
+    for (const module of ['./scripts/asar.mjs', './scripts/host-app.mjs']) {
+      const probe = spawnSync(process.execPath, ['--input-type=module', '-e', `process.noAsar = false; await import("${module}"); process.stdout.write(String(process.noAsar))`], {
+        cwd: rootDir,
+        encoding: 'utf8',
+      })
+      expect(probe.stdout, `${module}: ${probe.stderr}`).toContain('true')
+    }
   })
 })

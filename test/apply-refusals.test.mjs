@@ -16,7 +16,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TYPERT } from '../lib/typert.host.js'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
-import { appendReply, auditCount, completedRewindFixture, sessionFixture, hostState, SESSION_ID } from './helpers/host.mjs'
+import { appendReply, auditCount, canonicalLog, completedRewindFixture, sessionFixture, hostState, SESSION_ID } from './helpers/host.mjs'
 
 /**
  * The closed error vocabulary, restated from spec §4.5 *on purpose*: the suite's
@@ -48,16 +48,30 @@ function imageOnlyFixture() {
 }
 
 /**
+ * §13.1 #8's four input-fault classes, cited FROM the table below by identity.
+ *
+ * This is a grouping, not a second case table: the entries are the very objects
+ * `CASES` holds, so a class cannot be covered twice with two different
+ * expectations.
+ */
+const INPUT_FAULT_CASES = {
+  badTarget: { code: 'bad-request', why: 'a targetSeq that is not a seq', request: { sessionId: SESSION_ID, targetSeq: 2.5, op: 'edit', text: 'x' } },
+  blankEdit: { code: 'blank-text', why: 'an edit that is whitespace only', request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: '  \n ' } },
+  unknownSession: { code: 'session-not-found', why: 'a session the store does not know', request: { sessionId: 'no-such-session', targetSeq: 2, op: 'edit', text: 'x' } },
+  busyAgent: { code: 'agent-busy', why: 'a reply streaming right now', state: { agent: { status: 'running' } }, request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'x' } },
+}
+
+/**
  * One case per code. `state` moves the host; `request` is what the client sends.
  * The codes are §4.5's, and each case names the producer behind it.
  */
 const CASES = [
   { code: 'bad-request', why: 'an empty sessionId', request: { sessionId: '', targetSeq: 2, op: 'edit', text: 'x' } },
   { code: 'bad-request', why: 'a missing text for edit', request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit' } },
-  { code: 'bad-request', why: 'a targetSeq that is not a seq', request: { sessionId: SESSION_ID, targetSeq: 2.5, op: 'edit', text: 'x' } },
-  { code: 'session-not-found', why: 'a session the store does not know', request: { sessionId: 'no-such-session', targetSeq: 2, op: 'edit', text: 'x' } },
+  INPUT_FAULT_CASES.badTarget,
+  INPUT_FAULT_CASES.unknownSession,
   { code: 'agent-unavailable', why: 'a session with no live agent', state: { agent: undefined }, request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'x' } },
-  { code: 'agent-busy', why: 'a reply streaming right now', state: { agent: { status: 'running' } }, request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'x' } },
+  INPUT_FAULT_CASES.busyAgent,
   {
     code: 'message-not-found',
     why: 'a seq the covering read reaches past but does not hold',
@@ -76,7 +90,7 @@ const CASES = [
   },
   { code: 'not-user-message', why: 'an edit aimed at an assistant reply', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'edit', text: 'x' } },
   { code: 'not-last-reply', why: 'a regenerate aimed at an older reply', request: { sessionId: SESSION_ID, targetSeq: 1, op: 'regenerate' } },
-  { code: 'blank-text', why: 'an edit that is whitespace only', request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: '  \n ' } },
+  INPUT_FAULT_CASES.blankEdit,
   {
     code: 'no-text',
     why: 'a prompt that carries no text block',
@@ -101,7 +115,7 @@ const CASES = [
 async function apply(state, fixture, request) {
   const session = fixture ?? sessionFixture()
   const host = await hostComposition({ host: hostState({ session, ...state }) })
-  const before = { seq: session.seq, audits: auditCount(session) }
+  const before = { seq: session.seq, audits: auditCount(session), log: canonicalLog(session) }
   const wire = await dispatchToHost(host, 'resend/apply', { request })
 
   // A business outcome always reaches the caller as an envelope; a refused call
@@ -126,11 +140,38 @@ describe('every refusal is a business outcome, and writes nothing (§4.4, §4.5,
       expect(auditCount(session)).toBe(before.audits)
       expect(host.host.calls.flushes).toBe(0)
       expect(host.host.calls.followups).toBe(0)
+      // …and "writes nothing" is the whole log, byte for byte: a seq that did not
+      // move would still hide an append that was accepted and then withdrawn, a
+      // mutated event, or a write that never mints a seq. The canonical string is
+      // stable across runs (object keys sorted), so the two reads are comparable.
+      expect(canonicalLog(session)).toBe(before.log)
     })
   }
 
   it('the case table covers the whole closed vocabulary, and nothing outside it', () => {
     expect([...new Set(CASES.map((testCase) => testCase.code))].sort()).toEqual([...SPEC_ERROR_CODES].sort())
+  })
+
+  it('each of the four input-fault classes leaves the log byte-identical, not merely the same seq (§13.1 #8)', async () => {
+    // §13.1 #8 names four classes. The table above covers them, and this pins
+    // them BY NAME to the case each one is, against the whole log rather than the
+    // seq — a comparison that could not pass if the write had touched anything at
+    // all: `seq` alone does not notice a completed-then-withdrawn append, a
+    // rewritten event, or a write that refrains from minting.
+    const classes = [
+      ['a target that is not a seq', INPUT_FAULT_CASES.badTarget],
+      ['a blank edit', INPUT_FAULT_CASES.blankEdit],
+      ['an unknown session', INPUT_FAULT_CASES.unknownSession],
+      ['a busy agent', INPUT_FAULT_CASES.busyAgent],
+    ]
+
+    for (const [name, testCase] of classes) {
+      const { envelope, session, before } = await apply(testCase.state, undefined, testCase.request)
+
+      expect(envelope.error.code, name).toBe(testCase.code)
+      expect(canonicalLog(session), name).toBe(before.log)
+      expect(session.seq, name).toBe(before.seq)
+    }
   })
 
   it('each case really is the code claimed, over the strict result codec', async () => {

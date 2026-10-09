@@ -209,6 +209,13 @@ describe('hide rules at the transcript boundary', () => {
     expect(plan.byCarrier.get(22).keys).toEqual(['host-user-key', 'host-actions-key', 'host-tail-key', 'host-tool-key', 'host-half-key'])
     expect(plan.byCarrier.get(22).count).toBe(5)
     expect(plan.byCarrier.get(24).keys).toEqual(['unaffected', 'wrong-tail', 'wrong-tool'])
+    // The count is the size of the emitted key list, not a count of anything else
+    // (§13.3 #24): the two carriers shadow three seqs between them and their rows
+    // land in EIGHT keys, so neither the number of rows nor the number of shadowed
+    // seqs is the honest answer to "how many messages were hidden".
+    expect(plan.byCarrier.get(22).keys).toHaveLength(plan.byCarrier.get(22).count)
+    expect(plan.keys).toHaveLength(8)
+    expect(plan.keys).toHaveLength(plan.byCarrier.get(22).count + plan.byCarrier.get(24).count)
     for (let i = 0; i < 2000; i++) expect(face.hidePlanFor(chat, records)).toBe(plan)
     expect(scans).toBe(1)
     face.hidePlanFor({ ...chat }, records)

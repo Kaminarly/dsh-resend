@@ -10,12 +10,14 @@
  * not match the host's estimator drifts forever.
  *
  * So the price is never computed here. `estimateMessage` comes from the meter
- * SERVICE — the same function the host's own `foldSurfaceProjection` calls
+ * SERVICE — the same estimator the host's own `foldSurfaceProjection` calls
  * (`@dsh-token-meter/lib/index.js`: the instance method delegates to the module
  * export the fold itself uses) — and `deriveEventMessage` comes from
  * `@deepseek-ai/dsh-session`, which owns what an event derives to. A copied
  * formula would turn "agrees with the host" into a claim that can never fail,
- * which is the opposite of a check (spec §5.3).
+ * which is the opposite of a check (spec §5.3). This module therefore carries no
+ * estimator import of its own: it resolves the service, and the suite pins the
+ * service's method to the official module export.
  *
  * **If the meter is unavailable, the write is refused** and reported `internal`
  * (spec §5.3, §11): a node count or a skipped claim both corrupt a number the

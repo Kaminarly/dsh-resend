@@ -19,15 +19,22 @@
  * contract (§13.2 #17), so nothing here passes on a stub that always accepts.
  */
 import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Context, Service } from '@deepseek-ai/cordis'
-import { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session'
+import { Session, deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/dsh-session'
+import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
 import { estimateMessage } from '@deepseek-ai/dsh-token-meter/estimate'
 import { resolveTarget } from '../lib/resolve.js'
 import { runtimeEndpointKeys } from '../lib/shape-probe.js'
 import { TYPERT } from '../lib/typert.host.js'
 import { carrierIdFor } from '../lib/marker.js'
-import { planRewindPair, plannedEvents, validatePlannedPair, writeRewindPair } from '../lib/write.js'
+import { planRewindPair, plannedEvents, validatePlannedPair, writeRewindPair, assertPairContract } from '../lib/write.js'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
+import { rootDir } from './helpers/dsh.mjs'
 import {
   appendReply,
   appendUser,
@@ -174,6 +181,9 @@ function pairAtEnd(session) {
   return { log, audit: log.at(-2), carrier: log.at(-1) }
 }
 
+/** How many events the session's log holds — the length §13.1 #9 is about. */
+const logLength = (session) => logOf(session).length
+
 describe('the pair is validated before the first append, and no seq is ever invented (§5.1, §5.2, §13.1 #1, #2)', () => {
   it('the append boundary mints both seqs, and the envelopes carry no seq at all', async () => {
     const recorder = recordingSession(sessionFixture())
@@ -199,9 +209,25 @@ describe('the pair is validated before the first append, and no seq is ever inve
     const events = plannedEvents(pair, { auditSeq: 4, carrierSeq: 5 })
 
     expect(() => validatePlannedPair(logOf(session), events)).not.toThrow()
+
+    // The replay CANDIDATES carry a seq (the fold indexes by it) — and the two
+    // envelopes the write hands the append boundary must not, which is what the
+    // recording session in the case above observes on the real appends. Here the
+    // pair's own shape is what is checked: neither envelope's data nor its
+    // options may bring a seq, per envelope, because spreading both into one
+    // object would let the carrier's `data` hide whatever the audit's held.
+    for (const event of events) expect(event).toHaveProperty('seq')
+    for (const envelope of [pair.audit, pair.carrier]) {
+      expect(carriesSeqKey(envelope.data), `${envelope.type} data carries a seq`).toBe(false)
+      expect(carriesSeqKey(envelope.options ?? {}), `${envelope.type} options carry a seq`).toBe(false)
+    }
+
     // The reference implementation's `seq: 0` incident: a candidate that carries
-    // its own seq contradicts the log it is replayed against (§5.1).
+    // its own seq contradicts the log it is replayed against (§5.1). The refusal
+    // has to NAME the problem — contiguity, the seq it expected, and the one it
+    // saw — because a refusal that only says "invalid" is not diagnosable (§11).
     expect(() => validatePlannedPair(logOf(session), [{ ...events[0], seq: 0 }, events[1]])).toThrow(/not contiguous; expected 4/)
+    expect(() => validatePlannedPair(logOf(session), [{ ...events[0], seq: 0 }, events[1]])).toThrow(/seq 0/)
   })
 
   it('refuses a range whose citation omits a shadowed node BEFORE any append (§11, §13.1 #2)', async () => {
@@ -271,6 +297,9 @@ describe('the closed shapes the host refuses to widen (§13.1 #5)', () => {
     // It is not a surface node: neither marker may appear on it (§5.3).
     expect(audit.surfaceOp).toBeUndefined()
     expect(audit.sourceEventSeqs).toBeUndefined()
+    // And it is not a candidate envelope either: the seq the log carries is the
+    // one the append BOUNDARY minted, never one the data brought with it (§5.1).
+    expect(Object.hasOwn(audit.data, 'seq')).toBe(false)
   })
 
   it('writes the carrier with exactly its four keys, the plugin prefix, and the host-runner kind', async () => {
@@ -292,6 +321,9 @@ describe('the closed shapes the host refuses to widen (§13.1 #5)', () => {
     // A human-turn kind would make an invisible carrier split a round (§5.4, §16.7).
     expect(carrier.data.source.kind).toBe('cordis-host-runner')
     expect(['user', 'user-rpc']).not.toContain(carrier.data.source.kind)
+    // The carrier's seq is the one the append boundary minted into the envelope:
+    // the payload the write handed over carried no seq of its own (§5.1).
+    expect(Object.hasOwn(carrier.data, 'seq')).toBe(false)
   })
 
   it('writes a surfaceOp with exactly the three keys this runtime accepts', async () => {
@@ -316,6 +348,10 @@ describe('adjacency and citation (§5.4, §13.1 #3)', () => {
     expect(carrier.sourceEventSeqs[0]).toBe(audit.seq)
     expect(new Set(carrier.sourceEventSeqs).size).toBe(carrier.sourceEventSeqs.length)
     for (const seq of carrier.sourceEventSeqs) expect(seq).toBeLessThan(carrier.seq)
+    // The adjacency claim is about the PAIR, not about this one write: every
+    // citation is strictly older than the carrier, which is the invariant a
+    // forward reference (including the carrier's own seq) would break.
+    for (const seq of carrier.sourceEventSeqs) expect(seq).toBeLessThanOrEqual(audit.seq)
     // The range portion is the range: same members, surface order, same ends.
     expect(carrier.sourceEventSeqs.slice(1)).toEqual([2, 3])
     expect(carrier.sourceEventSeqs[1]).toBe(carrier.surfaceOp[runtimeEndpointKeys().start])
@@ -323,6 +359,26 @@ describe('adjacency and citation (§5.4, §13.1 #3)', () => {
     expect(audit.data.shadowedRange).toEqual({ start: 2, end: 3 })
     expect(audit.data.shadowedSeqs[0]).toBe(audit.data.shadowedRange.start)
     expect(audit.data.shadowedSeqs.at(-1)).toBe(audit.data.shadowedRange.end)
+  })
+
+  it('refuses a citation that is not strictly older than the carrier, and the host fold refuses it too (§13.1 #3)', () => {
+    const session = sessionFixture()
+    const plan = { op: 'edit', targetSeq: 2, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [2, 3], resendText: 'edited' }
+    const pair = planRewindPair({ plan, auditSeq: 4, carrierId: markerId('edit'), traceText: TRACE_TEXT, shadowedTokenCount: 0 })
+
+    // A plan this plugin never produces: the carrier cites its own seq, i.e. a
+    // reference that is not strictly earlier than the event carrying it. Without
+    // a LIVE check the clause is unreachable and could be deleted silently, so it
+    // is driven here on purpose.
+    const forward = { plan, auditSeq: 4, carrierSeq: 4 }
+    expect(() => assertPairContract(pair, forward)).toThrow(/must reference earlier events only; 4 is not strictly less than 4/)
+
+    // …and the host's own fold refuses the same candidate, which is what makes
+    // the rule the host's rather than this plugin's invention.
+    const events = plannedEvents(pair, { auditSeq: 4, carrierSeq: 5 })
+    expect(() =>
+      validatePlannedPair(logOf(session), [{ ...events[0] }, { ...events[1], sourceEventSeqs: [4, 2, 3, 99] }]),
+    ).toThrow(/sourceEventSeqs must reference earlier events/)
   })
 })
 
@@ -332,16 +388,21 @@ describe('a numerically descending range is accepted and written unchanged (§13
     expect(session.surface.nodes).toEqual([0, 1, carrierSeq, 4, 5])
 
     const { result } = await writeOn(session, { targetSeq: carrierSeq, op: 'edit', text: 'edited again' })
-    const { log, carrier } = pairAtEnd(session)
+    const { log, audit, carrier } = pairAtEnd(session)
     const keys = runtimeEndpointKeys()
 
     expect(result.ok).toBe(true)
     expect(carrier.surfaceOp[keys.start]).toBeGreaterThan(carrier.surfaceOp[keys.end])
     expect(carrier.surfaceOp[keys.start]).toBe(carrierSeq)
+    // WRITTEN UNCHANGED: the claim states the same descending pair, so the range
+    // that reached the log is the one the resolver produced and not a normalized
+    // or reordered copy.
+    expect(audit.data.shadowedRange).toEqual({ start: carrierSeq, end: 5 })
+    expect(carrier.sourceEventSeqs.slice(1)).toEqual([carrierSeq, 4, 5])
     // Spliced in place: the carrier takes the position of the range it shadows.
     expect(session.surface.nodes).toEqual([0, 1, carrier.seq])
     // And the written log replays to exactly that surface — the cold-load check.
-    expect(foldSurface(log).nodes).toEqual(session.surface.nodes)
+    expect(foldSurface(log, currentSessionMessageProjections).nodes).toEqual(session.surface.nodes)
   })
 })
 
@@ -355,6 +416,7 @@ describe('the shadow-price protocol (§5.3, §13.1 #4, §13.2 #18)', () => {
 
   it('states the official sum over the range, not a node count', async () => {
     const session = measuredFixture()
+    const host = await hostContext(hostState({ session }))
     const { result } = await writeOn(session, { targetSeq: 6, op: 'edit', text: 'edited' })
     const { audit } = pairAtEnd(session)
     const range = [6, 9].map((seq) => session.eventAt(seq))
@@ -364,6 +426,14 @@ describe('the shadow-price protocol (§5.3, §13.1 #4, §13.2 #18)', () => {
     // The node count is the documented overestimation bug; these differ, which
     // is what makes the assertion above non-vacuous.
     expect(audit.data.shadowedTokenCount).not.toBe(audit.data.shadowedSeqs.length)
+    // And the estimator the write reached through the meter SERVICE is the one
+    // this expectation uses: the service method delegates to the imported module
+    // export, so the two agree node by node. A service that priced by some other
+    // rule would disagree here even while both totals looked plausible.
+    const meter = host.ctx.get('tokenMeter')
+    for (const event of range) {
+      expect(meter.estimateMessage(deriveEventMessage(event))).toBe(officialNodePrice(event))
+    }
   })
 
   it('leaves no surviving claim, and moves surfaceTokens by exactly the claim delta', async () => {
@@ -382,14 +452,30 @@ describe('the shadow-price protocol (§5.3, §13.1 #4, §13.2 #18)', () => {
     })
     const { audit, carrier } = pairAtEnd(session)
     const after = pressureState(host, session)
+    const expectedDelta = officialNodePrice(carrier) - audit.data.shadowedTokenCount
 
     expect(result.ok).toBe(true)
+    // The claim was CONSUMED, not merely written: after the pair no `claim` is
+    // armed, which is only true if the carrier was the very next surface event
+    // (spec §5.3).
     expect(after.claim).toBeUndefined()
-    expect(after.surfaceTokens - before.surfaceTokens).toBe(officialNodePrice(carrier) - audit.data.shadowedTokenCount)
+    expect(after.surfaceTokens - before.surfaceTokens).toBe(expectedDelta)
     // The other mechanism over the same surface: the measurement planner prices
-    // the surface directly and never consults a claim, so it corroborates the
-    // arithmetic without exercising the claim path (§16.3).
+    // the surface directly through `priceSurface`, so it never consults a claim
+    // and never enters `foldSurfaceProjection`. It is a cross-check, not a second
+    // witness of the claim path (spec §16.3).
     expect(host.ctx.get('tokenMeter').measure(session).surfaceTokens).toBe(after.surfaceTokens)
+
+    // Non-vacuity, in the shape of the documented defect: a claim that stated the
+    // NODE COUNT instead of the official price, or a write that skipped the claim
+    // entirely, both move the total to a different number — so the assertion
+    // above is about the price the claim carries and not about arithmetic that
+    // would hold for any non-zero claim.
+    expect(audit.data.shadowedTokenCount).not.toBe(session.surface.nodes.length)
+    expect(audit.data.shadowedTokenCount).toBeGreaterThan(0)
+    // A skipped claim folds zero (see the lone-replace case below): if the audit
+    // had not armed the fold, the delta would be exactly the carrier's own price.
+    expect(expectedDelta).not.toBe(officialNodePrice(carrier))
   })
 
   it('shows the armed claim and the folded total in the same state', async () => {
@@ -425,13 +511,17 @@ describe('the shadow-price protocol (§5.3, §13.1 #4, §13.2 #18)', () => {
     // the damage an orphaned audit does to a later, different replace (§2.3).
     session.append('compaction/prune', { shadowedRange: { start: 0, end: 3 }, shadowedSeqs: [0, 3], shadowedTokenCount: 1 })
     const keys = runtimeEndpointKeys()
-    session.append(
+    const carrier = session.append(
       'user/message',
       { role: 'user', id: 'dsh-resend-edit-orphan', content: [{ type: 'text', text: TRACE_TEXT }], source: { kind: 'cordis-host-runner' } },
       { surfaceOp: { op: 'replace', [keys.start]: 6, [keys.end]: 9 }, sourceEventSeqs: [6, 9] },
     )
 
     expect(() => pressureState(host, session)).toThrow(/has no adjacent shadow price/)
+    // The refusal names the event that contradicted the claim and both ranges,
+    // because an orphan claim is only findable through that diagnostic (§11).
+    expect(() => pressureState(host, session)).toThrow(new RegExp(`replace at seq ${carrier.seq} over range 6-9`))
+    expect(() => pressureState(host, session)).toThrow(/armed claim covers 0-3/)
   })
 })
 
@@ -439,8 +529,9 @@ describe('flush discipline, output faults and serialization (§4.6, §5.2, §13.
   it('flushes exactly once on success, and never on a refusal', async () => {
     const success = await writeOn(sessionFixture(), { targetSeq: 2, op: 'edit', text: 'edited' })
     expect(success.host.state.calls.flushes).toBe(1)
-    // The flush saw the WRITTEN log, not the plan.
-    expect(success.host.state.calls.flushLengths).toEqual([success.session.seq])
+    // The flush saw the WRITTEN log, not the plan: its observed length is the
+    // length the log has after the pair landed (§13.1 #9).
+    expect(success.host.state.calls.flushLengths).toEqual([logLength(success.session)])
 
     const refused = await writeOn(sessionFixture(), { targetSeq: 2, op: 'edit', text: 'edited' }, {
       plan: { op: 'edit', targetSeq: 2, rangeStartSeq: 2, endSeq: 3, shadowedSeqs: [3, 2], resendText: 'edited' },
@@ -484,9 +575,11 @@ describe('flush discipline, output faults and serialization (§4.6, §5.2, §13.
     expect(result.ok).toBe(false)
     expect(result.error.code).toBe('internal')
     expect(result.error.detail).toMatch(/no longer adjacent|does not match the validated pair/)
-    // Output fault flushes first: once, and it observed the POST-write length.
+    // Output fault flushes first: once, and it observed the POST-write length — all
+    // seven events, so the failure was computed over a log that was already durable
+    // and not over one the plugin had yet to write.
     expect(host.state.calls.flushes).toBe(1)
-    expect(host.state.calls.flushLengths).toEqual([session.seq])
+    expect(host.state.calls.flushLengths).toEqual([7])
     // Nothing was rolled back — the pair and the racing event are all still there,
     // and the plugin reports the mismatch rather than a silent token drift.
     expect(session.seq).toBe(7)
@@ -562,6 +655,131 @@ describe('the carrier is not a round boundary (§5.4, §13.1 #15)', () => {
     expect(isAppendSurfaceEvent(carrier)).toBe(false)
     expect(deriveEventMessage(carrier).role).toBe('user')
     expect(rounds()).toBe(before)
+  })
+
+  it('is not classified as a model message, and the host fold closes over it as the user side (§5.4, §13.1 #15, §16.7)', async () => {
+    const session = measuredFixture()
+    const host = await hostContext(hostState({ session }))
+    // The host's own derivation over the log: a model message is a node the fold
+    // derives to `role: 'assistant'` with a `model` source (§16.7). The carrier
+    // must not join that set — a carrier a host classified as a model message
+    // would be a reply where a prompt belongs, and the trace text would reach the
+    // model as assistant output.
+    const modelSeqs = (nodes) => nodes
+      .map((seq) => ({ seq, message: deriveEventMessage(session.eventAt(seq)) }))
+      .filter(({ message }) => message.role === 'assistant' && message.source.kind === 'model')
+      .map(({ seq }) => seq)
+
+    const { result } = await writeOn(session, { targetSeq: 6, op: 'edit', text: 'edited' })
+    const { carrier } = pairAtEnd(session)
+    const carrierMessage = deriveEventMessage(carrier)
+
+    expect(result.ok).toBe(true)
+    // The reply the write shadowed is GONE from the set, and the carrier did not
+    // take its place there: the surface's replies are the ones before the range.
+    expect(modelSeqs([...session.surface.nodes])).toEqual([3])
+    expect(modelSeqs([...session.surface.nodes])).not.toContain(carrier.seq)
+    expect(carrierMessage.role).toBe('user')
+    expect(carrierMessage.source).toEqual({ kind: 'cordis-host-runner' })
+    expect(carrierMessage.source.kind).not.toBe('model')
+    // The surface the plugin wrote is the surface the host's own fold replays,
+    // from the events alone — a carrier mistaken for a turn boundary would put a
+    // node on that surface the fold does not produce.
+    expect(foldSurface(logOf(session), currentSessionMessageProjections).nodes).toEqual(session.surface.nodes)
+    // …and the projection that prices the surface still folds the session: the
+    // claim was consumed by the carrier and nothing is left armed.
+    expect(host.ctx.sessionProjections.stateOf(session, 'contextPressure').claim).toBeUndefined()
+  })
+})
+
+/**
+ * §13.2 #16–#18: the doubles themselves, held to what they would have to be for
+ * the rest of this file to mean anything.
+ */
+describe('the test doubles mirror the host, and their prices are the host’s (§13.2 #16, #18)', () => {
+  it('the default fixture exposes the host’s accessors and NO legacy event view (§13.2 #16, #17)', () => {
+    const session = sessionFixture()
+
+    // First the generation question: this IS the host's own class, so the append
+    // contract that accepted every fixture in this file is the one production
+    // runs (§13.2 #17). A hand-rolled look-alike whose `append` accepts anything
+    // would make each case here vacuous.
+    expect(session).toBeInstanceOf(Session)
+    expect(typeof session.append).toBe('function')
+    expect(typeof session.snapshotEvents).toBe('function')
+    expect(typeof session.eventAt).toBe('function')
+    // The incident this invariant exists for: a legacy-shaped fake let a whole
+    // suite pass while the feature was dead on real machines. If a fake ever
+    // grows an `events` member by default, this is where it shows up.
+    expect('events' in session).toBe(false)
+    // …and the legacy view is reachable ONLY through the explicit opt-in, so the
+    // sparse-safety case can still build the shape it exists to refuse.
+    expect('events' in withLegacyEventView(sessionFixture())).toBe(true)
+  })
+
+  it('the write’s own price source reads the OFFICIAL meter, and never re-prices (§13.2 #18)', () => {
+    // The assertion is about the shipped source, not a copy: a re-implemented
+    // formula would price the claim with a number the host's fold disagrees with.
+    // The estimator reaches the write through the meter SERVICE's own
+    // `estimateMessage` — the instance method that delegates to the module export
+    // (the "official sum" case above drives that equivalence node by node) — so
+    // the price PATH is what the source can be held to here: it resolves the
+    // official service, calls that method, and never re-derives a price of its own.
+    const source = readFileSync(path.join(rootDir, 'src', 'token-price.js'), 'utf8')
+    const resolved = import.meta.resolve('@deepseek-ai/dsh-token-meter/estimate')
+
+    expect(resolved).toContain('node_modules/@deepseek-ai/dsh-token-meter')
+    expect(existsSync(fileURLToPath(resolved))).toBe(true)
+    expect(source).toContain("import { deriveEventMessage } from '@deepseek-ai/dsh-session'")
+    expect(source).toMatch(/hostService\(ctx, 'tokenMeter'\)/)
+    expect(source).toMatch(/meter\.estimateMessage\(/)
+    expect(source).not.toMatch(/estimateMessage\s*=\s*\(/)
+    // "Never skip" is a property of the IMPORT, not only of a missing directory:
+    // a dynamic `import()` inside a `try` would make an absent package a silent
+    // degradation, and this suite's failure would have to be a THROW at load.
+    expect(source).not.toMatch(/await import\(/)
+    expect(source).not.toMatch(/import\(['"]@deepseek-ai/)
+  })
+
+  it('a missing estimator package fails the resolver instead of skipping the case (§13.2 #18)', () => {
+    // Two facts, and the second is what makes the first mean anything:
+    //
+    //  1. the specifier the shipped source and this suite both name resolves to a
+    //     real file — a typo there would make the import throw at load, which is
+    //     the "throw, never skip" the criterion asks for;
+    //  2. in a scratch root where the package is absent, Node's resolver fails on
+    //     that same specifier, naming it — the outcome a missing devDependency
+    //     would produce, rather than a skipped case.
+    const resolved = import.meta.resolve('@deepseek-ai/dsh-token-meter/estimate')
+    expect(resolved).toMatch(/dsh-token-meter\/lib\/types\/estimate\.js$/)
+    expect(existsSync(fileURLToPath(resolved))).toBe(true)
+    const absentRoot = mkdtempSync(path.join(tmpdir(), 'dsh-resend-absent-'))
+    const presentRoot = mkdtempSync(path.join(tmpdir(), 'dsh-resend-present-'))
+    const probe = "import('@deepseek-ai/dsh-token-meter/estimate').then(() => { console.log('resolved') })"
+    const run = (root) => spawnSync(process.execPath, ['--input-type=module', '-e', probe], { cwd: root, encoding: 'utf8' })
+    try {
+      mkdirSync(path.join(presentRoot, 'node_modules', '@deepseek-ai'), { recursive: true })
+      symlinkSync(
+        path.join(rootDir, 'node_modules', '@deepseek-ai', 'dsh-token-meter'),
+        path.join(presentRoot, 'node_modules', '@deepseek-ai', 'dsh-token-meter'),
+        'junction',
+      )
+
+      const reachable = run(presentRoot)
+      expect(reachable.status, reachable.stderr).toBe(0)
+      expect(reachable.stdout).toContain('resolved')
+
+      const missing = run(absentRoot)
+      expect(missing.status).not.toBe(0)
+      expect(missing.stderr).toContain('@deepseek-ai/dsh-token-meter')
+      // Vite's resolver phrasings ("Failed to resolve import", "Cannot find
+      // package") and Node's own ERR_MODULE_NOT_FOUND all name the package, which
+      // is what makes the failure diagnosable rather than a bare nonzero exit.
+      expect(missing.stderr).toMatch(/Cannot find package|ERR_MODULE_NOT_FOUND|Failed to resolve/i)
+    } finally {
+      rmSync(absentRoot, { recursive: true, force: true })
+      rmSync(presentRoot, { recursive: true, force: true })
+    }
   })
 })
 

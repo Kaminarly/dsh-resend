@@ -265,6 +265,31 @@ export function auditCount(session) {
 }
 
 /**
+ * The whole log as one comparable string (spec §13.1 #8: the assertion is that a
+ * refusal leaves the log "byte-identical to before the call", not merely that the
+ * `seq` did not move).
+ *
+ * A zero-write assertion that compares `session.seq` proves only that no event
+ * was MINTED: an append refused at the boundary leaves `seq` alone, and so does
+ * a write that mutates an existing event or appends without minting. This turns
+ * the whole log — every key of every event, nested and in order — into one
+ * string, so any difference at all shows up as a failed `toBe`. Object keys are
+ * sorted because key ORDER is a serialization detail of whichever host built
+ * the event; every value is compared exactly.
+ * @param session - the fixture session.
+ * @returns a canonical string of the session's complete log.
+ */
+export function canonicalLog(session) {
+  const sortKeys = (_key, value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value
+    const sorted = {}
+    for (const key of Object.keys(value).sort()) sorted[key] = value[key]
+    return sorted
+  }
+  return JSON.stringify(logOf(session), sortKeys)
+}
+
+/**
  * A session-shaped view of a real `Session` whose append boundary is
  * intercepted.
  *
@@ -454,7 +479,12 @@ export function hostState(options = {}) {
        * a resend-only retry never flushes at all.
        */
       trace: [],
-      /** The session's own `seq` observed AT each flush (spec §13.1 #9). */
+      /**
+       * The LENGTH of the session's log observed AT each flush (spec §13.1 #9):
+       * `snapshotEvents().length`, not `session.seq`. The two agree while seqs are
+       * dense, and a case that asks whether the flush saw the written log is
+       * asking about the log.
+       */
       flushLengths: [],
       /** Flushes in flight right now, and the high-water mark of that count. */
       activeFlushes: 0,
@@ -601,7 +631,10 @@ export function hostDoubles(state) {
     async flush(session) {
       const calls = state.calls
       calls.flushes += 1
-      calls.flushLengths.push(session?.seq)
+      // The LENGTH of the log, read through the host's own accessor: a session the
+      // double cannot measure would make this witness compare a value to itself, so
+      // it fails loudly rather than silently falling back to `seq` (spec §13.1 #9).
+      calls.flushLengths.push(session.snapshotEvents().length)
       calls.trace.push('flush')
       calls.activeFlushes += 1
       calls.maxActiveFlushes = Math.max(calls.maxActiveFlushes, calls.activeFlushes)

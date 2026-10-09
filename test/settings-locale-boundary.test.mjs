@@ -11,9 +11,10 @@
  * throw in one surface becomes that surface's own failure row, never a blank
  * page.
  *
- * As in the sibling files, everything drives the shipped bundle
- * (`clientHalf()`), never `src/` — the suite holds the tree the browser
- * actually receives.
+ * As in the sibling files, everything behavioural drives the shipped bundle
+ * (`clientHalf()`), never `src/`: the suite holds the tree the browser actually
+ * receives. The two source guards are the exception, and they read `src/` on
+ * purpose — they are about the wiring a page is built from.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -111,6 +112,36 @@ const regenerateProps = (composition) => ({
   t: composition.ctx.get('locale').bind('dsh-resend'),
   useChat: (select) => select(REGENERATE_SNAPSHOT),
   useSession: (select) => select({ running: false }),
+})
+
+/** Every hand-written source file under `src/`, for the source guards below. */
+const sourceTexts = () => readdirSync(path.join(rootDir, 'src'))
+  .filter((file) => file.endsWith('.js'))
+  .map((file) => readFileSync(path.join(rootDir, 'src', file), 'utf8'))
+
+/**
+ * The same files with comments removed, so a count over them is a count of CODE
+ * (a comment that mentions `withPanelBoundary(` is prose, not a construction site).
+ */
+const sourceCode = () => sourceTexts()
+  .map((text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''))
+  .join('\n')
+
+/** The English dictionary this half registered. */
+const settingsDictionary = (composition) => composition.record.dictionaries
+  .find((entry) => entry.namespace === 'dsh-resend')
+  .dictionaries.en
+
+/**
+ * The props a registration receives when a case only needs its element tree:
+ * the slot's own props, with no store behind them. Calling a registration's
+ * component is what produces the boundary element, so these are enough — none of
+ * the surfaces is rendered here, only constructed.
+ */
+const SLOT_PROPS = Object.freeze({
+  node: SNAPSHOT_NODES.get('assigned-actions'),
+  sessionId: 'session-1',
+  t: (key) => key,
 })
 
 /** One button in a rendered tree, by its visible text; `null` when absent. */
@@ -366,10 +397,127 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     }
   })
 
+  it('the shipped registration sites all go through the ONE implementation, one wrap and one title each (§7.4, §13.3 #19)', async () => {
+    // THE STRUCTURAL FORM of this criterion: not "a boundary exists" but "every
+    // registration passes a component the SAME factory produced, and that
+    // component is a boundary carrying this site's own title".
+    const composition = await activated()
+    const patch = face.withPanelBoundary((props) => createElement('div', props), 'panel.error.userActions')
+    const registrations = composition.record.mounts
+    const produced = registrations.map((registration) => registration.component({ ...SLOT_PROPS }))
+
+    expect(registrations).toHaveLength(4)
+    for (const [index, registration] of registrations.entries()) {
+      const label = registration.options.id ?? registration.options.key
+      const tree = produced[index]
+      expect(typeof tree?.type?.getDerivedStateFromError, label).toBe('function')
+      expect(typeof tree?.props?.children?.type, label).toBe('function')
+      expect(typeof tree?.props?.title, label).toBe('string')
+      expect(tree?.props?.title, label).not.toBe('')
+    }
+
+    // Identity, in the two forms this seam allows. All four registrations live in
+    // ONE module instance, and each `Panel` closure it hands out is a distinct
+    // object — so the shared thing is not the closure but the CLASS every one of
+    // them renders: one `PanelBoundary` across all four sites. A per-site boundary
+    // implementation would be a second class here.
+    const owners = registrations.map((registration) => registration.component)
+    for (const owner of owners) expect(typeof owner).toBe('function')
+    expect(new Set(produced.map((tree) => tree.type)).size).toBe(1)
+    // …and their bodies are one wrapper, which is what the cross-materialization
+    // comparison below can be held to.
+    const bodies = new Set(owners.map((owner) => String(owner)))
+    expect(bodies.size).toBe(1)
+
+    // `face` is a DIFFERENT materialization of the bundle than the composition's
+    // (each `clientHalf()` is its own module instance), so object identity across
+    // the two cannot be compared — the shared FACTORY can, and it produces one
+    // wrapper text. A boundary a site built by hand has a different body, so the
+    // comparison below is not vacuous.
+    expect(String(patch)).toBe([...bodies][0])
+    expect(String((props) => createElement('div', props))).not.toBe(String(patch))
+    expect(String(face.withPanelBoundary((props) => createElement('div', props), 'panel.error.userActions'))).toBe(String(patch))
+  })
+
+  it('gives every construction site its own title, and no key two of them (§7.4, §13.3 #19)', async () => {
+    // The source guard the criterion asks for is structural on both ends: exactly
+    // one boundary class in the hand-written tree, one construction call per
+    // registered title, and a distinct title per site. A surface that shared a
+    // sibling's title would be reported to the user as the wrong panel.
+    const composition = await activated()
+    const registered = settingsDictionary(composition)
+    const all = sourceCode()
+    // The construction sites are the CALLS, matched to their closing parenthesis:
+    // each one's LAST argument is its own title key (the settings row passes its
+    // base translator after it). Anchoring on the call's end is what keeps the
+    // count from drifting with a comment or an import that merely mentions the
+    // factory — the factory's own declaration has no title argument and is
+    // therefore not one of these.
+    const callSites = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*?(?:'(?:panel|settings)\.[A-Za-z.]+'(?:\s*,\s*translate)?\s*)\)/g)]
+    const titles = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*,\s*'(panel\.error\.[A-Za-z]+)'/g)].map((match) => match[1])
+    // Every title in the source is one of the six this suite names, and every one
+    // of the six is used: a surface whose title key no dictionary carries would
+    // render the raw key instead of a sentence.
+    expect(callSites).toHaveLength(6)
+    expect(titles).toHaveLength(callSites.length)
+    expect(new Set(titles).size).toBe(titles.length)
+    expect(titles.slice().sort()).toEqual(SIX_TITLES.slice().sort())
+    for (const title of titles) expect(Object.keys(registered)).toContain(title)
+
+    // The bundle a page receives carries the same wiring — the guard is about the
+    // tree that ships, not only the tree that is edited. The title key is matched
+    // without its quotes because the bundler is free to choose them.
+    const bundle = readFileSync(path.join(rootDir, 'lib', 'client.bundle.js'), 'utf8')
+    for (const title of titles) expect(bundle.split(title).length - 1, title).toBeGreaterThanOrEqual(1)
+    expect(bundle).toContain('withPanelBoundary')
+
+    // …and each registration hands the boundary its own LOCALIZED title: the
+    // boundary renders the string it was given, so a registration that forgot to
+    // pass one falls back to the generic page title and is red here.
+    const t = composition.ctx.get('locale').bind('dsh-resend')
+    const titlesInUse = []
+    for (const registration of composition.record.mounts) {
+      const tree = registration.component({ ...SLOT_PROPS, t })
+      expect(typeof tree.props.title).toBe('string')
+      expect(tree.props.title).not.toBe(t('panel.errorTitle'))
+      expect(tree.props.title).not.toBe('')
+      titlesInUse.push(tree.props.title)
+    }
+    // Four registrations name four different panels; the remaining two titles
+    // belong to sub-surfaces that a registration builds internally.
+    expect(new Set(titlesInUse).size).toBe(titlesInUse.length)
+    expect(Object.keys(registered).filter((key) => key.startsWith('panel.error.'))).toHaveLength(SIX_TITLES.length)
+  })
+
+  it('a throwing surface under a registration fails as that registration’s own panel (§7.4, §13.3 #19)', async () => {
+    const composition = await activated()
+    const t = composition.ctx.get('locale').bind('dsh-resend')
+    function ThrowingSurface() {
+      throw new Error('this surface read a path that was permanently undefined')
+    }
+
+    // What no other case holds: the title a REGISTRATION'S boundary renders is the
+    // one that registration passed. Mounted through the registration's own wiring
+    // (its factory, its title key), a throw becomes that surface's failure row and
+    // not the generic panel — and not the tree's collapse (§13.3 #20 is the case
+    // below; containment beside a live sibling is the rewind-row suite's subject).
+    const registration = settingsOf(composition)
+    const wrappedThrower = face.withPanelBoundary(ThrowingSurface, 'panel.error.settings')
+    const { html, thrown } = await mount(createElement(wrappedThrower, { t }))
+
+    expect(registration.options.id).toBe('dsh-resend-preferences')
+    expect(thrown).toBeUndefined()
+    expect(html).toContain('dsh-resend-panel-error')
+    expect(html).toContain('role="alert"')
+    expect(html).toContain(t('panel.error.settings'))
+    expect(html).toContain('this surface read a path that was permanently undefined')
+    // The generic page title is what a boundary with no title shows; this one is
+    // the settings row's own sentence.
+    expect(html).not.toContain(t('panel.errorTitle'))
+  })
+
   it('no registration site passes a bare component (source guard)', () => {
-    const srcDir = path.join(rootDir, 'src')
-    const files = readdirSync(srcDir).filter((file) => file.endsWith('.js'))
-    const texts = files.map((file) => readFileSync(path.join(srcDir, file), 'utf8'))
+    const texts = sourceTexts()
 
     // Exactly one boundary implementation in the whole half.
     expect(texts.join('\n').match(/class PanelBoundary/g)).toHaveLength(1)

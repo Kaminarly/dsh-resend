@@ -155,11 +155,18 @@ export function planRewindPair({ plan, auditSeq, carrierId, traceText, shadowedT
  * against the plan they were built from: §5.3's rule is that the claim's
  * `shadowedRange` is *exactly the carrier's range*, and two comparisons that
  * both read the plan could not fail — the pattern §5.3 forbids for the price.
+ *
+ * Exported because the forward-reference clause is only reachable with a plan
+ * this plugin would never produce: the suite hands it a candidate that cites the
+ * carrier's own seq, so the rule is checked rather than assumed (spec §13.1 #3).
+ * That makes this export a TEST SEAM on the write module's public surface — the
+ * alternative is a rule nothing can exercise, which is how a check quietly
+ * becomes a comment. It is called from {@link writeRewindPair} and nowhere else.
  * @param pair - the pair from {@link planRewindPair}.
  * @param context - `{ plan, auditSeq, carrierSeq, binding }`.
  * @throws an `Error` naming the field that violates the contract.
  */
-function assertPairContract(pair, { plan, auditSeq, carrierSeq, binding = runtimeShapeBinding() }) {
+export function assertPairContract(pair, { plan, auditSeq, carrierSeq, binding = runtimeShapeBinding() }) {
   const { data: audit, options: auditOptions } = pair.audit
   const { data: carrier, options } = pair.carrier
 

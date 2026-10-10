@@ -110,6 +110,13 @@ export function createResendOperations(remote) {
 
   return {
     run,
+    // Reconnection may precede Chat refill. Re-read every observed session and
+    // retire in-flight replies so old neighbours cannot reopen an invalid target.
+    invalidateConversations() {
+      for (const [sessionId, entry] of conversations) {
+        void this.refreshConversation(sessionId, entry.revision, true)
+      }
+    },
     conversationFor(sessionId, revision) {
       const entry = conversations.get(sessionId)
       return entry?.revision === revision ? entry.snapshot : unreadConversation
@@ -162,7 +169,7 @@ export function createResendOperations(remote) {
      */
     async sendAgain(point) {
       const entry = outcomeOf(point)
-      if (entry === undefined) return undefined
+      if (entry?.status !== RESEND_FAILED) return undefined
       return run(entry.request)
     },
     /**

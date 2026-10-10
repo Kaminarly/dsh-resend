@@ -41,6 +41,9 @@ import { NAMESPACE, SERVICE } from './typert.js'
 import { createFileVersions } from './file-versions.js'
 
 const fileVersions = new WeakMap()
+// Acceptance precedes the agent's inbox append. Keep that observed fact for the
+// live Session so another page cannot mistake the append gap for an owed prompt.
+const acceptedPrompts = new WeakMap()
 
 /**
  * Cordis's fiber states, from its own enum (`src/fiber.ts`: PENDING 0,
@@ -110,10 +113,15 @@ function guarded(read) {
  * @param handoff - `{ agent, sessionId, resendMessageId, text }`.
  * @returns true when the agent took the prompt.
  */
-function handOffPrompt(ctx, { agent, sessionId, resendMessageId, text }) {
+function handOffPrompt(ctx, { agent, session, sessionId, resendMessageId, text }) {
   try {
     agent.followup({ role: 'user', id: resendMessageId, content: [{ type: 'text', text }], source: { kind: 'user' } })
-    if (agent.status === 'running') return true
+    if (agent.status === 'running') {
+      const accepted = acceptedPrompts.get(session) ?? new Set()
+      accepted.add(resendMessageId)
+      acceptedPrompts.set(session, accepted)
+      return true
+    }
     logWarning(
       ctx,
       `the rewind of ${JSON.stringify(sessionId)} stands, but the agent did not take the prompt (status ${JSON.stringify(agent.status)}): ` +
@@ -200,7 +208,8 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
         logWarning(ctx, `the re-send for ${JSON.stringify(sessionId)} was asked for while a turn was open on it (spec §4.4 rule 4)`)
         return failure('agent-busy')
       }
-      const taken = handOffPrompt(ctx, { agent, sessionId, resendMessageId: plan.resendMessageId, text: plan.resendText })
+      if (acceptedPrompts.get(session)?.has(plan.resendMessageId)) return failure('target-shadowed')
+      const taken = handOffPrompt(ctx, { agent, session, sessionId, resendMessageId: plan.resendMessageId, text: plan.resendText })
       return rewindResult({
         carrierSeq: plan.carrierSeq,
         shadowedSeqs: plan.shadowedSeqs,
@@ -265,7 +274,7 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     // the user sees. The flush has already made the rewind durable, which is why
     // a failure here can only ever be reported as "the re-send did not happen",
     // never as a failure of the rewind itself (§9.4).
-    const taken = handOffPrompt(ctx, { agent, sessionId, resendMessageId, text: plan.resendText })
+    const taken = handOffPrompt(ctx, { agent, session, sessionId, resendMessageId, text: plan.resendText })
     return rewindResult({
       carrierSeq: write.value.carrierSeq,
       shadowedSeqs: write.value.shadowedSeqs,

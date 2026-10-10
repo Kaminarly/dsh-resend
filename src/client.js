@@ -440,6 +440,7 @@ function mountSurfaces(scope, ctx) {
 
   const operations = createResendOperations(scope.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
+  scope.on('connection/reset', () => operations.invalidateConversations())
 
   // Rewind points and hidden companions are Definitions; visible user actions
   // are attached to the original host renderer below.

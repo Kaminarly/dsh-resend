@@ -29,6 +29,7 @@ import { hasMarkerPrefix } from './marker.js'
 import { HideRulesSurface } from './hide-rules.js'
 import { RESEND_FAILED } from './resend-operations.js'
 import { useHiding } from './use-hiding.js'
+import { FileRollbackPreview } from './file-rollback-preview.js'
 
 /**
  * The node kind, and the `conversation.chat.node` key that renders it.
@@ -177,6 +178,7 @@ function RewindRowSurface(props) {
     createElement(HideRulesSurface, { key: 'rules', t, css }),
     (!dismissed || rewindPointView(outcome).kind === 'resend-failed' || hideError !== undefined) &&
       createElement('div', { key: 'row' }, row),
+    createElement(FileRollbackPreview, { key: 'files', operations, point, t }),
   ])
 }
 

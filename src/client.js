@@ -46,6 +46,7 @@ import { REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rew
 import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText, InlineEditorSurface } from './user-actions.js'
 import { hidePlanFor, hideRulesFor, hiddenKeysFor } from './hide-plan.js'
 import { TYPERT_REMOTE } from './typert.client.js'
+export { FileRollbackPreview } from './file-rollback-preview.js'
 
 /**
  * The contribution this half mounts, re-exported.
@@ -136,6 +137,32 @@ const preferences = createPreferences()
  */
 const DICTIONARIES = {
   zh: {
+    'files.preview': '预览文件回滚',
+    'files.heading': '确认前不会改动文件。以下文件将按此计划处理：',
+    'files.completed': '文件回滚已结束。以下是本次处理结果：',
+    'files.empty': '这次重写没有记录到文件改动。',
+    'files.restore': '将还原',
+    'files.restored': '已还原',
+    'files.refuse': '拒绝还原',
+    'files.execute': '确认还原文件',
+    'files.cancel': '取消',
+    'files.reason.content-diverged': '文件已被其他操作修改',
+    'files.reason.diverged-between-writes': '两次写入之间存在其他修改',
+    'files.reason.prior-state-unavailable': '缺少可靠的原始内容',
+    'files.reason.unsafe-path': '文件路径不在可还原范围内',
+    'files.reason.unreadable-file': '无法读取文件',
+    'files.reason.snapshot-unavailable': '原始内容记录无法读取',
+    'files.reason.restore-failed': '文件还原失败',
+    'files.reason.write-outcome-unavailable': '写入失败，无法确认文件变化的来源',
+    'files.reason.execution-stopped': '本次还原已停止，未处理此文件',
+    'files.error.no-target-state': '这次重写没有可用的文件还原记录。',
+    'files.error.preview-stale': '预览后文件发生变化，未执行还原。请重新预览。',
+    'files.error.plan-not-found': '预览已失效，请重新预览。',
+    'files.error.agent-busy': '请先停止回复，再预览文件回滚。',
+    'files.error.session-not-found': '当前会话无法读取。',
+    'files.error.bad-request': '文件回滚请求无效，请重新预览。',
+    'files.error.internal': '文件回滚未完成，请重新预览后检查文件。',
+    'files.error.execution-stopped': '文件回滚已停止。以下列出已还原与未还原的文件，请检查后重新预览。',
     'row.resendFailed': '历史已被重写，但重发失败：agent 没有接收这条提示词。',
     'row.sendAgain': '重新发送',
     'row.edit': '编辑',
@@ -174,6 +201,32 @@ const DICTIONARIES = {
     'settings.off': '关',
   },
   en: {
+    'files.preview': 'Preview file rollback',
+    'files.heading': 'Files stay unchanged until confirmation. This plan will process:',
+    'files.completed': 'File rollback finished. Results:',
+    'files.empty': 'No file changes were recorded for this rewind.',
+    'files.restore': 'Will restore',
+    'files.restored': 'Restored',
+    'files.refuse': 'Refused',
+    'files.execute': 'Confirm file restore',
+    'files.cancel': 'Cancel',
+    'files.reason.content-diverged': 'The file was changed by another operation',
+    'files.reason.diverged-between-writes': 'Other changes occurred between writes',
+    'files.reason.prior-state-unavailable': 'Reliable prior contents are unavailable',
+    'files.reason.unsafe-path': 'The path is outside the restorable scope',
+    'files.reason.unreadable-file': 'The file cannot be read',
+    'files.reason.snapshot-unavailable': 'Stored contents cannot be read',
+    'files.reason.restore-failed': 'The file could not be restored',
+    'files.reason.write-outcome-unavailable': 'The write failed; the source of file changes cannot be verified',
+    'files.reason.execution-stopped': 'Rollback stopped before processing this file',
+    'files.error.no-target-state': 'No file restore record is available for this rewind.',
+    'files.error.preview-stale': 'Files changed after the preview. Nothing was restored. Preview again.',
+    'files.error.plan-not-found': 'The preview expired. Preview again.',
+    'files.error.agent-busy': 'Stop the reply before previewing file rollback.',
+    'files.error.session-not-found': 'The conversation cannot be read.',
+    'files.error.bad-request': 'Invalid rollback request. Preview again.',
+    'files.error.internal': 'File rollback did not finish. Preview again and inspect the files.',
+    'files.error.execution-stopped': 'Rollback stopped. Restored and refused files are listed below. Inspect them and preview again.',
     'row.resendFailed': 'History was rewound, but the re-send failed: the agent did not take the prompt.',
     'row.sendAgain': 'Send again',
     'row.edit': 'Edit',

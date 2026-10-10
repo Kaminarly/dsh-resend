@@ -96,6 +96,7 @@ export function createResendOperations(remote) {
 
   return {
     run,
+    rollback: (request) => remote.resend.rollback(request),
     outcomeOf,
     recordsFor: (sessionId) => recordsBySession.get(sessionId) ?? emptyRecords,
     /**

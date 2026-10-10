@@ -46,7 +46,7 @@ import { coveringRefusalCode, eventAtSeq, readCoveringLog } from './log-read.js'
 import { MARKER_PREFIX, hasMarkerPrefix } from './marker.js'
 import { OP_KEY, REPLACE_OP, runtimeShapeBinding } from './shape-probe.js'
 import { shadowPriceSource, shadowedTokenCount } from './token-price.js'
-import { regenerateTargetRefusal, restrictRegenerate } from './resolve.js'
+import { editTargetRefusal, regenerateTargetRefusal, restrictEdit, restrictRegenerate } from './resolve.js'
 
 /** The audit claim's event type (spec §5.3). */
 const AUDIT_TYPE = 'compaction/prune'
@@ -417,9 +417,11 @@ export async function writeRewindPair(ctx, { sessions, session, sessionId, plan,
 
   // §5.2 steps 2–4: the two appends are adjacent, and there is no `await`
   // between them or before the flush.
-  if (request?.op === 'regenerate') {
+  if (request?.op === 'regenerate' || request?.op === 'edit') {
     const nodes = session.surface.nodes
-    const refusal = regenerateTargetRefusal(covering.log, nodes, request.targetSeq, restrictRegenerate(ctx))
+    const refusal = request.op === 'edit'
+      ? editTargetRefusal(covering.log, nodes, request.targetSeq, restrictEdit(ctx))
+      : regenerateTargetRefusal(covering.log, nodes, request.targetSeq, restrictRegenerate(ctx))
     if (refusal) return refusal
     const range = nodes.slice(nodes.indexOf(plan.rangeStartSeq))
     if (session.seq !== prevTail || range.length !== plan.shadowedSeqs.length || range.some((seq, index) => seq !== plan.shadowedSeqs[index])) {

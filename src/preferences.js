@@ -4,8 +4,9 @@ export const PREFERENCE_FIELDS = Object.freeze([
   'inlineEditorBeneathMessage',
   'regenerateLastReply',
   'restrictRegenerateToLastReply',
+  'restrictEditToLastUserMessage',
 ])
-const DEFAULTS = Object.freeze({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: true })
+const DEFAULTS = Object.freeze({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
 
 /** The host's saved document is authoritative; no browser storage or optimistic values. */
 export function createPreferences() {

@@ -33,7 +33,7 @@ import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertCode } from './error-codes.js'
 import { describeError, hostService, logWarning } from './host.js'
 import { carrierIdFor, resendIdFor } from './marker.js'
-import { effectiveAssistantReplies, resolveTarget } from './resolve.js'
+import { editPromptDigest, effectiveConversationEligibility, resolveTarget } from './resolve.js'
 import { withSessionLock } from './session-lock.js'
 import { traceTextNow } from './trace-text.js'
 import { writeRewindPair } from './write.js'
@@ -229,7 +229,8 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     // answerable from the log alone, which is the question §9.4's re-send rests
     // on. The trace text is chosen here, once, and is immutable in the log from
     // then on (§10).
-    const carrierId = carrierIdFor(op, randomUUID() + (op === 'regenerate' ? '-target-' + request.targetSeq : ''))
+    const carrierId = carrierIdFor(op, randomUUID() + (op === 'regenerate'
+      ? '-target-' + request.targetSeq : '-prompt-sha256-' + editPromptDigest(plan.resendText)))
     const resendMessageId = resendIdFor(carrierId)
     const versions = await fileVersions.get(ctx).prepare(session, plan, carrierId)
     let write
@@ -378,7 +379,7 @@ export class ResendService extends Service {
       const session = hostService(ctx, 'sessions')?.get(request.sessionId)
       if (session === undefined) return failure('session-not-found')
       return await withSessionLock(request.sessionId, async () => {
-        const result = await effectiveAssistantReplies(ctx, session)
+        const result = await effectiveConversationEligibility(ctx, session)
         return result.ok ? result : failure(result.error.code)
       })
     } catch (error) {

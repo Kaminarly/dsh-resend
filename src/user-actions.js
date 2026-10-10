@@ -5,6 +5,8 @@ import { usePreferences } from './preferences.js'
 import { HideRulesSurface } from './hide-rules.js'
 import { withPanelBoundary } from './panel-boundary.js'
 import { useHiding } from './use-hiding.js'
+import { useConversationEligibility } from './conversation-eligibility.js'
+import { IconAction, UIStyles } from './ui.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
 const identity = (value) => value
@@ -32,13 +34,9 @@ export function userActionsSurface(operations, preferences) {
  *   also greys the chip out — it explains why the chip cannot act.
  * @param disabled - whether the chip is greyed out, independent of reason.
  */
-const control = (key, label, icon, onClick, reason, disabled) => createElement('button', {
-  key, type: 'button', className: 'dsh-resend-chip', onClick,
-  disabled: disabled || reason !== undefined, title: reason,
-}, icon === undefined ? label : [
-  createElement(icon, { key: 'icon', size: 14 }),
-  createElement('span', { key: 'label' }, label),
-])
+const control = (key, label, icon, onClick, reason, disabled) => createElement(IconAction, {
+  key, label, icon: icon ?? IconEditOutlineRegular, onClick, reason, disabled,
+})
 
 /**
  * Surface 2: the inline editor, a sub-surface of the action row (ticket 08,
@@ -71,15 +69,27 @@ export function UserActionsRow(props) {
   const inFlight = useRef(false)
   const input = typeof useInput === 'function' ? useInput(identity) : undefined
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
+  const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
-  const preferenceReason = prefs.ready ? undefined : t(prefs.status === 'loading' ? 'settings.loading' : 'settings.read-error')
-  const stopReason = preferenceReason ?? (session?.running ? t('row.stopFirst') : data.text.trim() === '' ? t('row.noText') : undefined)
-  const composerReason = preferenceReason ?? (input?.phase !== 'plain' ? t('row.composerBusy')
+  const reasonFor = (saved, current, context) => {
+    if (!context.plan || !current.ready) return t('row.conversationUnavailable')
+    if (context.plan.hiddenSeqs.has(context.data.seq) || !current.userSeqs.includes(context.data.seq)) return t('row.shadowed')
+    if (!saved.ready) return t(saved.status === 'loading' ? 'settings.loading' : 'settings.read-error')
+    if (saved.restrictEditToLastUserMessage !== false && current.lastUserSeq !== context.data.seq) return t('row.notLastUser')
+    if (context.session?.running) return t('row.stopFirst')
+    if (context.data.text.trim() === '') return t('row.noText')
+  }
+  const live = useRef()
+  live.current = { plan, data, session, revision, text }
+  const currentReason = () => reasonFor(preferences.getSnapshot(),
+    operations.conversationFor(sessionId, live.current.revision), live.current)
+  const stopReason = reasonFor(prefs, conversation, live.current)
+  const composerReason = stopReason ?? (input?.phase !== 'plain' ? t('row.composerBusy')
     : typeof inputActions?.setDraft !== 'function' || typeof readInput !== 'function' ? t('row.composerUnavailable') : undefined)
 
   const open = () => {
-    if (!preferences.getSnapshot().ready || stopReason !== undefined || inFlight.current) return
-    setText(data.text)
+    if (currentReason() !== undefined || inFlight.current) return
+    setText(live.current.data.text)
     setError(undefined)
     setEditing(true)
   }
@@ -89,14 +99,15 @@ export function UserActionsRow(props) {
     setError(undefined)
   }
   const send = async () => {
-    if (!preferences.getSnapshot().ready || inFlight.current || stopReason !== undefined || text.trim() === '') return
+    if (inFlight.current || currentReason() !== undefined || live.current.text.trim() === '') return
     inFlight.current = true
     setPending(true)
     setError(undefined)
     try {
-      const result = await operations.run({ sessionId, targetSeq: data.seq, op: 'edit', text })
+      const result = await operations.run({ sessionId, targetSeq: live.current.data.seq, op: 'edit', text: live.current.text })
       if (result.ok) setEditing(false)
-      else setError(t('row.operationFailed') + ' (' + result.error.code + ')')
+      else setError(t('row.operationFailed') + ' (' + result.error.code + ')' +
+        (result.error.code === 'not-last-user-message' ? '：' + t('operation.error.not-last-user-message') : ''))
     } catch (cause) {
       setError(t('row.operationFailed'))
       console.warn('[dsh-resend] edit at seq ' + data.seq + ' in session ' + sessionId + ': ' + (cause?.message ?? cause))
@@ -106,13 +117,13 @@ export function UserActionsRow(props) {
     }
   }
   const editInComposer = () => {
-    if (!preferences.getSnapshot().ready || inFlight.current || stopReason !== undefined || composerReason !== undefined) return
+    if (inFlight.current || currentReason() !== undefined) return
     // useInput is a React hook and cannot be invoked here. readInput resolves
     // the same session's public input facade and reads its live snapshot.
     try {
       if (readInput()?.phase !== 'plain') return
       if (typeof inputActions?.setDraft !== 'function') return
-      inputActions.setDraft(text.replace(/[\uE100-\uE11D\uFFFC]/gu, ''))
+      inputActions.setDraft((editing ? live.current.text : live.current.data.text).replace(/[\uE100-\uE11D\uFFFC]/gu, ''))
       setEditing(false)
     } catch (cause) {
       setError(t('row.composerUnavailable'))
@@ -157,6 +168,7 @@ export function UserActionsRow(props) {
     })]
   return createElement('div', { className: 'dsh-resend-user-actions' }, [
     rules,
+    createElement(UIStyles, { key: 'ui' }),
     ...body,
     error === undefined ? null : createElement('span', { key: 'error', role: 'alert' }, error),
   ])

@@ -23,7 +23,8 @@
  * a disabled, unclickable chip with the reason on hover, never a post-click
  * dialog.
  */
-import { createElement, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { createElement, useRef, useState } from 'react'
+import { useConversationEligibility } from './conversation-eligibility.js'
 import { usePreferences } from './preferences.js'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconAction, UIStyles } from './ui.js'
@@ -139,9 +140,7 @@ export function RegenerateControl(props) {
 
   const states = companionStates(chat)
   const state = states.find((candidate) => candidate.id === messageId) ?? null
-  const revision = JSON.stringify([states.map(state => [state.seq, state.prompt]), [...(plan?.hiddenSeqs ?? [])], session?.running, session?.openState])
-  const conversation = useSyncExternalStore(operations.subscribe, () => operations.conversationFor(sessionId, revision))
-  useEffect(() => { void operations.refreshConversation(sessionId, revision) }, [operations, sessionId, revision])
+  const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const reason = regenerateReason(state, conversation, session, plan, prefs.restrictRegenerateToLastReply)
 
   const [pending, setPending] = useState(false)

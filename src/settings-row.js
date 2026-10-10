@@ -24,6 +24,11 @@ const SETTING_KEYS = Object.freeze({
   inlineEditorBeneathMessage: 'settings.inlineEditorBeneathMessage',
   regenerateLastReply: 'settings.regenerateLastReply',
   restrictRegenerateToLastReply: 'settings.restrictRegenerateToLastReply',
+  restrictEditToLastUserMessage: 'settings.restrictEditToLastUserMessage',
+})
+const DESCRIPTIONS = Object.freeze({
+  restrictRegenerateToLastReply: 'settings.regenerateRangeDescription',
+  restrictEditToLastUserMessage: 'settings.editRangeDescription',
 })
 
 /** The id this row registers under — brand-new, never a shipped one. */
@@ -44,15 +49,15 @@ export function SettingsRow({ preferences, t }) {
       createElement('div', { key: field, className: 'dsh-resend-settings-row', 'data-field': field }, [
         createElement('div', { key: 'label', className: 'dsh-resend-settings-label' }, [
           createElement('span', { key: 'name' }, t(SETTING_KEYS[field])),
-          field === 'restrictRegenerateToLastReply' ? createElement('p', {
-            key: 'description', className: 'dsh-resend-settings-description', id: 'dsh-resend-regenerate-range-description',
-          }, t('settings.regenerateRangeDescription')) : null,
+          DESCRIPTIONS[field] ? createElement('p', {
+            key: 'description', className: 'dsh-resend-settings-description', id: 'dsh-resend-' + field + '-description',
+          }, t(DESCRIPTIONS[field])) : null,
         ]),
         createElement(Switch, {
           key: 'toggle',
           className: 'dsh-resend-settings-toggle', label: t(SETTING_KEYS[field]),
           checked: snapshot[field], disabled: !snapshot.ready || snapshot.status === 'saving',
-          'aria-describedby': field === 'restrictRegenerateToLastReply' ? 'dsh-resend-regenerate-range-description' : undefined,
+          'aria-describedby': DESCRIPTIONS[field] ? 'dsh-resend-' + field + '-description' : undefined,
           onChange: (next) => { void preferences.set(field, next) },
         }),
       ])),

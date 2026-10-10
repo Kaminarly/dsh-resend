@@ -50,6 +50,12 @@ import { refuse } from './error-codes.js'
 import { asArray, describeError, logWarning } from './host.js'
 import { coveringRefusalCode, eventAtSeq, readCoveringLog, readFileMaxSeq } from './log-read.js'
 import { isCarrierIdFor, resendIdFor } from './marker.js'
+import { createHash } from 'node:crypto'
+
+/** Bind retries to exact edited text without adding prompt contents to the log. */
+export function editPromptDigest(text) {
+  return createHash('sha256').update(JSON.stringify(text)).digest('hex')
+}
 
 /**
  * The code for a target the covering log does not hold (spec §4.5).
@@ -125,8 +131,35 @@ export function restrictRegenerate(ctx) {
   return ctx.fiber?.config?.restrictRegenerateToLastReply?.get?.() !== false
 }
 
+function isUserMessage(event) {
+  return event?.type === 'user/message' && isAppendSurfaceEvent(event) && event.data?.source?.kind === 'user'
+}
+
+export function restrictEdit(ctx) {
+  return ctx.fiber?.config?.restrictEditToLastUserMessage?.get?.() !== false
+}
+
+/** Real user sends count even when they have no editable text. */
+export function editTargetRefusal(log, nodes, targetSeq, restrict = true) {
+  const target = eventAtSeq(log, targetSeq)
+  if (target === undefined) return refuse('message-pending', 'the target is no longer readable')
+  if (!isUserMessage(target)) return refuse('not-user-message', 'the target is not an append message sent by the user')
+  if (!nodes.includes(targetSeq)) return refuse('target-shadowed', 'the target left the effective conversation')
+  if (restrict !== false) {
+    for (let index = nodes.length - 1; index >= 0; index -= 1) {
+      const event = eventAtSeq(log, nodes[index])
+      if (event === undefined) return refuse('message-pending', 'the effective conversation is not fully readable')
+      if (isUserMessage(event)) {
+        if (event.seq !== targetSeq) return refuse('not-last-user-message', 'the target is not the last user message')
+        return
+      }
+    }
+    return refuse('not-last-user-message', 'no effective user message was found')
+  }
+}
+
 /** Read the complete model surface; a Chat window never establishes its tail. */
-export async function effectiveAssistantReplies(ctx, session) {
+export async function effectiveConversationEligibility(ctx, session) {
   const covering = await readCoveringLog(ctx, session.id)
   if (covering.status === 'refused') return refuse(coveringRefusalCode(covering.reason), covering.detail)
   let fold
@@ -139,7 +172,10 @@ export async function effectiveAssistantReplies(ctx, session) {
     return event?.type === 'assistant/message' && isAppendSurfaceEvent(event)
   })
   const lastReplySeq = assistantSeqs.at(-1)
-  return { ok: true, value: { assistantSeqs, ...(lastReplySeq === undefined ? {} : { lastReplySeq }) } }
+  const userSeqs = fold.nodes.filter(seq => isUserMessage(eventAtSeq(covering.log, seq)))
+  const lastUserSeq = userSeqs.at(-1)
+  return { ok: true, value: { assistantSeqs, ...(lastReplySeq === undefined ? {} : { lastReplySeq }),
+    userSeqs, ...(lastUserSeq === undefined ? {} : { lastUserSeq }) } }
 }
 
 /**
@@ -236,6 +272,7 @@ function resendOnlyPlan(log, fold, request) {
   const carrierId = carrier?.data?.id
   if (carrier?.type !== 'user/message' || !isCarrierIdFor(op, carrierId)) return undefined
   if (logHoldsMessage(log, resendIdFor(carrierId))) return undefined
+  if (op === 'edit' && targetSeq !== replacement.start) return undefined
   if (op === 'regenerate') {
     const recordedTarget = /-target-(\d+)$/.exec(carrierId)
     if (recordedTarget !== null) {
@@ -253,6 +290,8 @@ function resendOnlyPlan(log, fold, request) {
     resendText = request.text
     if (typeof resendText !== 'string') return refuse('bad-request', 'op "edit" requires text')
     if (resendText.trim() === '') return refuse('blank-text', 'the edited text is empty or whitespace-only')
+    const recordedPrompt = /-prompt-sha256-([a-f0-9]{64})$/.exec(carrierId)
+    if (recordedPrompt !== null && recordedPrompt[1] !== editPromptDigest(resendText)) return undefined
   } else {
     // The carrier's range start is the round's prompt — the same fact §4.3
     // resolves a regenerate from, read from this same covering log.
@@ -379,13 +418,17 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
   }
 
   // §4.3 step 4: only an edit acts on a user message.
-  if (op === 'edit' && target.type !== 'user/message') {
+  if (op === 'edit' && !isUserMessage(target)) {
     return refuse('not-user-message', `seq ${targetSeq} is a ${String(target.type)}, not a user message`)
   }
 
   // The saved Profile rule decides the allowed range; the caller cannot override it.
   if (op === 'regenerate') {
     const refusal = regenerateTargetRefusal(log, liveNodes, targetSeq, restrictRegenerate(ctx))
+    if (refusal) return refusal
+  }
+  if (op === 'edit') {
+    const refusal = editTargetRefusal(log, liveNodes, targetSeq, restrictEdit(ctx))
     if (refusal) return refusal
   }
 

@@ -129,10 +129,12 @@ export function createResendOperations(remote) {
         try {
           const result = unwrapRemoteResult(await remote.resend.conversation({ sessionId }))
           if (result.ok !== true) throw result.error
-          const { assistantSeqs, lastReplySeq } = result.value
-          if (!Array.isArray(assistantSeqs) || assistantSeqs.some(seq => !Number.isSafeInteger(seq) || seq < 0) ||
-              (lastReplySeq !== undefined && lastReplySeq !== assistantSeqs.at(-1))) throw new Error('invalid conversation eligibility')
-          next = Object.freeze({ ready: true, status: 'ready', assistantSeqs, lastReplySeq })
+          const { assistantSeqs, lastReplySeq, userSeqs, lastUserSeq } = result.value
+          for (const [seqs, last] of [[assistantSeqs, lastReplySeq], [userSeqs, lastUserSeq]]) {
+            if (!Array.isArray(seqs) || seqs.some(seq => !Number.isSafeInteger(seq) || seq < 0) ||
+                new Set(seqs).size !== seqs.length || last !== seqs.at(-1)) throw new Error('invalid conversation eligibility')
+          }
+          next = Object.freeze({ ready: true, status: 'ready', assistantSeqs, lastReplySeq, userSeqs, lastUserSeq })
         } catch {
           next = Object.freeze({ ready: false, status: 'read-error' })
         }

@@ -83,6 +83,7 @@ const SPEC_ERROR_CODES = [
   'target-shadowed',
   'not-user-message',
   'not-last-reply',
+  'not-last-user-message',
   'not-assistant-message',
   'blank-text',
   'no-text',

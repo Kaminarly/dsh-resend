@@ -26,6 +26,7 @@ function indexFor(snapshot, grouped) {
   const modelShadowed = new Set()
   const userSeqs = new Set()
   const rendered = new Map()
+  const eligibilityNodes = []
   // Grouped references are the actual flow placements, including split
   // assistant reasoning/response seats. Use their platform-provided node keys.
   if (grouped !== undefined) {
@@ -45,6 +46,7 @@ function indexFor(snapshot, grouped) {
     }
   }
   for (const node of chatNodes(snapshot)) {
+    eligibilityNodes.push([node.key, node.kind, node.anchorSeq, node.data?.seq, node.data?.prompt, node.data?.shadowedSeqs])
     if (node.kind === 'dsh-resend-error') carriers.set(node.data.carrierSeq, node.data)
     if (node.kind === 'dsh-resend-surface-shadow') {
       for (const seq of node.data.shadowedSeqs) modelShadowed.add(seq)
@@ -59,7 +61,7 @@ function indexFor(snapshot, grouped) {
     keys.push(...flowKeys)
     bySeq.set(Math.ceil(seq), keys)
   }
-  const index = { bySeq, carriers, modelShadowed, userSeqs }
+  const index = { bySeq, carriers, modelShadowed, userSeqs, revision: JSON.stringify(eligibilityNodes) }
   indexes.set(snapshot, { grouped, index })
   return index
 }
@@ -111,6 +113,7 @@ export function hidePlanFor(snapshot, records, grouped) {
     errors,
     hiddenSeqs,
     userSeqs: index.userSeqs,
+    revision: index.revision,
     keys: Object.freeze([...allKeys]),
     carrierSeqs: new Set(index.carriers.keys()),
   })

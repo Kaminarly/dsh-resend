@@ -212,6 +212,7 @@ export function conversationResultSchema() {
   return z.union([
     z.strictObject({ ok: z.literal(true), value: z.strictObject({
       assistantSeqs: z.array(z.number()), lastReplySeq: z.optional(z.number()),
+      userSeqs: z.array(z.number()), lastUserSeq: z.optional(z.number()),
     }) }),
     z.strictObject({ ok: z.literal(false), error: z.union(ERROR_CODES.map(code => z.strictObject({ code: z.literal(code) }))) }),
   ])

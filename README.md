@@ -12,7 +12,7 @@ Host 在插件启动时只注册一次描述符，由插件 fiber 持有整个�
 
 **resend 也已经生效。** flush 完成后，提示会通过 `agent.followup` 排入 agent 队列，结果 envelope 会报告已排队消息的 id。该消息是用户唯一能看到的新行，因为 carrier 不渲染。`followup` 是 fire-and-forget 调用并返回 `undefined`，因此唯一的接受信号是紧接调用后读取的 `agent.status`：如果 agent 没有接收提示，rewind 会保留，envelope 只会省略该 id。此时 Client 会在 rewind point 渲染错误行，并提供「再次发送」按钮；按下按钮会重放同一个请求，Host 会重新发送提示，但**不会执行第二次 rewind**。如果 agent 已接收 Turn、之后才失败，这不属于本插件的报告范围，agent 会在 Transcript 中自行报告。
 
-按钮提供的重试只在记录该状态的页面加载期间有效，因为它所重放的请求（包括编辑后的消息文本）按设计保存在 Client 状态中。Client 现在会在用户消息下注册 action row，并隐藏被 rewind 覆盖的行。内联编辑器的「在输入框中编辑」（Composer）操作只通过 `inputActions.setDraft(text)` 携带纯文本，chip 占位符会被剥掉：`@` 文件引用以及 `/` 技能或命令会作为字面文本回显，用户需要从输入框的 Trigger 触发菜单中手工重建引用。附件不会复制到 draft 中，需要在 Composer 里重新选择。
+按钮提供的重试只在记录该状态的页面加载期间有效，因为它所重放的请求（包括编辑后的消息文本）按设计保存在 Client 状态中。Client 在原用户消息下方的复制图标旁显示编辑图标，并隐藏被 rewind 覆盖的行。编辑、重新生成及内联编辑器操作仅显示图标，悬停或键盘聚焦时显示功能名称。按钮、提示和设置开关复用 DSH Desktop 控件，多行编辑器和回滚区域跟随宿主主题。当前消息接入已在 DSH Desktop 2.0.17 验证；宿主消息结构不兼容时保留原消息并显示原因。内联编辑器的「在输入框中编辑」（Composer）操作只通过 `inputActions.setDraft(text)` 携带纯文本，chip 占位符会被剥掉：`@` 文件引用以及 `/` 技能或命令会作为字面文本回显，用户需要从输入框的 Trigger 触发菜单中手工重建引用。附件不会复制到 draft 中，需要在 Composer 里重新选择。
 助手回复的操作栏保留重新生成图标。默认开启范围限制，较早回复的图标禁用，悬停或键盘聚焦时显示「只能重新生成最后一条回复」；关闭范围限制后，较早的有效回复也可操作。关闭「显示重新生成按钮」后，所有回复下方的该图标都会隐藏。
 
 如果未来的集成需要保留附件，支持的升级路径是让附件按 id 随草稿走：通过附件服务的 `createDrafts(sessionId, File[])` 创建草稿附件，再将生成的 id 交给 `inputActions.addAttachments(ids)`。`createDrafts` 是服务方法，不是 `inputActions` 的一部分；用户需要再次提供文件对象，插件不能从历史消息的附件 id 还原 `File`。本插件尚未实现这条升级路径，不会自行创建或持久化这些文件。
@@ -95,6 +95,8 @@ npm run probe     # 启动隔离 Profile 并验证两侧（仅限 Desktop）
 
 `npm run probe` 是唯一无法在没有安装包的环境中运行的检查：它会在 `.tmp/` 下创建临时 `DSH_HOME`，把本包安装到 `probe` Profile，在操作系统分配的端口上启动已发布的 Launcher，并断言 Host 审计保持静默（没有遗留 pending 项）、提供的 Web 启动图包含 Client 行，以及提供的 Bundle 会自行注册。它从不接触真实的 `$DSH_HOME`，没有安装应用时会打印 `SKIP`。
 
+`node scripts/preview-ui.mjs` 提供本地界面验证页：使用已安装 DSH Desktop 的实际 React、消息气泡、控件和主题样式，加载当前构建。页面使用示例消息和模拟操作，不读取真实会话，也不会发送模型请求或改动用户文件。可用 `?dark`、`?busy` 检查深色主题和运行中禁用提示；窗口缩窄后检查布局。
+
 设置 `DSH_APP_ROOT`，可让门禁（以及 probe）指向指定安装：既可以是未打包的 `resources/app` 目录，也可以是 `app.asar` 路径。
 
 `zod` 是本包唯一的运行时依赖：描述符的严格 codec 使用 zod schema，这是 Typert 要求 `create()` 工厂提供的内容。这些 schema 使用 `zod/mini` 编写——它与 zod 核心相同，只是采用函数式写法——因为两侧都从同一张表派生，所以构建这些 schema 的内容也会被打包进浏览器脚本；经典入口会把 Client 永远不会调用的函数连同约 750 KB 的 zod 一起放入 `lib/client.bundle.js`（规范 §16.5）。
@@ -105,14 +107,57 @@ npm run probe     # 启动隔离 Profile 并验证两侧（仅限 Desktop）
 
 `@deepseek-ai/dsh-token-meter` 仅是 devDependency，有意不设为 peer：已发布代码不会导入它，而是通过 `ctx.get('tokenMeter')` 解析 meter，并从服务获取官方 estimator（规范 §5.3），这样 audit claim 的价格就是 Host 自己 fold 会扣除的数值。测试套件会导入同一个包的 estimator，独立检查该价格；缺少 estimator 时，测试套件会抛错而不是跳过。
 
-`react-dom` 和 `jsdom` 仅是 devDependency，已发布产物不会导入二者：它们是 Client 侧测试套件渲染所使用的 DOM。需要验证的行为是：一个已注册 surface 内的渲染异常会变成该 surface 自己的失败行，而其他内容仍继续渲染；只有在 React 的边界语义实际运行的环境中才能回答这个问题，服务端渲染器无法回答（旧版渲染器会传播异常，流式渲染器在 shell 阶段发生异常时会将其视为致命错误）。`react` 本身则是 peer，因为页面通过模块表准确提供一个实例；Bundle 中出现第二个副本会造成经典的 hooks 失败，而不只是测试细节。
+`react` 和 `react-dom` 均为 peer，由宿主浏览器的模块表提供。插件用 `react-dom` 的 `createPortal` 将重新生成的错误提示显示在会话裁切区域之外，并保留设置面板原有的挂载位置；不会打包第二份 React。`jsdom` 仅为 devDependency，用于验证错误边界、消息操作和设置页。渲染异常是否能被局部隔离，需要在实际 React DOM 环境中检查；服务端渲染器无法替代这项验证。
 
 `node-addon-require-builtin` 是一个没有任何导入位置的 devDependency：它是 cordis 的可选 peer；只有存在该包，Loader 才能像 Profile 启动时那样，从 base URL 解析裸包名。启动测试套件会断言该路径可用，而不是伪造它。
 
 ## 安装到 Profile
 
+### 手动安装本地插件（DSH Desktop）
+
+本地安装使用 `.tgz` 包，无需将插件发布到 npm。已拿到安装包时，直接执行下面的安装步骤；从源码打包时，先在本仓库目录运行：
+
+```powershell
+npm ci
+npm run check
+npm run build
+New-Item -ItemType Directory -Path "D:\DSH Desktop\plugins\dsh-resend" -Force
+npm pack --pack-destination "D:\DSH Desktop\plugins\dsh-resend"
 ```
+
+`npm pack` 会打印生成的包名，例如 `dsh-resend-0.1.0.tgz`。安装时使用生成文件的绝对路径。将安装包保存在固定目录；安装记录会引用这个路径，后续重新安装时仍需使用它。
+
+1. 打开 DSH Desktop，在侧栏选择「插件」。
+2. 如果已安装 `dsh-resend`，先在插件页卸载旧版；首次安装跳过这一步。
+3. 选择「添加插件」，在包名输入框中粘贴本地 `.tgz` 文件的绝对路径。不要附加引号或 `dsh plugin add` 命令。
+4. 选择「安装」，等待完成；需要排查失败原因时，展开「查看安装详情」。
+5. 选择「立即启用」。如果已关闭安装对话框，在插件列表中找到 `dsh-resend` 并开启它。
+6. 重新打开会话，检查用户消息下方是否出现编辑图标。如果当前页面仍显示旧界面，刷新页面或重启 DSH Desktop。
+
+本次界面修订包的路径为：
+
+```text
+D:\DSH Desktop\plugins\dsh-resend\dsh-resend-0.1.0-ui02-20261010.tgz
+```
+
+升级本地包时，重新构建并打包，按上述步骤卸载旧版、安装新包。即使版本号相同，也应使用新文件名区分不同构建，避免继续读取旧包。
+
+### 命令行安装
+
+通用 DSH 启动器适用于普通 Profile：
+
+```text
 dsh plugin --profile <name> add dsh-resend
 ```
 
-之后重启 DSH Desktop（或 `dsh` 进程）。
+本地包可将最后的包名替换为 `.tgz` 文件的绝对路径。
+
+DSH Desktop 2.0.17 的 `desktop` 配置由应用管理。直接运行通用 DSH 启动器会返回 `profile "desktop" is managed exclusively by the Electron application`；桌面插件的手动安装优先使用上面的应用插件页。
+
+应用自带的 DSH 命令入口支持桌面配置，需要同时使用应用自带的 pnpm 环境。在 DSH Desktop 打开的终端中，可运行：
+
+```text
+dsh plugin --profile desktop add "D:\DSH Desktop\plugins\dsh-resend\dsh-resend-0.1.0-ui02-20261010.tgz"
+```
+
+命令完成后重新打开会话；页面仍显示旧界面时，刷新页面或重启 DSH Desktop。普通 Profile 则重启对应的 `dsh` 进程。

@@ -16,7 +16,9 @@
  * `getDerivedStateFromError` / `componentDidCatch`, which is why this is a class
  * component and not a hook.
  */
-import { Component, createElement } from 'react'
+import { Component, createElement, Fragment } from 'react'
+import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAction, UIStyles } from './ui.js'
 // The plugin's name is spelled once, in the descriptor table (`./typert.js`), and
 // every diagnostic from this half carries it.
 import { PACKAGE } from './typert.js'
@@ -66,20 +68,18 @@ class PanelBoundary extends Component {
 
     const t = translatorOrKey(this.props.t)
     const title = typeof this.props.title === 'string' && this.props.title !== '' ? this.props.title : t('panel.errorTitle')
-    return createElement('div', { className: 'dsh-resend-panel-error', role: 'alert' }, [
-      createElement('div', { key: 'title', className: 'dsh-resend-panel-error-title' }, title),
-      createElement('div', { key: 'hint', className: 'dsh-resend-panel-error-hint' }, t('panel.errorHint')),
-      createElement('pre', { key: 'detail', className: 'dsh-resend-panel-error-detail' }, String(error.message ?? error)),
-      createElement(
-        'button',
-        {
-          key: 'retry',
-          type: 'button',
-          className: 'dsh-resend-chip',
+    return createElement('div', null, [
+      this.props.fallback && createElement(Fragment, { key: 'original' }, this.props.fallback),
+      createElement('div', { key: 'error', className: 'dsh-resend-panel-error', role: 'alert' }, [
+        createElement(UIStyles, { key: 'ui' }),
+        createElement('div', { key: 'title', className: 'dsh-resend-panel-error-title' }, title),
+        createElement('div', { key: 'hint', className: 'dsh-resend-panel-error-hint' }, t('panel.errorHint')),
+        createElement('pre', { key: 'detail', className: 'dsh-resend-panel-error-detail' }, String(error.message ?? error)),
+        createElement(IconAction, {
+          key: 'retry', label: t('panel.retry'), icon: IconRefreshOutlineRegular,
           onClick: () => this.setState({ error: null }),
-        },
-        t('panel.retry'),
-      ),
+        }),
+      ]),
     ])
   }
 }
@@ -99,14 +99,15 @@ class PanelBoundary extends Component {
  * @param Surface - the surface component.
  * @param titleKey - the i18n key of this surface's failure title.
  * @param baseTranslate - optional: the translator a prop-less registration uses.
+ * @param Fallback - optional: the original host message retained after a failure.
  * @returns the component a registration site may pass.
  */
-export function withPanelBoundary(Surface, titleKey, baseTranslate) {
+export function withPanelBoundary(Surface, titleKey, baseTranslate, Fallback) {
   return function Panel({ t, ...props }) {
     const translate = translatorOrKey(t ?? baseTranslate)
     return createElement(
       PanelBoundary,
-      { t: translate, title: translate(titleKey) },
+      { t: translate, title: translate(titleKey), fallback: Fallback ? createElement(Fallback, { ...props, t: translate }) : undefined },
       createElement(Surface, { t: translate, ...props }),
     )
   }

@@ -129,7 +129,7 @@ await build({
   format: 'cjs',
   platform: 'browser',
   target: 'es2022',
-  external: ['react', '@deepseek-ai/dsh-client-ui-primitives'],
+  external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
   legalComments: 'none',
   banner: { js: clientBanner },
   footer: { js: clientFooter },

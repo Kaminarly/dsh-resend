@@ -17,15 +17,18 @@
  * §7: every registration goes through `ctx.slots.inject`, so a renamed or removed
  * slot means the entry never mounts — an accepted normal state, not an error.
  *
- * The UI itself is mounted in a CHILD fiber waiting on `slots`, `locale` and
- * `uiConversation` rather than in this row's static `inject`. A service in the
- * static list that a host does not have leaves the row permanently PENDING, and
+ * The UI itself is mounted in a CHILD fiber waiting on `remote.resend`, `slots`,
+ * `locale` and `uiConversation` rather than in this row's static `inject`. A service
+ * in the static list that a host does not have leaves the row permanently PENDING, and
  * the renderer's boot audit treats that as a failed boot — the whole GUI would
  * not start because one optional feature was missing. Waiting in a child fiber is
  * what makes §7's own promise true: if a registration is unavailable, the
  * corresponding feature is absent and nothing else is affected.
  */
 import { withPanelBoundary } from './panel-boundary.js'
+import { createElement } from 'react'
+import { SettingsNavigationLabel } from './settings-navigation.js'
+import { UIStyles } from './ui.js'
 import { createPreferences } from './preferences.js'
 import { createResendOperations } from './resend-operations.js'
 import {
@@ -43,10 +46,12 @@ import { SETTINGS_ROW_ID, SettingsRow, settingsSurface } from './settings-row.js
 import { HideRulesSurface } from './hide-rules.js'
 import { PACKAGE } from './typert.js'
 import { REWIND_ROW_DEFINITION, REWIND_ROW_KIND, RewindRow, rewindPointView, rewindRowSurface } from './rewind-row.js'
-import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageText, InlineEditorSurface } from './user-actions.js'
+import { SURFACE_SHADOW_DEFINITION, USER_ACTIONS_DEFINITION, USER_ACTIONS_KIND, UserActionsRow, userActionsSurface, userMessageSurface, userMessageText, InlineEditorSurface } from './user-actions.js'
 import { hidePlanFor, hideRulesFor, hiddenKeysFor } from './hide-plan.js'
 import { TYPERT_REMOTE } from './typert.client.js'
 export { FileRollbackPreview } from './file-rollback-preview.js'
+export { operationErrorText, OperationErrorNotice } from './operation-error.js'
+export { SettingsNavigationLabel } from './settings-navigation.js'
 
 /**
  * The contribution this half mounts, re-exported.
@@ -81,6 +86,7 @@ export {
   USER_ACTIONS_KIND,
   UserActionsRow,
   userActionsSurface,
+  userMessageSurface,
   userMessageText,
   ASSISTANT_ACTIONS_DEFINITION,
   ASSISTANT_ACTIONS_ID,
@@ -180,6 +186,7 @@ const DICTIONARIES = {
     'row.resendFailed': '历史已被重写，但重发失败：agent 没有接收这条提示词。',
     'row.sendAgain': '重新发送',
     'row.edit': '编辑',
+    'row.hostIncompatible': '当前 DSH 版本的消息操作区无法扩展，编辑入口暂不可用。',
     'row.editInput': '编辑消息',
     'row.send': '发送',
     'row.cancel': '取消',
@@ -208,12 +215,30 @@ const DICTIONARIES = {
     'panel.error.inlineEditor': '内联编辑器无法显示',
     'panel.error.hideRules': '隐藏规则无法显示',
     'panel.error.settings': '设置行无法显示',
+    'panel.error.settingsNavigation': '设置导航图标无法显示',
     'settings.heading': '消息编辑设置',
+    'settings.nav': '消息编辑',
+    'operation.dismiss': '关闭错误提示',
+    'operation.error.bad-request': '请求内容无效，请重新打开编辑器后发送。',
+    'operation.error.session-not-found': '当前会话无法读取，请重新打开会话。',
+    'operation.error.agent-unavailable': '当前会话的智能体不可用，请重新打开会话后重试。',
+    'operation.error.agent-busy': '回复正在进行，请先停止回复，再重试。',
+    'operation.error.message-not-found': '找不到目标消息，请刷新会话后重试。',
+    'operation.error.message-pending': '目标消息尚未完整加载，请等待加载完成后重试。',
+    'operation.error.target-shadowed': '这条消息已被后续编辑替换，请选择当前显示的消息。',
+    'operation.error.not-user-message': '目标不是可编辑的用户消息，请重新选择。',
     'operation.error.not-last-reply': '只能重新生成最后一条回复，请选择最后一条回复。',
     'operation.error.not-last-user-message': '只能编辑重发最后一条用户消息，请选择最后一条用户消息。',
     'row.notLastUser': '只能编辑重发最后一条用户消息',
     'operation.error.not-assistant-message': '目标不是可重新生成的助手回复，请重新选择。',
     'row.conversationUnavailable': '暂时无法确认当前有效对话，请重试',
+    'operation.error.blank-text': '消息内容不能为空，请输入内容后发送。',
+    'operation.error.no-text': '这条消息没有可重发的文字内容，请在输入框中重新发送。',
+    'operation.error.internal': 'DSH 处理重发时发生错误，请查看宿主诊断日志后重试。',
+    'operation.error.connection': '与 DSH 的通信未完成，请确认应用仍在运行，然后重试。',
+    'operation.error.cancelled': '请求已取消，请重试。',
+    'operation.error.result-invalid': 'DSH 返回的结果无法识别，请更新插件或检查版本兼容性。',
+    'operation.error.unexpected': '插件处理请求时发生错误，请重新打开会话并检查诊断日志。',
     'settings.inlineEditorBeneathMessage': '消息下方的内联编辑器',
     'settings.regenerateLastReply': '显示重新生成按钮',
     'settings.restrictRegenerateToLastReply': '只允许重新生成最后一条助手回复',
@@ -276,6 +301,7 @@ const DICTIONARIES = {
     'row.resendFailed': 'History was rewound, but the re-send failed: the agent did not take the prompt.',
     'row.sendAgain': 'Send again',
     'row.edit': 'Edit',
+    'row.hostIncompatible': 'This DSH version cannot extend user-message actions. Editing is unavailable.',
     'row.editInput': 'Edit message',
     'row.send': 'Send',
     'row.cancel': 'Cancel',
@@ -304,12 +330,30 @@ const DICTIONARIES = {
     'panel.error.inlineEditor': 'The inline editor could not be displayed',
     'panel.error.hideRules': 'The hide rules could not be displayed',
     'panel.error.settings': 'The settings row could not be displayed',
+    'panel.error.settingsNavigation': 'The settings navigation icon could not be displayed',
     'settings.heading': 'Message editing settings',
+    'settings.nav': 'Message editing',
+    'operation.dismiss': 'Dismiss error',
+    'operation.error.bad-request': 'Invalid request. Reopen the editor and send again.',
+    'operation.error.session-not-found': 'The conversation cannot be read. Reopen it.',
+    'operation.error.agent-unavailable': 'The agent is unavailable. Reopen the conversation and retry.',
+    'operation.error.agent-busy': 'A reply is running. Stop it before retrying.',
+    'operation.error.message-not-found': 'The target message was not found. Refresh the conversation.',
+    'operation.error.message-pending': 'The target message is still loading. Wait and retry.',
+    'operation.error.target-shadowed': 'This message was replaced. Select the current message.',
+    'operation.error.not-user-message': 'The target is not an editable user message. Select another message.',
     'operation.error.not-last-reply': 'Only the last reply can be regenerated. Select it.',
     'operation.error.not-last-user-message': 'Only the last user message can be edited and resent. Select the last user message.',
     'row.notLastUser': 'Only the last user message can be edited and resent',
     'operation.error.not-assistant-message': 'The target is not an assistant reply that can be regenerated. Select another reply.',
     'row.conversationUnavailable': 'Could not confirm the effective conversation. Please retry.',
+    'operation.error.blank-text': 'Enter some text before sending.',
+    'operation.error.no-text': 'This message has no text to resend. Send it from the composer.',
+    'operation.error.internal': 'DSH failed while processing the request. Check the host diagnostics and retry.',
+    'operation.error.connection': 'Communication with DSH did not finish. Check that the app is running and retry.',
+    'operation.error.cancelled': 'The request was cancelled. Retry.',
+    'operation.error.result-invalid': 'The DSH result is not recognized. Update the plugin or check compatibility.',
+    'operation.error.unexpected': 'The plugin failed while processing the request. Reopen the conversation and check diagnostics.',
     'settings.inlineEditorBeneathMessage': 'Inline editor beneath the message',
     'settings.regenerateLastReply': 'Show regenerate buttons',
     'settings.restrictRegenerateToLastReply': 'Only allow regenerating the last assistant reply',
@@ -397,8 +441,8 @@ function mountSurfaces(scope, ctx) {
   const operations = createResendOperations(scope.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
 
-  // The rewind point and the user action row are both chat nodes because a
-  // Definition says so; the keyed slot occupants below render their kinds.
+  // Rewind points and hidden companions are Definitions; visible user actions
+  // are attached to the original host renderer below.
   const register = conversationRegistrar(scope.uiConversation)
   const slot = 'conversation.chat.node'
   if (register === undefined) {
@@ -428,22 +472,40 @@ function mountSurfaces(scope, ctx) {
   }
 
   scope.inject(['conversation', 'sessions'], (inputScope) => {
-    inputScope.slots.inject(slot, () =>
-      inputScope.slots.register(
-        {
-          name: slot, key: USER_ACTIONS_KIND, locale: NS,
-          inject: (sessionId) => ({
-            readInput: () => {
-              const input = inputScope.conversation?.input
-              const sessionScope = inputScope.sessions?.scope?.(sessionId)
-              if (typeof input?.for !== 'function' || sessionScope === undefined) return undefined
-              return input.for(sessionScope)?.state?.getSnapshot?.()
-            },
-          }),
-        },
-        withPanelBoundary(userActionsSurface(operations, preferences), 'panel.error.userActions'),
-      ),
-    )
+    inputScope.slots.inject(slot, () => inputScope.effect(() => {
+      let original
+      let dispose
+      let reconciling = false
+      const reconcile = () => {
+        if (reconciling) return
+        const entry = inputScope.slots.entries(slot).find((entry) => entry.options.key === 'user' && entry.locale === 'chat')
+        if (entry === original) return
+        reconciling = true
+        try {
+          original = entry
+          dispose?.()
+          dispose = undefined
+          if (entry === undefined) return
+          const hostTranslate = inputScope.locale.bind(entry.locale)
+          const fallback = (props) => createElement(entry.component, { ...props, t: hostTranslate })
+          const Surface = userMessageSurface(entry.component, operations, preferences, hostTranslate)
+          dispose = inputScope.slots.register({
+            name: slot, key: 'user', priority: (entry.options.priority ?? 0) - 1, locale: NS,
+            inject: (sessionId) => ({
+              readInput: () => {
+                const input = inputScope.conversation?.input
+                const sessionScope = inputScope.sessions?.scope?.(sessionId)
+                if (typeof input?.for !== 'function' || sessionScope === undefined) return undefined
+                return input.for(sessionScope)?.state?.getSnapshot?.()
+              },
+            }),
+          }, withPanelBoundary(Surface, 'panel.error.userActions', undefined, fallback))
+        } finally { reconciling = false }
+      }
+      const unsubscribe = inputScope.slots.subscribe(slot, reconcile)
+      reconcile()
+      return () => { unsubscribe(); dispose?.() }
+    }, 'dsh-resend: native user-message actions'))
   })
 
   // §7.4: the row goes through the shared boundary like every other surface —
@@ -471,17 +533,22 @@ function mountSurfaces(scope, ctx) {
     ),
   )
 
-  // Registration 4 (ticket 08): the settings row, on the ROOT scope's own
-  // settings slot. The owner passes no props at all, so the boundary factory
-  // takes the live translator as its third argument — a prop-less surface must
-  // still be able to draw its own failure row.
-  const settingsSlot = 'settings.general.item'
+  // Registration 4: a dedicated Message editing settings page. Its controls
+  // bind their own store and translator instead of reading navigation props.
+  const settingsSlot = 'settings.section'
   scope.slots.inject(settingsSlot, () =>
     scope.slots.register(
-      { name: settingsSlot, id: SETTINGS_ROW_ID, order: 100, locale: NS, label: () => translate('settings.heading') },
+      { name: settingsSlot, id: SETTINGS_ROW_ID, order: 100, locale: NS, label: () => createElement(SettingsNavigationLabel, { text: translate('settings.nav') }) },
       withPanelBoundary(settingsSurface(preferences, translate), 'panel.error.settings', translate),
     ),
   )
+
+  // A style-only additive entry keeps the nav glyph correct even while another
+  // section is selected. The host keeps ownership of its settings shell/slots.
+  scope.slots.inject('settings.action', () => scope.slots.register(
+    { name: 'settings.action', id: SETTINGS_ROW_ID + '-navigation-style', order: 100, locale: NS },
+    withPanelBoundary(UIStyles, 'panel.error.settingsNavigation', translate),
+  ))
 }
 
 export async function apply(ctx) {
@@ -501,5 +568,7 @@ export async function apply(ctx) {
     return
   }
   mount = { status: 'mounted', error: undefined }
+  // $mount creates the namespace. Declare it only after mounting, and retain
+  // this injected scope's Remote so later UI calls carry the same dependency.
   ctx.inject(['remote.resend', 'slots', 'locale', 'uiConversation'], (scope) => mountSurfaces(scope, ctx))
 }

@@ -161,7 +161,7 @@ export const ENTITIES = [
     // `register` is a `SlotRegistry.prototype.register = …` bolt-on OUTSIDE the
     // class body, which is exactly why entity-qualified bolt-ons are searched
     // across the whole file rather than only inside the region.
-    present: ['inject', 'register'],
+    present: ['inject', 'register', 'entries', 'subscribe'],
     absent: [],
   },
   {
@@ -250,6 +250,12 @@ export const SLOT_CATALOG = {
       kind: 'list',
       standardProps: ['useChat', 'useConversation', 'useSession', 'useInput', 'inputActions', 'sessionId', 'useProjection'],
       ownerProps: ['messageId'],
+    },
+    {
+      slot: 'settings.section',
+      kind: 'list',
+      standardProps: ['useResource'],
+      ownerProps: ['close'],
     },
   ],
 }

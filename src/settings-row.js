@@ -1,5 +1,5 @@
 /**
- * The Message editing page: registration point 4 on `settings.general.item` (ticket 08,
+ * The Message editing page: registration point 4 on `settings.section` (ticket 08,
  * spec §7).
  *
  * The section renders from its own bound preferences and translator. Its

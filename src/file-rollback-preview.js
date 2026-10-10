@@ -1,4 +1,6 @@
 import { createElement, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { UIStyles } from './ui.js'
 
 /** A transient dry run, displayed at its rewind point. It contains no file contents. */
 export function FileRollbackPreview({ operations, point, t }) {
@@ -24,16 +26,17 @@ export function FileRollbackPreview({ operations, point, t }) {
   const finished = completed || (result === undefined && inherited !== undefined)
   const preview = answer?.ok === true ? answer.value : undefined
   const conversation = preview?.conversation ?? answer?.error?.conversation
-  return createElement('section', { 'aria-label': t('files.preview'), 'aria-busy': busy }, [
+  return createElement('section', { className: 'dsh-resend-rollback', 'aria-label': t('files.preview'), 'aria-busy': busy }, [
+    createElement(UIStyles, { key: 'ui' }),
     createElement('fieldset', { key: 'scope', disabled: busy }, [
       createElement('legend', { key: 'label' }, t('rollback.scope')),
-      ...['conversation', 'artifacts', 'both'].map((value) => createElement('label', { key: value }, [
+      createElement('div', { key: 'choices', className: 'dsh-resend-rollback-scopes' }, ['conversation', 'artifacts', 'both'].map((value) => createElement('label', { key: value, className: 'dsh-resend-rollback-scope' }, [
         createElement('input', { key: 'input', type: 'radio', name: scopeName, value, checked: scope === value, onChange: () => {
           setScope(value); setResult(undefined); setCompleted(false)
         } }), t(`rollback.scope.${value}`),
-      ])),
+      ]))),
     ]),
-    createElement('button', { key: 'preview', type: 'button', disabled: busy, onClick: () => { setCompleted(false); void run('preview') } }, t('files.preview')),
+    createElement(Button, { key: 'preview', type: 'button', variant: 'outline', size: 'sm', disabled: busy, onClick: () => { setCompleted(false); void run('preview') } }, t('files.preview')),
     conversation && createElement('p', { key: 'conversation' }, String(t(`rollback.conversation.${conversation.action}`)).replace('{count}', String(conversation.count))),
     preview && !conversation && createElement('p', { key: 'conversation-unchanged' }, t('rollback.conversation.notSelected')),
     answer?.ok === false && createElement('p', { key: 'error', role: 'alert' }, t(`files.error.${answer.error.code}`)),
@@ -46,8 +49,10 @@ export function FileRollbackPreview({ operations, point, t }) {
       finished && !preview.files.some((file) => file.action === 'refuse') && createElement('p', { key: 'no-refusals' }, t('rollback.noRefusals')),
       createElement('ul', { key: 'files' }, preview.files.map((file, index) => createElement('li', { key: `${index}:${file.path}` },
         `${file.path} — ${t(`files.${finished && file.action === 'restore' ? 'restored' : file.action}`)}${file.reason === undefined ? '' : `：${t(`files.reason.${file.reason}`)}`}`))),
-      !finished && createElement('button', { key: 'execute', type: 'button', disabled: busy, onClick: () => { void run('execute') } }, t(scope === 'artifacts' ? 'files.execute' : 'rollback.execute')),
-      !finished && createElement('button', { key: 'cancel', type: 'button', disabled: busy, onClick: () => { void run('cancel') } }, t('files.cancel')),
+      !finished && createElement('div', { key: 'actions', className: 'dsh-resend-rollback-actions' }, [
+        createElement(Button, { key: 'cancel', type: 'button', variant: 'ghost', size: 'sm', disabled: busy, onClick: () => { void run('cancel') } }, t('files.cancel')),
+        createElement(Button, { key: 'execute', type: 'button', variant: 'primary', size: 'sm', disabled: busy, onClick: () => { void run('execute') } }, t(scope === 'artifacts' ? 'files.execute' : 'rollback.execute')),
+      ]),
     ]),
   ])
 }

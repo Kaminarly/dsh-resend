@@ -29,16 +29,10 @@ import { usePreferences } from './preferences.js'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconAction, UIStyles } from './ui.js'
 import { useHiding } from './use-hiding.js'
+import { operationErrorText, OperationErrorNotice } from './operation-error.js'
 import { USER_ACTIONS_KIND } from './user-actions.js'
 
 const identity = (value) => value
-
-function regenerateErrorText(error, t) {
-  const code = error?.code
-  return code === 'not-last-reply' || code === 'not-assistant-message'
-    ? t('operation.error.' + code)
-    : '(' + (code ?? '?') + ')'
-}
 
 /** The list slot's entry id — brand-new, never a shipped entry's (§7 registration 3). */
 export const ASSISTANT_ACTIONS_ID = 'dsh-resend-regenerate'
@@ -146,6 +140,7 @@ export function RegenerateControl(props) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState(null)
   const inFlight = useRef(false)
+  const anchor = useRef(null)
 
   const regenerate = async () => {
     const saved = preferences.getSnapshot()
@@ -158,9 +153,9 @@ export function RegenerateControl(props) {
       // No `text` member: the host re-sends the round's own prompt (§4.3). The
       // client has never read the prompt text, and it should not have to.
       const result = await operations.run({ sessionId, targetSeq: state.seq, op: 'regenerate' })
-      if (result?.ok !== true) setError(t('row.regenerateFailed') + '：' + regenerateErrorText(result?.error, t))
+      if (result?.ok !== true) setError(t('row.regenerateFailed') + '：' + operationErrorText(result?.error, t))
     } catch (cause) {
-      setError(t('row.regenerateFailed') + '：' + regenerateErrorText(cause, t))
+      setError(t('row.regenerateFailed') + '：' + operationErrorText(cause, t))
       console.warn('[dsh-resend] regenerate at seq ' + state.seq + ' in session ' + sessionId + ': ' + (cause?.message ?? cause))
     } finally {
       inFlight.current = false
@@ -172,7 +167,7 @@ export function RegenerateControl(props) {
   // including the disabled controls on earlier replies.
   if (prefs.regenerateLastReply === false) return null
   const disabledReason = !prefs.ready ? t(prefs.status === 'loading' ? 'settings.loading' : 'settings.read-error') : reason === null ? undefined : t(REASON_TEXT[reason])
-  return createElement('div', { className: 'dsh-resend-regenerate' }, [
+  return createElement('div', { ref: anchor, className: 'dsh-resend-regenerate' }, [
     createElement(UIStyles, { key: 'ui' }),
     createElement(IconAction, {
       key: 'regenerate',
@@ -187,7 +182,7 @@ export function RegenerateControl(props) {
       key: 'retry-read', label: t('settings.retry'), icon: IconRefreshOutlineRegular,
       onClick: () => { void operations.refreshConversation(sessionId, revision, true) },
     }) : null,
-    error === null ? null : createElement('span', { key: 'error', role: 'alert' }, error),
+    error === null ? null : createElement(OperationErrorNotice, { key: 'error', anchor, text: error, t, onDismiss: () => setError(null) }),
   ])
 }
 

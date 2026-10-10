@@ -23,7 +23,8 @@
  * not issue the call has nothing to replay and falls back to the notice state.
  */
 import { createElement, useEffect, useState, useSyncExternalStore } from 'react'
-import { IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAction, UIStyles } from './ui.js'
 import { hasMarkerPrefix } from './marker.js'
 import { HideRulesSurface } from './hide-rules.js'
 import { RESEND_FAILED } from './resend-operations.js'
@@ -34,8 +35,8 @@ import { FileRollbackPreview } from './file-rollback-preview.js'
  * The node kind, and the `conversation.chat.node` key that renders it.
  *
  * Deliberately outside the shipped key table (`user`, `assistant-step`, …): the
- * slot is KEYED, so registering an occupied kind would replace that occupant, and
- * this plugin never contends for the `user` key (spec §7).
+ * slot is KEYED. This rewind renderer remains independent of the user-message
+ * decorator, which deliberately delegates the shipped `user` occupant.
  */
 export const REWIND_ROW_KIND = 'dsh-resend-error'
 
@@ -89,6 +90,7 @@ export function RewindRow({ outcome, t, onSendAgain, hidePlan, hideError, onDism
 
   if (hideError !== undefined) {
     return createElement('div', { className: 'dsh-resend-row dsh-resend-row-error', role: 'alert' }, [
+      createElement(UIStyles, { key: 'ui' }),
       createElement(IconWarningOutlineRegular, { key: 'icon', className: 'dsh-resend-row-icon' }),
       createElement('span', { key: 'message', className: 'dsh-resend-row-message' }, t('row.hideFailed')),
       createElement('pre', { key: 'detail', className: 'dsh-resend-row-detail' }, hideError),
@@ -97,18 +99,19 @@ export function RewindRow({ outcome, t, onSendAgain, hidePlan, hideError, onDism
 
   if (view.kind === 'notice') {
     return createElement('div', { className: 'dsh-resend-row dsh-resend-row-notice' }, [
+      createElement(UIStyles, { key: 'ui' }),
       createElement('span', { key: 'message', className: 'dsh-resend-row-message' }, String(t('row.hiddenCount')).replace('{count}', String(hidePlan?.count ?? 0))),
-      createElement('button', { key: 'dismiss', type: 'button', className: 'dsh-resend-chip', onClick: onDismiss }, t('row.dismiss')),
+      createElement(IconAction, { key: 'dismiss', label: t('row.dismiss'), icon: IconCloseOutlineRegular, onClick: onDismiss }),
     ])
   }
 
   return createElement('div', { className: 'dsh-resend-row dsh-resend-row-error', role: 'alert' }, [
+    createElement(UIStyles, { key: 'ui' }),
     createElement(IconWarningOutlineRegular, { key: 'icon', className: 'dsh-resend-row-icon' }),
     createElement('span', { key: 'message', className: 'dsh-resend-row-message' }, t('row.resendFailed')),
     createElement(
-      'button',
-      { key: 'send-again', type: 'button', className: 'dsh-resend-chip', onClick: onSendAgain },
-      t('row.sendAgain'),
+      IconAction,
+      { key: 'send-again', label: t('row.sendAgain'), icon: IconRefreshOutlineRegular, onClick: onSendAgain },
     ),
   ])
 }

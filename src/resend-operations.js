@@ -103,11 +103,7 @@ export function createResendOperations(remote) {
    * @returns the host's `RemoteResult`.
    */
   async function run(request) {
-    const response = await remote.resend.apply(request)
-    // Direct in-process callers already carry a business result; Gateway calls
-    // wrap that result once. Unwrap the wire envelope before recording it.
-    const result = response?.ok === true && typeof response.value?.ok === 'boolean'
-      ? unwrapRemoteResult(response) : response
+    const result = unwrapRemoteResult(await remote.resend.apply(request))
     record(request, result)
     return result
   }
@@ -145,7 +141,7 @@ export function createResendOperations(remote) {
       return entry.promise
     },
     async rollback(request) {
-      const result = await remote.resend.rollback(request)
+      const result = unwrapRemoteResult(await remote.resend.rollback(request))
       const conversation = result.ok ? result.value.conversation : result.error.conversation
       if (request.phase === 'execute' && conversation?.carrierSeq !== undefined) {
         rollbackResults.set(JSON.stringify([request.sessionId, conversation.carrierSeq]), result)

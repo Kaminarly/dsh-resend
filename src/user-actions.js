@@ -1,12 +1,13 @@
-/** The user-message action row, plain-text editor and chat-node Definition. */
-import { createElement, useRef, useState } from 'react'
+/** The host user-message actions, plain-text editor and eligibility metadata. */
+import { cloneElement, createElement, Fragment, isValidElement, useRef, useState } from 'react'
 import { IconCloseOutlineRegular, IconEditOutlineRegular, IconPaperPlaneOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAction, UIStyles } from './ui.js'
 import { usePreferences } from './preferences.js'
 import { HideRulesSurface } from './hide-rules.js'
 import { withPanelBoundary } from './panel-boundary.js'
 import { useHiding } from './use-hiding.js'
+import { operationErrorText } from './operation-error.js'
 import { useConversationEligibility } from './conversation-eligibility.js'
-import { IconAction, UIStyles } from './ui.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
 const identity = (value) => value
@@ -22,37 +23,66 @@ export function userActionsSurface(operations, preferences) {
   }
 }
 
+/** Delegate the shipped bubble and augment its existing copy/actions seat. */
+export function userMessageSurface(original, operations, preferences, hostTranslate) {
+  const renderOriginal = typeof original === 'function' ? original : original?.type
+  return function UserMessageWithActions(props) {
+    const hostProps = { ...props, t: hostTranslate }
+    if (typeof renderOriginal !== 'function') {
+      return createElement(Fragment, null, createElement(original, hostProps),
+        createElement('div', { role: 'alert' }, props.t('row.hostIncompatible')))
+    }
+    // This delegation runs consistently in its own component, so any hooks in
+    // the host renderer still belong to the same React render, not a callback.
+    const bubble = renderOriginal(hostProps)
+    if (!isValidElement(bubble) || typeof bubble.props.actions !== 'function') {
+      return createElement(Fragment, null, bubble,
+        createElement('div', { role: 'alert' }, props.t('row.hostIncompatible')))
+    }
+    return createElement(UserActionsRow, {
+      ...props, operations, preferences,
+      renderMessage: (action) => cloneElement(bubble, {
+        actions: (text) => {
+          const actions = bubble.props.actions(text)
+          if (!isValidElement(actions)) throw new Error('The host user-message actions no longer return a React element')
+          return cloneElement(actions, { extraActions: createElement(Fragment, null, actions.props.extraActions, action) })
+        },
+      }),
+    })
+  }
+}
+
 /**
- * One grey-able chip: disabled while the row is in flight or the reason says
- * no, and the reason on hover. A module-level helper — the row and the inline
- * editor are two surfaces now, and both draw the same control.
- * @param key - the React key of the chip in its array.
- * @param label - the chip's visible text.
- * @param icon - the icon element, or nothing for a text-only chip.
- * @param onClick - the chip's action.
+ * One icon action, with a localized hover/focus label and disabled reason.
+ * @param key - the React key of the action in its array.
+ * @param label - the action's accessible name and tooltip.
+ * @param icon - the icon component.
+ * @param onClick - the action.
  * @param reason - the hover reason, or undefined for a live chip. A reason
  *   also greys the chip out — it explains why the chip cannot act.
- * @param disabled - whether the chip is greyed out, independent of reason.
+ * @param disabled - whether the action is disabled, independent of reason.
  */
 const control = (key, label, icon, onClick, reason, disabled) => createElement(IconAction, {
-  key, label, icon: icon ?? IconEditOutlineRegular, onClick, reason, disabled,
+  key, label, icon, onClick, reason, disabled,
+  ...(key === 'send' ? { primary: true, 'data-primary': true } : {}),
 })
 
 /**
  * Surface 2: the inline editor, a sub-surface of the action row (ticket 08,
  * spec §7.4). It is its own boundary-wrapped component so a throw while
  * editing — the one place this surface reads live data — fails as the editor's
- * own row, not the whole action row. It renders an ARRAY (no wrapper div), so
- * the row's DOM is the editor's DOM: the same four children, in the same place.
+ * own panel, preserving the host message and its copy action.
  */
 function InlineEditor({ t, value, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
-  return [
+  return createElement('div', { className: 'dsh-resend-editor' }, [
     createElement('textarea', { key: 'textarea', value, rows: 3, autoFocus: true,
       disabled, 'aria-label': t('row.editInput'), onChange: onText, onKeyDown }),
-    control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
-    control('composer', t('row.editInComposer'), undefined, onComposer, composerReason, disabled),
-    control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
-  ]
+    createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
+      control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
+      control('composer', t('row.editInComposer'), IconEditOutlineRegular, onComposer, composerReason, disabled),
+      control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
+    ]),
+  ])
 }
 
 export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.inlineEditor')
@@ -61,7 +91,7 @@ export function UserActionsRow(props) {
   const { node, sessionId, inputActions, useInput, useSession, readInput, operations, preferences, t } = props
   const prefs = usePreferences(preferences)
   const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
-  const data = node.data
+  const data = { seq: node.data.seq ?? node.anchorSeq, text: node.data.text ?? userMessageText(node.data) }
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(data.text)
   const [pending, setPending] = useState(false)
@@ -106,10 +136,9 @@ export function UserActionsRow(props) {
     try {
       const result = await operations.run({ sessionId, targetSeq: live.current.data.seq, op: 'edit', text: live.current.text })
       if (result.ok) setEditing(false)
-      else setError(t('row.operationFailed') + ' (' + result.error.code + ')' +
-        (result.error.code === 'not-last-user-message' ? '：' + t('operation.error.not-last-user-message') : ''))
+      else setError(t('row.operationFailed') + '：' + operationErrorText(result.error, t))
     } catch (cause) {
-      setError(t('row.operationFailed'))
+      setError(t('row.operationFailed') + '：' + operationErrorText(cause, t))
       console.warn('[dsh-resend] edit at seq ' + data.seq + ' in session ' + sessionId + ': ' + (cause?.message ?? cause))
     } finally {
       inFlight.current = false
@@ -149,28 +178,31 @@ export function UserActionsRow(props) {
   const localDiagnostics = hideError ?? diagnostics.find((entry) => entry.shadowedSeqs.includes(data.seq))?.message
   if (localDiagnostics !== undefined) {
     return createElement('div', { role: 'alert', className: 'dsh-resend-row-error' }, [
+      props.renderMessage ? createElement(Fragment, { key: 'message' }, props.renderMessage(null)) : null,
+      createElement(UIStyles, { key: 'ui' }),
       createElement(HideRulesSurface, { key: 'rules', t, css }),
-      createElement('span', { key: 'message' }, t('row.hideFailed')),
+      createElement('span', { key: 'error' }, t('row.hideFailed')),
       createElement('pre', { key: 'detail' }, localDiagnostics),
     ])
   }
-  if (hidden || !plan?.userSeqs.has(data.seq)) return rules
+  const eligible = !hidden && plan?.userSeqs.has(data.seq)
+  if (!eligible) return createElement(Fragment, null, rules, props.renderMessage?.(null))
 
   const idle = !inlineOn
-    ? [control('composer', t('row.editInComposer'), undefined, editInComposer, stopReason ?? composerReason, pending)]
+    ? [control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, stopReason ?? composerReason, pending)]
     : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending)]
-  const body = !editing
-    ? idle
-    : [createElement(InlineEditorSurface, {
+  const editor = editing && createElement(InlineEditorSurface, {
       key: 'inline', t, value: text, disabled: pending, stopReason, composerReason,
       onText: (event) => setText(event.target.value),
       onSend: () => { void send() }, onComposer: editInComposer, onCancel: cancel, onKeyDown,
-    })]
-  return createElement('div', { className: 'dsh-resend-user-actions' }, [
+    })
+  const actions = createElement('span', { className: 'dsh-resend-user-actions' }, idle)
+  return createElement('div', { className: props.renderMessage ? 'dsh-resend-user-message' : undefined }, [
     rules,
     createElement(UIStyles, { key: 'ui' }),
-    ...body,
-    error === undefined ? null : createElement('span', { key: 'error', role: 'alert' }, error),
+    props.renderMessage ? createElement(Fragment, { key: 'message' }, props.renderMessage(actions)) : createElement(Fragment, { key: 'actions' }, actions),
+    editor,
+    error === undefined ? null : createElement('span', { key: 'error', role: 'alert', className: 'dsh-resend-operation-error' }, error),
   ])
 }
 
@@ -183,12 +215,11 @@ export const USER_ACTIONS_DEFINITION = {
   update: (context) => context.state,
   buildViewNode: (context) => context.state === undefined ? null : ({
     key: context.key, kind: USER_ACTIONS_KIND, id: context.id, target: 'chat',
-    // The actions must follow their user bubble and remain outside the host's
-    // collapsible process groups. Hiding maps this kind via data.seq, not the
-    // half-seq presentation anchor.
+    // Legacy companion metadata stays invisible: visible controls now belong
+    // to the shipped user node, so process grouping cannot relocate them.
     anchorSeq: context.state.seq + 0.5,
     location: { kind: 'unresolved' },
-    visibility: 'visible', data: context.state,
+    visibility: 'hidden', data: context.state,
   }),
 }
 

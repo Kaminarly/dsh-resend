@@ -58,6 +58,7 @@ const require_ = createRequire(new URL('../package.json', import.meta.url))
  */
 export const MODULE_TABLE = Object.freeze({
   react: require_('react'),
+  'react-dom': Object.freeze({ createPortal: (...args) => require_('react-dom').createPortal(...args) }),
   '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
     Button: require_('react').forwardRef(({ variant, size, icon, children, ...props }, ref) => require_('react').createElement('button', { ...props, ref, 'data-variant': variant }, icon, children)),
     Tooltip: ({ children }) => children,
@@ -103,7 +104,13 @@ export function evaluateBundle(source = readFileSync(CLIENT_BUNDLE, 'utf8')) {
       throw new Error('client-modules: a plugin bundle must never create the module system')
     },
   }
-  vm.runInNewContext(source, { window: { __ModuleLoader__: moduleLoader }, console }, { filename: 'client.bundle.js' })
+  const browser = {
+    console,
+    get window() { return Object.assign(globalThis.window ?? {}, { __ModuleLoader__: moduleLoader }) },
+    get document() { return globalThis.document },
+    get ResizeObserver() { return globalThis.ResizeObserver ?? globalThis.window?.ResizeObserver },
+  }
+  vm.runInNewContext(source, browser, { filename: 'client.bundle.js' })
   return pendingQueue
 }
 

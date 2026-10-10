@@ -26,8 +26,8 @@ export const ENTITIES = [
   {
     entity: 'Session',
     file: 'node_modules/@deepseek-ai/dsh-session/lib/index.js',
-    usedBy: 'src/log-read.js, src/write.js, src/resend.js',
-    present: ['snapshotEvents', 'eventAt', 'append', 'seq', 'surface'],
+    usedBy: 'src/log-read.js, src/write.js, src/resend.js, src/file-versions.js',
+    present: ['snapshotEvents', 'eventAt', 'append', 'seq', 'surface', 'header'],
     // §12's resurrection alarm: the legacy event view was removed upstream and
     // every read goes through the snapshot / `eventAt` accessors.
     absent: ['events'],

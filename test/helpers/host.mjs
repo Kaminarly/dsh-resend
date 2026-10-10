@@ -309,6 +309,9 @@ export function sessionView(session, { append } = {}) {
     get id() {
       return session.id
     },
+    get header() {
+      return session.header
+    },
     get seq() {
       return session.seq
     },

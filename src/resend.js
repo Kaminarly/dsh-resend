@@ -38,6 +38,9 @@ import { withSessionLock } from './session-lock.js'
 import { traceTextNow } from './trace-text.js'
 import { writeRewindPair } from './write.js'
 import { NAMESPACE, SERVICE } from './typert.js'
+import { createFileVersions } from './file-versions.js'
+
+const fileVersions = new WeakMap()
 
 /**
  * Cordis's fiber states, from its own enum (`src/fiber.ts`: PENDING 0,
@@ -228,15 +231,18 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     // then on (§10).
     const carrierId = carrierIdFor(op, randomUUID())
     const resendMessageId = resendIdFor(carrierId)
-    const write = await writeRewindPair(ctx, {
+    const versions = await fileVersions.get(ctx).prepare(session, plan, carrierId)
+    let write
+    try { write = await writeRewindPair(ctx, {
       sessions,
       session,
       sessionId,
       plan,
       carrierId,
       traceText: traceTextNow(ctx),
-    })
+    }) } catch (error) { await versions.discardUnlessWritten(); throw error }
     if (!write.ok) {
+      await versions.discardUnlessWritten()
       if (write.error.code === 'internal') {
         logWarning(ctx, `resend.apply could not write the rewind pair for ${JSON.stringify(sessionId)}: ${write.error.detail ?? 'no detail'}`)
       }
@@ -283,6 +289,7 @@ export class ResendService extends Service {
     super(ctx, SERVICE)
     this.hostCtx = ctx
     this.ownerFiber = ctx.fiber
+    fileVersions.set(ctx, createFileVersions(ctx))
     this.typertRemote = Object.freeze({ service: this, serviceKey: SERVICE, namespace: NAMESPACE })
   }
 
@@ -354,5 +361,10 @@ export class ResendService extends Service {
     // surface that rewind left behind — never against what it saw before
     // queueing.
     return withSessionLock(sessionId, () => rewind(ctx, { session, agent, sessions, sessionId, request }))
+  }
+
+  async rollback(request) {
+    if (this.ownerFiber !== undefined && this.ownerFiber.state !== FIBER_ACTIVE) return failure('internal')
+    return withSessionLock(request.sessionId, () => fileVersions.get(this.hostCtx).rollback(request))
   }
 }

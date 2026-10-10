@@ -181,9 +181,15 @@ describe('no third-party contract package anywhere (spec §3)', () => {
       '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-session-format-catalog',
       '@deepseek-ai/dsh-util-crypto',
+      'node:child_process',
+      'node:crypto',
+      'node:fs',
+      'node:os',
+      'node:path',
       'zod',
     ])
     for (const packageName of imported) {
+      if (packageName.startsWith('node:')) continue
       expect(declared, `the shipped ESM artifacts import undeclared package ${packageName}`).toContain(packageName)
     }
     expect([...siblings].sort()).toEqual(['./host.js', './log-read.js', './marker.js', './resolve.js', './shape-probe.js', './trace-text.js', './write.js'])

@@ -26,6 +26,8 @@ import { hostState, plugHostDoubles } from './host.mjs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 const require_ = createRequire(new URL('../../package.json', import.meta.url))
 const gatewayRoot = path.dirname(require_.resolve('@deepseek-ai/dsh-api-gateway/package.json'))
@@ -91,8 +93,14 @@ export async function hostComposition(options = {}) {
   await ctx.plugin(gateway.TypertGatewayService)
   await plugHostDoubles(ctx, host)
   const hostHalf = await import('../../lib/index.js')
-  const fiber = ctx.plugin(hostHalf)
-  await fiber
+  // Each composition owns its plugin data; tests never write the user's home.
+  const previousHome = process.env.DSH_HOME
+  const dataHome = options.dataHome ?? await mkdtemp(path.join(tmpdir(), 'resend-host-'))
+  let fiber
+  process.env.DSH_HOME = dataHome
+  try { fiber = ctx.plugin(hostHalf); await fiber }
+  finally { if (previousHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previousHome }
+  if (options.dataHome === undefined) ctx.effect(() => () => rm(dataHome, { recursive: true, force: true }))
   return { ctx, fiber, host }
 }
 

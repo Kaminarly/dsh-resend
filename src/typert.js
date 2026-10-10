@@ -164,3 +164,33 @@ export const descriptors = [
     },
   },
 ]
+
+/** Phase 2 exposes consequences and transient plans, never stored contents. */
+export function rollbackRequestSchema() {
+  return z.strictObject({
+    sessionId: z.string(), carrierSeq: z.number(),
+    phase: z.enum(['preview', 'execute', 'cancel']),
+    planId: z.optional(z.string()),
+  })
+}
+
+export function rollbackResultSchema() {
+  return z.union([
+    z.strictObject({ ok: z.literal(false), error: z.strictObject({ code: z.string(),
+      files: z.optional(z.array(z.strictObject({ path: z.string(), action: z.enum(['restored', 'refuse']), reason: z.optional(z.string()) }))),
+    }) }),
+    z.strictObject({ ok: z.literal(true), value: z.strictObject({
+      planId: z.string(),
+      files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse']), reason: z.optional(z.string()) })),
+    }) }),
+  ])
+}
+
+descriptors.push({
+  id: `${PACKAGE}#${NAMESPACE}/rollback`, service: SERVICE, namespace: NAMESPACE, method: 'rollback',
+  invocation: { kind: 'direct' },
+  parameters: [{ name: 'request', wire: 'request', source: 'json', codec: {
+    mode: 'strict', typeSymbol: `${PACKAGE}/types#RollbackRequest`, create: rollbackRequestSchema,
+  } }],
+  result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#RollbackResult`, create: rollbackResultSchema },
+})

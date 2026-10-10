@@ -41,7 +41,7 @@
 import { foldSurface } from '@deepseek-ai/dsh-session'
 import { currentSessionMessageProjections } from '@deepseek-ai/dsh-session-format-catalog/message-projections'
 import { refuse } from './error-codes.js'
-import { describeError, logWarning } from './host.js'
+import { describeError, hostService, logWarning } from './host.js'
 import { coveringRefusalCode, eventAtSeq, readCoveringLog } from './log-read.js'
 import { MARKER_PREFIX, hasMarkerPrefix } from './marker.js'
 import { OP_KEY, REPLACE_OP, runtimeShapeBinding } from './shape-probe.js'
@@ -378,6 +378,8 @@ export async function writeRewindPair(ctx, { sessions, session, sessionId, plan,
   if (covering.status === 'refused') return covering.refusal
 
   const { prevTail } = covering
+  if (plan.tail !== undefined && plan.tail !== prevTail) return refuse('message-pending', 'the conversation changed after the rollback preview')
+  if (plan.tail !== undefined && hostService(ctx, 'agents')?.get(sessionId)?.status !== 'idle') return refuse('agent-busy', 'the agent started after the rollback preview')
   const auditSeq = prevTail
   const carrierSeq = prevTail + 1
 

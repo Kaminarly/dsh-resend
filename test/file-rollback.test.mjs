@@ -1,11 +1,11 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtemp, rm, writeFile, readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile, readdir, stat, utimes } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { Session } from '@deepseek-ai/dsh-session'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
-import { appendUser, hostState, SESSION_ID, sessionFixture, withRefusingAppend } from './helpers/host.mjs'
+import { appendUser, appendReply, hostState, SESSION_ID, sessionFixture, withRefusingAppend } from './helpers/host.mjs'
 
 const cleanups = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -126,7 +126,9 @@ it('rejects changes after the preview, and canceling or forging a plan writes no
   expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual({ ok: false, error: { code: 'plan-not-found' } })
   const next = await w.call({ carrierSeq, phase: 'preview' })
   await writeFile(path.join(w.cwd, 'file.txt'), 'user edit after preview')
-  expect(await w.call({ carrierSeq, phase: 'execute', planId: next.value.planId })).toEqual({ ok: false, error: { code: 'preview-stale' } })
+  expect(await w.call({ carrierSeq, phase: 'execute', planId: next.value.planId })).toEqual({ ok: false, error: { code: 'preview-stale', files: [
+    { path: 'file.txt', action: 'refuse', reason: 'content-diverged' },
+  ] } })
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('user edit after preview')
 })
 
@@ -140,6 +142,152 @@ it('detects an external edit between two agent writes and refuses the file', asy
   expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'diverged-between-writes' }])
   expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual(preview)
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('second agent write')
+})
+
+it('compares bytes rather than timestamps and preserves a refused external edit exactly', async () => {
+  const w = await workspace()
+  const safe = path.join(w.cwd, 'safe.txt')
+  const changed = path.join(w.cwd, 'changed.txt')
+  const original = Buffer.from('原始内容\r\n', 'utf8')
+  await writeFile(safe, original)
+  await w.write('safe.txt', 'agent')
+  await w.write('changed.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const time = await stat(changed)
+  const external = Buffer.from([0xef, 0xbb, 0xbf, 0xff, 0x00, 0x0d, 0x0a])
+  await writeFile(changed, external)
+  await utimes(changed, time.atime, time.mtime)
+  await utimes(safe, new Date(0), new Date(0))
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  expect(preview.value.files).toEqual([
+    { path: 'safe.txt', action: 'restore' },
+    { path: 'changed.txt', action: 'refuse', reason: 'content-diverged' },
+  ])
+  expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual(preview)
+  expect(await readFile(changed)).toEqual(external)
+  expect(await readFile(safe)).toEqual(original)
+})
+
+it('rolls back conversation only to the rewind point without restoring files or sending a prompt', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const atPoint = w.session.surface.nodes.map((seq) => w.session.eventAt(seq).data)
+  appendUser(w.session, { id: 'later', text: 'new conversation' })
+  appendReply(w.session, { id: 'later-reply', text: 'new reply' })
+  const before = w.session.seq
+  const preview = await w.call({ carrierSeq, scope: 'conversation', phase: 'preview' })
+  expect(preview.ok).toBe(true)
+  expect(preview.value.files).toEqual([])
+  expect(preview.value.conversation).toMatchObject({ action: 'rewind', count: 2 })
+  expect(w.session.seq).toBe(before)
+  const followups = w.state.calls.followups
+  const result = await w.call({ carrierSeq, scope: 'conversation', phase: 'execute', planId: preview.value.planId })
+  expect(result.ok).toBe(true)
+  expect(result.value.conversation.action).toBe('rewound')
+  const restored = w.session.surface.nodes.map((seq) => w.session.eventAt(seq).data)
+  expect(restored.map(({ id, ...data }) => data)).toEqual(atPoint.map(({ id, ...data }) => data))
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+  expect(w.state.calls.followups).toBe(followups)
+})
+
+it.each(['artifacts', 'both'])('executes %s independently using the approved scope', async (scope) => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), 'before')
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const later = appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const preview = await w.call({ carrierSeq, scope, phase: 'preview' })
+  const seq = w.session.seq
+  expect(await w.call({ carrierSeq, scope: 'conversation', phase: 'execute', planId: preview.value.planId }))
+    .toEqual({ ok: false, error: { code: 'plan-scope-mismatch' } })
+  expect(w.session.seq).toBe(seq)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+  const result = await w.call({ carrierSeq, scope, phase: 'execute', planId: preview.value.planId })
+  expect(result.ok).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('before')
+  expect(w.session.surface.nodes.includes(later.seq)).toBe(scope === 'artifacts')
+  if (scope === 'artifacts') expect(w.session.seq).toBe(seq)
+})
+
+it.each(['conversation', 'artifacts', 'both'])('canceling %s writes neither conversation nor files', async (scope) => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const events = w.session.snapshotEvents()
+  const preview = await w.call({ carrierSeq, scope, phase: 'preview' })
+  expect((await w.call({ carrierSeq, scope, phase: 'cancel', planId: preview.value.planId })).ok).toBe(true)
+  expect((await w.call({ carrierSeq, scope, phase: 'execute', planId: preview.value.planId })).error.code).toBe('plan-not-found')
+  expect(w.session.snapshotEvents()).toEqual(events)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('requires a new preview when the conversation grows after a both-scope preview', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
+  appendUser(w.session, { id: 'newer', text: 'newer prompt' })
+  const events = w.session.snapshotEvents()
+  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
+  expect(result).toEqual({ ok: false, error: { code: 'conversation-stale', files: [
+    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
+  ] } })
+  expect(w.session.snapshotEvents()).toEqual(events)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('refuses both scopes if the agent starts while preparing the conversation rollback', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
+  const events = w.session.snapshotEvents()
+  let checks = 0
+  Object.defineProperty(w.state.agent, 'status', { get: () => ++checks < 3 ? 'idle' : 'running' })
+  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
+  expect(result).toEqual({ ok: false, error: { code: 'agent-busy', files: [
+    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
+  ] } })
+  expect(w.session.snapshotEvents()).toEqual(events)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('reports the new conversation point and every refused file if saving the rollback fails', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const later = appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
+  w.host.ctx.sessions.flush = async () => { throw new Error('disk failed') }
+  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
+  expect(result).toMatchObject({ ok: false, error: { code: 'conversation-save-failed', files: [
+    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
+  ], conversation: { action: 'rewound', count: 1 } } })
+  expect(w.session.surface.nodes.includes(result.error.conversation.carrierSeq)).toBe(true)
+  expect(w.session.surface.nodes.includes(later.seq)).toBe(false)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('rejects a conversation that grows during a both-scope execution even if the preview had no new messages', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
+  expect(preview.value.conversation).toEqual({ action: 'unchanged', count: 0 })
+  let checks = 0
+  Object.defineProperty(w.state.agent, 'status', { get: () => {
+    if (++checks === 2) appendUser(w.session, { id: 'newer', text: 'new concurrent prompt' })
+    return 'idle'
+  } })
+  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
+  expect(result).toEqual({ ok: false, error: { code: 'conversation-stale', files: [
+    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
+  ] } })
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
 })
 
 it('retains the private record across plugin restart without publishing contents or record addresses', async () => {

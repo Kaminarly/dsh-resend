@@ -7,8 +7,12 @@ import { createSnapshotStore, digest } from './file-snapshots.js'
 import { readCoveringLog, eventAtSeq } from './log-read.js'
 import { describeError, hostService, logWarning } from './host.js'
 import { hasMarkerPrefix } from './marker.js'
+import { planConversationRollback, executeConversationRollback } from './conversation-rollback.js'
 
 const refused = (code) => ({ ok: false, error: { code } })
+const refusedFiles = (files, reasons = new Map()) => files.map((file) => ({
+  path: file.path, action: 'refuse', reason: file.reason ?? reasons.get(file.path) ?? 'execution-stopped',
+}))
 const equal = (a, b) => a === null || b === null ? a === b : a.equals(b)
 const normalizedText = (bytes, keepBom = false) => bytes === null ? null : new TextDecoder('utf-8', { fatal: true, ignoreBOM: keepBom }).decode(bytes).replaceAll('\r\n', '\n')
 
@@ -163,11 +167,18 @@ export function createFileVersions(ctx) {
 
   async function rollback(request) {
     const { sessionId, carrierSeq, phase, planId } = request
+    // Omitted scope retains ticket 12's artifacts-only Remote behavior.
+    const scope = request.scope ?? 'artifacts'
+    if (!['conversation', 'artifacts', 'both'].includes(scope) || !['preview', 'execute', 'cancel'].includes(phase)) return refused('bad-request')
     if (typeof sessionId !== 'string' || sessionId === '' || !Number.isSafeInteger(carrierSeq) || carrierSeq < 0) return refused('bad-request')
     const session = hostService(ctx, 'sessions')?.get(sessionId)
     if (session === undefined) return refused('session-not-found')
     const agent = hostService(ctx, 'agents')?.get(sessionId)
-    if (agent?.status !== 'idle') return refused('agent-busy')
+    if (agent?.status !== 'idle') {
+      const pending = plans.get(planId)
+      return phase === 'execute' && pending?.sessionId === sessionId && pending.carrierSeq === carrierSeq
+        ? { ok: false, error: { code: 'agent-busy', files: refusedFiles(pending.files) } } : refused('agent-busy')
+    }
     const covering = await readCoveringLog(ctx, sessionId)
     if (covering.status !== 'ok') return refused('internal')
     const carrier = eventAtSeq(covering.log, carrierSeq)
@@ -175,14 +186,27 @@ export function createFileVersions(ctx) {
     if (phase !== 'preview') {
       const plan = plans.get(planId)
       if (plan === undefined || plan.sessionId !== sessionId || plan.carrierSeq !== carrierSeq) return refused('plan-not-found')
+      if (plan.scope !== scope) return refused('plan-scope-mismatch')
       plans.delete(planId)
       if (phase === 'cancel') return { ok: true, value: plan.preview }
       if (phase !== 'execute') return refused('bad-request')
+      if (plan.conversation !== undefined && session.seq !== plan.conversation.tail) return { ok: false, error: {
+        code: 'conversation-stale', files: refusedFiles(plan.files),
+      } }
       // Revalidate the SAME plan, never silently calculate a new one.
+      const divergences = new Map()
       for (const file of plan.files) {
         if (file.action === 'refuse') continue
-        try { if (!equal(await contents(session.header.cwd, file.path), file.after)) return refused('preview-stale') }
-        catch { return refused('preview-stale') }
+        try { if (!equal(await contents(session.header.cwd, file.path), file.after)) divergences.set(file.path, 'content-diverged') }
+        catch (error) { divergences.set(file.path, error.message === 'unsafe-path' ? 'unsafe-path' : 'unreadable-file') }
+      }
+      if (divergences.size > 0) return { ok: false, error: { code: 'preview-stale', files: refusedFiles(plan.files, divergences) } }
+      if (agent.status !== 'idle') return { ok: false, error: { code: 'agent-busy', files: refusedFiles(plan.files) } }
+      let conversation
+      if (plan.conversation !== undefined) {
+        const result = await executeConversationRollback(ctx, session, plan.conversation, prepare)
+        if (!result.ok) return { ok: false, error: { ...result.error, files: refusedFiles(plan.files) } }
+        conversation = result.value
       }
       const processed = []
       for (const file of plan.files) {
@@ -190,20 +214,21 @@ export function createFileVersions(ctx) {
         try {
           const absolute = await fileTarget(session.header.cwd, file.path)
           if (!equal(await contents(session.header.cwd, file.path), file.after)) throw new Error('content-diverged')
+          if (agent.status !== 'idle') throw new Error('agent-busy')
           if (file.before === null) await unlink(absolute)
           else await writeFile(absolute, file.before)
           processed.push(file.path)
         } catch (error) {
-          const reason = error.message === 'content-diverged' || error.message === 'unsafe-path' ? error.message : 'restore-failed'
-          return { ok: false, error: { code: 'execution-stopped', files: plan.files.map((entry) => processed.includes(entry.path)
+          const reason = ['content-diverged', 'unsafe-path', 'agent-busy'].includes(error.message) ? error.message : 'restore-failed'
+          return { ok: false, error: { code: 'execution-stopped', ...(conversation === undefined ? {} : { conversation }), files: plan.files.map((entry) => processed.includes(entry.path)
             ? { path: entry.path, action: 'restored' }
             : { path: entry.path, action: 'refuse', reason: entry.reason ?? (entry.path === file.path ? reason : 'execution-stopped') }) } }
         }
       }
-      return { ok: true, value: plan.preview }
+      return { ok: true, value: { ...plan.preview, ...(conversation === undefined ? {} : { conversation }) } }
     }
     let record
-    try { record = JSON.parse(await readFile(recordPath(sessionId, carrier.data.id), 'utf8')) }
+    try { record = scope === 'conversation' ? [] : JSON.parse(await readFile(recordPath(sessionId, carrier.data.id), 'utf8')) }
     catch (error) { if (error.code === 'ENOENT') return refused('no-target-state'); throw error }
     const files = []
     for (const file of record) {
@@ -221,8 +246,12 @@ export function createFileVersions(ctx) {
     }
     for (const [id, plan] of plans) if (plan.sessionId === sessionId && plan.carrierSeq === carrierSeq) plans.delete(id)
     const id = randomUUID()
-    const preview = { planId: id, files: files.map(({ path, action, reason }) => ({ path, action, ...(reason === undefined ? {} : { reason }) })) }
-    plans.set(id, { sessionId, carrierSeq, files, preview })
+    const conversation = scope === 'artifacts' ? undefined : planConversationRollback(session, carrier)
+    if (scope !== 'artifacts' && conversation === undefined) return refused('target-shadowed')
+    const preview = { planId: id, ...(request.scope === undefined ? {} : { scope }),
+      ...(conversation === undefined ? {} : { conversation: { action: conversation.count === 0 ? 'unchanged' : 'rewind', count: conversation.count } }),
+      files: files.map(({ path, action, reason }) => ({ path, action, ...(reason === undefined ? {} : { reason }) })) }
+    plans.set(id, { sessionId, carrierSeq, scope, conversation, files, preview })
     return { ok: true, value: preview }
   }
   return {

@@ -170,17 +170,26 @@ export function rollbackRequestSchema() {
   return z.strictObject({
     sessionId: z.string(), carrierSeq: z.number(),
     phase: z.enum(['preview', 'execute', 'cancel']),
+    scope: z.optional(z.enum(['conversation', 'artifacts', 'both'])),
     planId: z.optional(z.string()),
   })
 }
+
+const rollbackConversationSchema = () => z.strictObject({
+  action: z.enum(['rewind', 'rewound', 'unchanged']), count: z.number(),
+  carrierSeq: z.optional(z.number()), shadowedSeqs: z.optional(z.array(z.number())),
+})
 
 export function rollbackResultSchema() {
   return z.union([
     z.strictObject({ ok: z.literal(false), error: z.strictObject({ code: z.string(),
       files: z.optional(z.array(z.strictObject({ path: z.string(), action: z.enum(['restored', 'refuse']), reason: z.optional(z.string()) }))),
+      conversation: z.optional(rollbackConversationSchema()),
     }) }),
     z.strictObject({ ok: z.literal(true), value: z.strictObject({
       planId: z.string(),
+      scope: z.optional(z.enum(['conversation', 'artifacts', 'both'])),
+      conversation: z.optional(rollbackConversationSchema()),
       files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse']), reason: z.optional(z.string()) })),
     }) }),
   ])

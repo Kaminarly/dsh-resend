@@ -274,6 +274,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     try {
       expect(settingsDom.container.textContent).toContain('Inline editor beneath the message')
+      expect(settingsDom.container.textContent).toContain('Show regenerate buttons')
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, 'Edit')).not.toBeNull()
 
@@ -282,6 +283,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
       await settingsDom.render(createElement(registration.component))
       await chatDom.render(createElement(actionsOf(composition).component, actionProps(composition)))
       expect(settingsDom.container.textContent).toContain('消息下方的内联编辑器')
+      expect(settingsDom.container.textContent).toContain('显示重新生成按钮')
       expect(settingsDom.container.textContent).not.toContain('隐藏被替换的消息')
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, '编辑')).not.toBeNull()
@@ -302,6 +304,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     expect(Object.keys(entry.dictionaries).sort()).toEqual(['en', 'zh'])
     for (const key of [
       'settings.heading', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
+      'settings.loading', 'settings.saving', 'settings.read-error', 'settings.save-error', 'settings.retry',
       'settings.on', 'settings.off',
       'panel.error.inlineEditor', 'panel.error.hideRules', 'panel.error.settings',
     ]) {

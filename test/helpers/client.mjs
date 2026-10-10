@@ -18,6 +18,7 @@
  *    would need the other case, and none is asserted here.
  */
 import { Context, Service } from '@deepseek-ai/cordis'
+import { memoryConfigForms } from './preferences.mjs'
 
 /**
  * A `remote` service: it records the mount, and answers `resend.apply` from the
@@ -182,10 +183,18 @@ function clientDoubles({ declared = true } = {}) {
  * @returns `{ ctx, record, mounted, calls }` — the context to activate the half
  *   in, what the doubles were asked for, and the Remote calls that were made.
  */
-export async function clientComposition({ results, conversation = 'events', declared = true } = {}) {
+export async function clientComposition({ results, conversation = 'events', declared = true, configForms } = {}) {
   const { record, Slots, Locale, UiConversationFor, Sessions, Conversation } = clientDoubles({ declared })
   const { RecordingRemote, mounted, calls } = recordingRemote(results === undefined ? {} : { results })
   const ctx = new Context()
+  await ctx.plugin(class extends Service {
+    constructor(scope) {
+      super(scope, 'configForms')
+      Object.assign(this, configForms ? {
+        get: (...args) => configForms.get(...args), describe: () => configForms.describe(),
+      } : memoryConfigForms())
+    }
+  })
   await ctx.plugin(RecordingRemote)
   await ctx.plugin(Slots)
   await ctx.plugin(Locale)

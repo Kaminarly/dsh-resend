@@ -181,6 +181,7 @@ describe('no third-party contract package anywhere (spec §3)', () => {
       '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-session-format-catalog',
       '@deepseek-ai/dsh-util-crypto',
+      '@deepseek-ai/schemastery',
       'node:child_process',
       'node:crypto',
       'node:fs',

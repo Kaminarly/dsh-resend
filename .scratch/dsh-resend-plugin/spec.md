@@ -11,11 +11,26 @@ with no access to any other conversation or file.
 - **Evidence markers** appear as `path:line`. `@pkg/…` means
   `<app>/node_modules/@deepseek-ai/<pkg>/…` inside the installed DSH Desktop. Read those lines when
   you need the raw fact; you do not need them to start.
-- **Verified on** DSH Desktop `2.0.15`, `@deepseek-ai/dsh-*` at `0.1.7-rc.2`. **§16** lists the seven
+- **Verified on** DSH Desktop `2.0.17`, `@deepseek-ai/dsh-*` at `0.2.0-rc.2`. **§16** lists the seven
   items a code read could not settle, each with a concrete check and a decision rule for every
   outcome. Two of them are already answered there. Nothing in §16 blocks starting.
 - **§13** lists the acceptance criteria that decide whether your implementation is finished.
 - The companion research is cited inline where a claim is non-obvious. You do not need those files.
+
+### Version move
+
+The original platform research used DSH Desktop `2.0.15` / `dsh-* 0.1.7-rc.2`; versioned raw
+observations below retain that provenance. The first target move to Desktop `2.0.16` /
+`dsh-* 0.2.0-rc.1` crossed a minor boundary, so both the development pins and the peer ranges had
+to move: the old ranges excluded the new runtime and made the Loader silently skip the bundle.
+
+The current verification target is Desktop `2.0.17` / `dsh-* 0.2.0-rc.2`. The nine `dsh-*`
+development dependencies, lockfile, package-metadata test constants and README target table track
+that exact generation. The `dsh-*` peer ranges remain `^0.2.0-rc.1`: they already admit `rc.2`
+with `includePrerelease: true`, and no API this plugin reads changed between these two releases.
+Raising the lower bound to `rc.2` would unnecessarily exclude hosts still on `rc.1`. Pins state
+what is verified; peer ranges state compatibility with the **host surface**. Versions in fake-app
+test fixtures are independent of the verification target and MUST NOT change just to follow it.
 
 ---
 

@@ -46,7 +46,7 @@ async function activated(options = {}) {
 const settingsOf = (composition) => composition.record.mounts.find((entry) => entry.options.id === 'dsh-resend-preferences')
 
 /** The action-row registration, found by its key. */
-const actionsOf = (composition) => composition.record.mounts.find((entry) => entry.options.key === 'dsh-resend-user-actions')
+const actionsOf = (composition) => composition.record.mounts.find((entry) => entry.options.key === 'user')
 
 /** The rewind-point registration, found by its key. */
 const rewindOf = (composition) => composition.record.mounts.find((entry) => entry.options.key === 'dsh-resend-error')
@@ -145,7 +145,7 @@ const SLOT_PROPS = Object.freeze({
 })
 
 /** One button in a rendered tree, by its visible text; `null` when absent. */
-const buttonIn = (container, text) => [...container.querySelectorAll('button')].find((button) => button.textContent === text || button.getAttribute('aria-label') === text) ?? null
+const buttonIn = (container, text) => [...container.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === text || button.textContent === text) ?? null
 
 /** One settings toggle, by its field. */
 const toggleIn = (container, field) => container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
@@ -156,7 +156,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     const registration = settingsOf(composition)
     expect(registration).not.toBeUndefined()
     expect(registration.options).toEqual({
-      name: 'settings.general.item',
+      name: 'settings.section',
       id: 'dsh-resend-preferences',
       order: expect.any(Number),
       locale: 'dsh-resend',
@@ -264,7 +264,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
 
     // The slot-projected labels are thunks, and they read the live locale.
     expect(typeof registration.options.label).toBe('function')
-    expect(registration.options.label()).toBe('Message editing settings')
+    expect(registration.options.label().props.text).toBe('Message editing')
     expect(typeof strip.options.label).toBe('function')
     expect(strip.options.label()).toBe('Regenerate')
 
@@ -288,10 +288,10 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, '编辑')).not.toBeNull()
       expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
-      expect(registration.options.label()).toBe('消息编辑设置')
+      expect(registration.options.label().props.text).toBe('消息编辑')
       expect(strip.options.label()).toBe('重新生成')
       expect(composition.record.dictionaries).toHaveLength(1)
-      expect(composition.record.mounts).toHaveLength(4)
+      expect(composition.record.mounts).toHaveLength(5)
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()
@@ -344,6 +344,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     'panel.error.rewindRow',
     'panel.error.regenerate',
     'panel.error.settings',
+    'panel.error.settingsNavigation',
     'panel.error.hideRules',
   ])
 
@@ -392,7 +393,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     try {
       expect(dom.container.querySelector('.dsh-resend-panel-error')).not.toBeNull()
       broken = false
-      await dom.click(dom.container.querySelector('button.dsh-resend-chip'))
+      await dom.click(dom.container.querySelector('button.dsh-resend-icon-action'))
       expect(dom.container.querySelector('.dsh-resend-recovered')).not.toBeNull()
       expect(dom.container.querySelector('.dsh-resend-panel-error')).toBeNull()
     } finally {
@@ -409,7 +410,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     const registrations = composition.record.mounts
     const produced = registrations.map((registration) => registration.component({ ...SLOT_PROPS }))
 
-    expect(registrations).toHaveLength(4)
+    expect(registrations).toHaveLength(5)
     for (const [index, registration] of registrations.entries()) {
       const label = registration.options.id ?? registration.options.key
       const tree = produced[index]
@@ -456,14 +457,14 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     // count from drifting with a comment or an import that merely mentions the
     // factory — the factory's own declaration has no title argument and is
     // therefore not one of these.
-    const callSites = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*?(?:'(?:panel|settings)\.[A-Za-z.]+'(?:\s*,\s*translate)?\s*)\)/g)]
+    const callSites = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*?(?:'(?:panel|settings)\.[A-Za-z.]+'(?:\s*,\s*translate(?:\s*,\s*fallback)?|\s*,\s*undefined\s*,\s*fallback)?\s*)\)/g)]
     const titles = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*,\s*'(panel\.error\.[A-Za-z]+)'/g)].map((match) => match[1])
     // Every title in the source is one of the six this suite names, and every one
     // of the six is used: a surface whose title key no dictionary carries would
     // render the raw key instead of a sentence.
-    expect(callSites).toHaveLength(6)
+    expect(callSites).toHaveLength(7)
     expect(titles).toHaveLength(callSites.length)
-    expect(new Set(titles).size).toBe(titles.length)
+    expect(new Set(titles).size).toBe(7)
     expect(titles.slice().sort()).toEqual(SIX_TITLES.slice().sort())
     for (const title of titles) expect(Object.keys(registered)).toContain(title)
 
@@ -529,7 +530,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     const client = texts.find((text) => text.includes('function mountSurfaces'))
     expect(client).not.toBeUndefined()
     const registerSites = client.split('slots.register(').length - 1
-    expect(registerSites).toBe(4)
+    expect(registerSites).toBe(5)
     for (const chunk of client.split(/slots\.register\(/).slice(1)) {
       expect(chunk.slice(0, 800)).toContain('withPanelBoundary(')
     }

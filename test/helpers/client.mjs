@@ -18,11 +18,23 @@
  *    would need the other case, and none is asserted here.
  */
 import { Context, Service } from '@deepseek-ai/cordis'
+import { createElement, memo } from 'react'
 import { memoryConfigForms } from './preferences.mjs'
 
+const FixtureUserMessage = memo(function FixtureUserMessage({ node, t }) {
+  const text = node.data?.text ?? node.data?.content?.filter((part) => part.type === 'text').map((part) => part.text).join('\n') ?? ''
+  return createElement(FixtureBubble, { text, actions: () => createElement(FixtureActions, { t }) })
+})
+function FixtureBubble({ text, actions }) {
+  return createElement('div', { 'data-host-user': true }, createElement('div', null, text), actions(text))
+}
+function FixtureActions({ extraActions }) {
+  return createElement('div', { 'data-host-actions': true }, createElement('button', { 'aria-label': 'Copy' }), extraActions)
+}
+
 /**
- * A `remote` service: it records the mount, and answers `resend.apply` from the
- * script a case hands it.
+ * A `remote` service and a separately traced `remote.resend` namespace, as in the
+ * Gateway: it records the mount, and answers `resend.apply` from the scripted results.
  *
  * `results` is consumed one call at a time (the last one repeats), so a case can
  * describe "the first attempt failed, the retry landed" without a callback.
@@ -41,7 +53,7 @@ export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5,
 
     async apply(request) {
       calls.push(request)
-      return results.length === 0 ? { ok: false, error: { code: 'agent-busy' } } : results[Math.min(calls.length - 1, results.length - 1)]
+      return { ok: true, value: results.length === 0 ? { ok: false, error: { code: 'agent-busy' } } : results[Math.min(calls.length - 1, results.length - 1)] }
     }
 
     async conversation(request) {
@@ -84,6 +96,12 @@ function clientDoubles({ declared = true } = {}) {
     input: { phase: 'plain' },
     draftWrites: [],
   }
+  const hostEntries = [{ component: FixtureUserMessage, options: { key: 'user' }, locale: 'chat' }]
+  const slotListeners = new Set()
+  record.replaceHostUser = (entry) => {
+    hostEntries.splice(0, hostEntries.length, ...(entry ? [entry] : []))
+    slotListeners.forEach((listener) => listener())
+  }
 
   /** The slot registry: `inject` mounts immediately (see the file head). */
   class Slots extends Service {
@@ -97,11 +115,17 @@ function clientDoubles({ declared = true } = {}) {
     }
 
     register(options, component) {
-      record.mounts.push({ options, component })
+      const entry = { options, component, locale: options.locale }
+      record.mounts.push(entry)
+      slotListeners.forEach((listener) => listener())
       return () => {
         record.mounts = record.mounts.filter((mount) => mount.options !== options)
+        slotListeners.forEach((listener) => listener())
       }
     }
+
+    entries(name) { return [...hostEntries, ...record.mounts.filter((entry) => entry.options.name === name)] }
+    subscribe(_name, listener) { slotListeners.add(listener); return () => slotListeners.delete(listener) }
   }
 
   class Sessions extends Service {
@@ -189,21 +213,23 @@ function clientDoubles({ declared = true } = {}) {
 /**
  * One client composition: the four services plus a recording `remote`, ready for
  * the shipped browser half to activate against.
- * @param options - `{ results, conversation }` forwarded to the doubles.
+ * @param options - `{ results, conversation, ctx }`; `ctx` can carry the real Gateway.
  * @returns `{ ctx, record, mounted, calls }` — the context to activate the half
  *   in, what the doubles were asked for, and the Remote calls that were made.
  */
-export async function clientComposition({ results, conversation = 'events', declared = true, configForms, replyState, ctx = new Context() } = {}) {
+export async function clientComposition({ results, conversation = 'events', declared = true, ctx = new Context(), configForms, replyState } = {}) {
+  if (ctx.get('configForms') === undefined) {
+    await ctx.plugin(class extends Service {
+      constructor(scope) {
+        super(scope, 'configForms')
+        Object.assign(this, configForms ? {
+          get: (...args) => configForms.get(...args), describe: () => configForms.describe(),
+        } : memoryConfigForms())
+      }
+    })
+  }
   const { record, Slots, Locale, UiConversationFor, Sessions, Conversation } = clientDoubles({ declared })
   const { RecordingRemote, mounted, calls } = recordingRemote({ ...(results === undefined ? {} : { results }), replyState })
-  await ctx.plugin(class extends Service {
-    constructor(scope) {
-      super(scope, 'configForms')
-      Object.assign(this, configForms ? {
-        get: (...args) => configForms.get(...args), describe: () => configForms.describe(),
-      } : memoryConfigForms())
-    }
-  })
   if (ctx.get('remote') === undefined) await ctx.plugin(RecordingRemote)
   await ctx.plugin(Slots)
   await ctx.plugin(Locale)

@@ -73,7 +73,7 @@ describe('materialized exports', () => {
     const exports = materialize(registration, recordingTable(asked))
 
     expect(typeof exports.apply).toBe('function')
-    expect([...new Set(asked)].sort()).toEqual(['@deepseek-ai/dsh-client-ui-primitives', 'react'])
+    expect([...new Set(asked)].sort()).toEqual(['@deepseek-ai/dsh-client-ui-primitives', 'react', 'react-dom'])
   })
 
   it('the module-table double has teeth: a lookup outside that list is refused by name', () => {

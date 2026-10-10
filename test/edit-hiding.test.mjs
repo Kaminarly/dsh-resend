@@ -25,7 +25,7 @@ const snapshot = { nodes: new Map([
 
 async function editor(options = {}) {
   const composition = await activated(options)
-  const registration = composition.record.mounts.find((entry) => entry.options.key === 'dsh-resend-user-actions')
+  const registration = composition.record.mounts.find((entry) => entry.options.key === 'user')
   const props = {
     node: userNode, sessionId: 'session-1', t: composition.ctx.get('locale').bind('dsh-resend'),
     useChat: (select) => select(snapshot), useInput: (select) => select(composition.record.input),
@@ -229,7 +229,7 @@ describe('hide rules at the transcript boundary', () => {
   })
 
   it('keeps the exact rules and honest count after dismiss, even when carrier provenance is absent', async () => {
-    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } }) } })
+    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } } }) } })
     await operations.run({ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: 'edited' })
     const pointNode = { key: 'assigned-point', kind: face.REWIND_ROW_KIND, anchorSeq: 5, data: { carrierSeq: 5 } }
     const chat = { nodes: new Map([...snapshot.nodes, [pointNode.key, pointNode]]) }
@@ -277,7 +277,7 @@ describe('hide rules at the transcript boundary', () => {
   })
 
   it.each(['node store', 'grouping'])('fails visibly and names the range when the %s cannot be read', async (failure) => {
-    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } }) } })
+    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } } }) } })
     await operations.run({ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: 'edited' })
     const rewindNode = { key: 'rewind-5', kind: 'dsh-resend-error', anchorSeq: 5,
       data: { carrierSeq: 5, range: { start: 2, end: 3 } } }
@@ -366,8 +366,8 @@ describe('hide rules at the transcript boundary', () => {
     const plan = face.hidePlanFor(chat, [{ carrierSeq: 22, shadowedSeqs: [20, 21] }], grouped)
     expect(plan.keys).toEqual(['assigned-user', '["assigned-step","reasoning"]', 'assigned-step'])
     expect(plan.byCarrier.get(22).count).toBe(3)
-    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true,
-      value: { carrierSeq: 22, shadowedSeqs: [20, 21], resendMessageId: 'resent' } }) } })
+    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { ok: true,
+      value: { carrierSeq: 22, shadowedSeqs: [20, 21], resendMessageId: 'resent' } } }) } })
     await operations.run({ sessionId: 'split-session', targetSeq: 20, op: 'edit', text: 'edited' })
     const keys = ['assigned-user', '["assigned-step","reasoning"]', 'assigned-step', 'unaffected']
     const dom = await renderDom(createElement('div', null, [

@@ -2,4 +2,6 @@ node_modules/
 .tmp/
 *.log
 coverage/
+.playwright-cli/
+output/playwright/
 .DS_Store

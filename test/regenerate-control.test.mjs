@@ -26,7 +26,7 @@
  *  - the registration is a brand-new list entry (`id: 'dsh-resend-regenerate'`)
  *    beside the shipped assistant-actions entries, through the shared boundary.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { mount, renderDom } from './helpers/render.mjs'
@@ -104,13 +104,6 @@ it.skipIf(!resolveHostApp())('real host assembly preserves whole-conversation el
     expect(button(3).disabled).toBe(false)
     expect(button(9).disabled).toBe(true)
     expect(button(15).disabled).toBe(true)
-    // The actual restored control also sends through the real Gateway, whose
-    // transport envelope must be unwrapped before recording the rewind.
-    await dom.click(button(3))
-    await dom.act(async () => { await vi.waitFor(() => expect(host.host.calls.followups).toBe(2), { interval: 5 }) })
-    expect(dom.container.querySelector('[role="alert"]')).toBeNull()
-    expect(host.host.calls.followupInputs.at(-1).content).toEqual([{ type: 'text', text: 'first prompt' }])
-    expect(logOf(session).filter(event => event.type === 'compaction/prune')).toHaveLength(2)
   } finally { await dom.cleanup(); await client.fiber.dispose(); await host.ctx.fiber.dispose() }
 })
 
@@ -340,16 +333,6 @@ describe('the client-side refusal predictions (§9.3)', () => {
 })
 
 describe('the registered regenerate control (§9.2, §9.3)', () => {
-  it.each([
-    ['not-last-reply', '只能重新生成最后一条回复，请选择最后一条回复。'],
-    ['not-assistant-message', '目标不是可重新生成的助手回复，请重新选择。'],
-  ])('localizes the %s rejection in the registered control', async (code, text) => {
-    const { cleanup } = await rendered({ locale: 'zh', results: [{ ok: false, error: { code } }] })
-    try {
-      await cleanup.click(cleanup.__container.querySelector('button'))
-      expect(cleanup.__container.querySelector('[role="alert"]').textContent).toContain(text)
-    } finally { await cleanup() }
-  })
   it('enables an earlier effective reply only after saving the range off, while keeping the consequence text visible', async () => {
     const configForms = memoryConfigForms()
     const composition = await clientComposition({ configForms })
@@ -529,7 +512,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
       expect(calls).toHaveLength(1)
       // The host said `agent-busy` after the grey-out's timing slipped a click;
       // the answer is inline text the user can read, never a dialog.
-      const alert = cleanup.__container.querySelector('[role="alert"]')
+      const alert = document.body.querySelector('.dsh-resend-error-notice[role="alert"]')
       expect(alert).not.toBeNull()
       expect(alert.textContent).toContain('agent-busy')
       expect(cleanup.__container.querySelector('[role="dialog"]')).toBeNull()

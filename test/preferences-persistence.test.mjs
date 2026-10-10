@@ -143,7 +143,7 @@ describe('saved display preferences', () => {
     const composition = await clientComposition({ configForms: client.forms })
     resources.push({ close: () => composition.ctx.fiber.dispose() })
     await composition.ctx.plugin(page); await tick()
-    const registration = composition.record.mounts.find(row => row.options.key === 'dsh-resend-user-actions')
+    const registration = composition.record.mounts.find(row => row.options.key === 'user')
     const nodes = new Map([
       ['user-2', { key: 'user-2', kind: 'user', anchorSeq: 2 }],
       ['actions', { key: 'actions', kind: 'dsh-resend-user-actions', anchorSeq: 2, data: { seq: 2, text: 'original' } }],
@@ -152,10 +152,10 @@ describe('saved display preferences', () => {
       sessionId: 'session-1', node: nodes.get('actions'), t: composition.ctx.get('locale').bind('dsh-resend'),
       useChat: select => select({ nodes }), useSession: select => select({ running: false }),
       useInput: select => select({ phase: 'plain' }), inputActions: { setDraft: text => composition.record.draftWrites.push(text) },
-      ...(registration.options.inject?.('session-1') ?? {}),
+      ...registration.options.inject('session-1'),
     }
     const dom = await renderDom(createElement(registration.component, props))
-    const button = label => [...dom.container.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === label || button.textContent === label)
+    const button = label => dom.container.querySelector(`button[aria-label="${label}"]`)
     try {
       await dom.click(button('Edit'))
       const textarea = dom.container.querySelector('textarea')
@@ -198,12 +198,12 @@ describe('saved display preferences', () => {
     const dom = await renderDom(createElement(row.component))
     try {
       expect(dom.container.textContent).toContain('Could not read settings. Please retry.')
-      expect([...dom.container.querySelectorAll('button.dsh-resend-settings-toggle')].every(button => button.disabled)).toBe(true)
+      expect([...dom.container.querySelectorAll('[role=switch]')].every(button => button.disabled)).toBe(true)
       expect(page.preferences.getSnapshot().ready).toBe(false)
       disconnected = false
       await dom.click([...dom.container.querySelectorAll('button')].find(button => button.textContent === 'Retry'))
       expect(page.preferences.getSnapshot().ready).toBe(true)
-      expect(dom.container.querySelector('button.dsh-resend-settings-toggle').disabled).toBe(false)
+      expect(dom.container.querySelector('[role=switch]').disabled).toBe(false)
     } finally { await dom.cleanup() }
   })
 

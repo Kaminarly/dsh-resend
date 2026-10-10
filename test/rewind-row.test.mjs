@@ -193,9 +193,9 @@ describe('the error row says what happened and offers one action (§9.4)', () =>
     let pressed = 0
     const tree = RewindRow({ outcome: FAILED, t, onSendAgain: () => (pressed += 1) })
 
-    const buttons = elementsOfType(tree, 'button')
+    const buttons = tree.props.children.filter((element) => element?.props?.label === 'Send again')
     expect(buttons).toHaveLength(1)
-    expect(textIn(buttons[0])).toBe('Send again')
+    expect(buttons[0].props.label).toBe('Send again')
     // The message states both halves plainly: history WAS rewound, and the reason
     // the prompt is missing is that the agent did not take it (§9.4).
     expect(textIn(tree)).toContain('History was rewound')
@@ -214,9 +214,9 @@ describe('the error row says what happened and offers one action (§9.4)', () =>
     const enRow = RewindRow({ outcome: FAILED, t: translatorOf(enCtx.ctx, 'en'), onSendAgain: () => {} })
 
     expect(textIn(zhRow)).toContain('历史已被重写')
-    expect(textIn(zhRow)).toContain('重新发送')
+    expect(zhRow.props.children.find((element) => element?.props?.label)?.props.label).toBe('重新发送')
     expect(textIn(zhRow)).not.toContain('Send again')
-    expect(textIn(enRow)).toContain('Send again')
+    expect(enRow.props.children.find((element) => element?.props?.label)?.props.label).toBe('Send again')
     expect(textIn(enRow)).not.toContain('重新发送')
     expect(zhCtx.record.missingKeys).toEqual([])
     expect(enCtx.record.missingKeys).toEqual([])
@@ -414,7 +414,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     const { record } = await activated()
     // Ticket 08 adds the settings row, so the half now registers four slot
     // occupants (the two keyed rows, the list entry, and the settings row).
-    expect(record.mounts).toHaveLength(4)
+    expect(record.mounts).toHaveLength(5)
     for (const registration of record.mounts) {
       const tree = registration.component(POINT_PROPS)
       expect(typeof tree.type.getDerivedStateFromError).toBe('function')
@@ -422,6 +422,9 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
       if (registration.options.id === 'dsh-resend-preferences') {
         // The settings row binds the preferences store, not the operations.
         expect(typeof bound.props.preferences.set).toBe('function')
+      } else if (registration.options.name === 'settings.action') {
+        expect(bound.type).toBe('style')
+        expect(bound.props['data-dsh-resend-ui']).toBe(true)
       } else {
         expect(typeof bound.props.operations.run).toBe('function')
       }

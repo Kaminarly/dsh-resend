@@ -10,7 +10,7 @@ it('shows every planned file and refusal before executing the same plan; cancel 
     { path: 'safe.txt', action: 'restore' },
     { path: 'user.txt', action: 'refuse', reason: 'content-diverged' },
   ] } }
-  const operations = createResendOperations({ resend: { rollback: async (request) => { calls.push(request); return preview } } })
+  const operations = createResendOperations({ resend: { rollback: async (request) => { calls.push(request); return { ok: true, value: preview } } } })
   const dom = await renderDom(createElement(FileRollbackPreview, { operations, point: { sessionId: 's', carrierSeq: 5 }, t: (key) => key }))
   try {
     const button = (key) => [...dom.container.querySelectorAll('button')].find((node) => node.textContent === key)
@@ -34,7 +34,7 @@ it('offers three independent scopes and requires a fresh preview after switching
   const calls = []
   const operations = createResendOperations({ resend: { rollback: async (request) => {
     calls.push(request)
-    return { ok: true, value: { planId: 'plan', scope: request.scope, files: [], conversation: { action: 'rewind', count: 3 } } }
+    return { ok: true, value: { ok: true, value: { planId: 'plan', scope: request.scope, files: [], conversation: { action: 'rewind', count: 3 } } } }
   } } })
   const dom = await renderDom(createElement(FileRollbackPreview, { operations, point: { sessionId: 's', carrierSeq: 5 }, t: (key) => key }))
   try {
@@ -60,9 +60,9 @@ it.each([true, false])('keeps the final refusal report at the replacement point 
   const conversation = { action: 'rewound', count: 2, carrierSeq: 9, shadowedSeqs: [5, 6, 7] }
   const completed = ok ? { ok: true, value: { planId: 'plan', scope: 'both', files, conversation } }
     : { ok: false, error: { code: 'execution-stopped', files, conversation } }
-  const operations = createResendOperations({ resend: { rollback: async (request) => request.phase === 'preview'
+  const operations = createResendOperations({ resend: { rollback: async (request) => ({ ok: true, value: request.phase === 'preview'
     ? { ok: true, value: { planId: 'plan', scope: 'both', files, conversation: { action: 'rewind', count: 2 } } }
-    : completed } })
+    : completed }) } })
   const props = { operations, t: (key) => key }
   const dom = await renderDom(createElement(FileRollbackPreview, { ...props, key: 5, point: { sessionId: 's', carrierSeq: 5 } }))
   try {

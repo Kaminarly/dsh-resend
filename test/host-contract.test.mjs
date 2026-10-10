@@ -125,7 +125,7 @@ describe('check-host-contract: the table is §12’s table', () => {
     for (const service of ['slots', 'locale', 'uiConversation', 'remote']) {
       expect(ENTITIES.filter((entry) => entry.service === service).length, `ctx.${service} is injected by name`).toBeGreaterThan(0)
     }
-    expect(SLOT_CATALOG.entries.map((entry) => entry.slot)).toEqual(['conversation.chat.node', 'conversation.chat.assistant-actions'])
+    expect(SLOT_CATALOG.entries.map((entry) => entry.slot)).toEqual(['conversation.chat.node', 'conversation.chat.assistant-actions', 'settings.section'])
   })
 
   it('names only app-relative files, and opens nothing outside the installation', () => {

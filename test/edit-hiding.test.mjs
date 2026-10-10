@@ -3,6 +3,8 @@ import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { renderDom } from './helpers/render.mjs'
 import { clientComposition } from './helpers/client.mjs'
+import { installedConversationAssembler, assemblerChatSnapshot, installedChatDefinitions } from './helpers/conversation-assembler.mjs'
+import { resolveHostApp } from '../scripts/host-app.mjs'
 
 const face = clientHalf().exports
 
@@ -105,6 +107,127 @@ describe('edit and resend at the registered action row', () => {
 })
 
 describe('hide rules at the transcript boundary', () => {
+  it.each(['loading', 'failed'])('keeps hiding and dismissal independent of %s preferences', async (state) => {
+    const getSnapshot = vi.fn(() => {
+      if (state === 'failed') throw new Error('settings read failed')
+      return undefined
+    })
+    const preferences = { subscribe: () => () => {}, getSnapshot }
+    const operations = face.createResendOperations({})
+    const point = { key: 'independent-point', kind: face.REWIND_ROW_KIND, anchorSeq: 5,
+      data: { carrierSeq: 5, shadowedSeqs: [2, 3] } }
+    const chat = { nodes: new Map([...snapshot.nodes, [point.key, point]]) }
+    const dom = await renderDom(createElement('div', null, [
+      createElement('div', { key: 'old', 'data-chat-anchor-key': 'assigned-reply' }, '旧回复'),
+      createElement(face.rewindRowSurface(operations, preferences), {
+        key: 'point', node: point, sessionId: 'settings-session', t: (key) => key,
+        useChat: (select) => select(chat),
+      }),
+    ]))
+    try {
+      expect(getSnapshot).not.toHaveBeenCalled()
+      expect(dom.container.querySelector('[role=alert]')).toBeNull()
+      await dom.click(dom.container.querySelector('button'))
+      expect(dom.container.textContent).not.toContain('row.hiddenCount')
+      expect(window.getComputedStyle(dom.container.querySelector('[data-chat-anchor-key]')).display).toBe('none')
+    } finally { await dom.cleanup() }
+  })
+
+  it.skipIf(!resolveHostApp())('reopens old edit and regenerate history through the installed assembler and hides only the replaced rows', async () => {
+    const definitions = [...installedChatDefinitions(), face.REWIND_ROW_DEFINITION, face.SURFACE_SHADOW_DEFINITION]
+    const user = (seq, text) => ({ type: 'user/message', seq, time: seq, surfaceOp: 'append',
+      data: { id: 'u-' + seq, source: { kind: 'user' }, content: [{ type: 'text', text }, { type: 'file', attachment: { name: '说明.md' } }] } })
+    const reply = (seq, turn, step, text) => ({ type: 'assistant/message', seq, time: seq, surfaceOp: 'append',
+      data: { turn, step, message: { id: 'a-' + seq, content: [{ type: 'reasoning', text: '原有思考' }, { type: 'text', text }] } } })
+    const carrier = (seq, op, startSeq, endSeq, shadowed) => ({ type: 'user/message', seq, time: seq,
+      surfaceOp: { op: 'replace', startSeq, endSeq }, sourceEventSeqs: [seq - 1, ...shadowed],
+      data: { id: 'dsh-resend-' + op + '-old-' + seq, source: { kind: 'dsh-resend' }, content: [{ type: 'text', text: '载体' }] } })
+    const events = [
+      user(0, '普通消息 @file /skill'),
+      user(1, '被替换的原文'),
+      { type: 'turn/start', seq: 2, time: 2, data: { turn: 1 } },
+      { type: 'step/start', seq: 3, time: 3, data: { turn: 1, step: 1 } },
+      reply(4, 1, 1, '旧回复'),
+      { type: 'tool/call', seq: 5, time: 5, data: { turn: 1, step: 1, callId: 'tool-old', name: 'read', arguments: '{}' } },
+      { type: 'tool/result', seq: 6, time: 6, surfaceOp: 'append', data: { message: { source: { callId: 'tool-old' }, content: [{ type: 'text', text: '旧工具结果' }] } } },
+      { type: 'step/end', seq: 7, time: 7, data: { turn: 1, step: 1 } },
+      { type: 'turn/end', seq: 8, time: 8, data: { turn: 1 } },
+      carrier(10, 'edit', 1, 6, [1, 4, 6]),
+      user(11, '修改后的消息'),
+      { type: 'turn/start', seq: 12, time: 12, data: { turn: 2 } },
+      { type: 'step/start', seq: 13, time: 13, data: { turn: 2, step: 1 } },
+      reply(14, 2, 1, '重新生成前的回复'),
+      { type: 'step/end', seq: 15, time: 15, data: { turn: 2, step: 1 } },
+      { type: 'turn/end', seq: 16, time: 16, data: { turn: 2 } },
+      carrier(18, 'regenerate', 11, 14, [11, 14]),
+      user(19, '修改后的消息'),
+      { type: 'turn/start', seq: 20, time: 20, data: { turn: 3 } },
+      { type: 'step/start', seq: 21, time: 21, data: { turn: 3, step: 1 } },
+      reply(22, 3, 1, '最新回复'),
+      { type: 'step/end', seq: 23, time: 23, data: { turn: 3, step: 1 } },
+      { type: 'turn/end', seq: 24, time: 24, data: { turn: 3 } },
+      { ...carrier(26, 'edit', 0, 0, [0]), data: { id: 'third-party-carrier', source: { kind: 'third-party' }, content: [] } },
+    ]
+    const original = JSON.stringify(events)
+    // Fresh assembler, operations and preferences on each open: no live Remote record.
+    for (let open = 0; open < 2; open++) {
+      const assembler = installedConversationAssembler(definitions)
+      assembler.replaceWindow(events.map((event) => ({ type: 'durable', event })), false)
+      const chat = assemblerChatSnapshot(assembler)
+      const nodes = [...chat.nodes.values()].filter((node) => node.visibility !== 'hidden')
+      const points = nodes.filter((node) => node.kind === face.REWIND_ROW_KIND)
+      expect(points).toHaveLength(2)
+      const affected = nodes.filter((node) => (node.kind === 'user' && [1, 11].includes(node.anchorSeq)) ||
+        (node.kind === 'assistant-step' && [4, 14].includes(node.anchorSeq)) || node.kind === 'tool-call')
+      expect(affected.map((node) => node.kind).sort()).toEqual(['assistant-step', 'assistant-step', 'tool-call', 'user', 'user'])
+      const operations = face.createResendOperations({})
+      const Surface = face.rewindRowSurface(operations, face.createPreferences())
+      const dom = await renderDom(createElement('div', null, [
+        ...nodes.map((node) => createElement('div', { key: node.key, 'data-chat-anchor-key': node.key }, node.kind)),
+        ...points.map((node) => createElement(Surface, { key: 'surface-' + node.key, node, sessionId: 'old-history', t: (key) => key,
+          useChat: (select) => select(chat) })),
+      ]))
+      try {
+        for (const node of nodes) {
+          const row = [...dom.container.querySelectorAll('[data-chat-anchor-key]')].find((element) => element.getAttribute('data-chat-anchor-key') === node.key)
+          expect(window.getComputedStyle(row).display, node.kind + ':' + node.anchorSeq).toBe(affected.includes(node) ? 'none' : 'block')
+        }
+        expect(JSON.stringify(events)).toBe(original)
+        expect(nodes.find((node) => node.kind === 'user' && node.anchorSeq === 0).data.content).toEqual([
+          { type: 'text', text: '普通消息 @file /skill' }, { type: 'file', attachment: { name: '说明.md' } },
+        ])
+      } finally { await dom.cleanup() }
+    }
+  })
+
+  it('ignores a legacy false hiding value on both the user row and the rewind point', async () => {
+    const preferences = {
+      subscribe: () => () => {},
+      getSnapshot: () => legacySnapshot,
+    }
+    const legacySnapshot = Object.freeze({ hideReplacedMessages: false, inlineEditorBeneathMessage: true })
+    const operations = face.createResendOperations({})
+    const point = { key: 'legacy-point', kind: face.REWIND_ROW_KIND, anchorSeq: 5,
+      data: { carrierSeq: 5, shadowedSeqs: [2, 3] } }
+    const chat = { nodes: new Map([...snapshot.nodes, [point.key, point]]) }
+    const common = { sessionId: 'legacy-session', t: (key) => key, useChat: (select) => select(chat), hide: false }
+    const surfaces = [
+      [face.userActionsSurface(operations, preferences), userNode],
+      [face.rewindRowSurface(operations, preferences), point],
+    ]
+    for (const [Surface, node] of surfaces) {
+      const dom = await renderDom(createElement('div', null, [
+        createElement('div', { key: 'old', 'data-chat-anchor-key': 'assigned-reply' }, '旧回复'),
+        createElement('div', { key: 'normal', 'data-chat-anchor-key': 'normal-reply' }, '普通回复'),
+        createElement(Surface, { ...common, node, key: 'surface' }),
+      ]))
+      try {
+        expect(window.getComputedStyle(dom.container.querySelector('[data-chat-anchor-key="assigned-reply"]')).display).toBe('none')
+        expect(window.getComputedStyle(dom.container.querySelector('[data-chat-anchor-key="normal-reply"]')).display).not.toBe('none')
+      } finally { await dom.cleanup() }
+    }
+  })
+
   it('keeps the exact rules and honest count after dismiss, even when carrier provenance is absent', async () => {
     const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } }) } })
     await operations.run({ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: 'edited' })
@@ -141,6 +264,8 @@ describe('hide rules at the transcript boundary', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       expect(dom.container.textContent).toContain('3 messages hidden')
+      await dom.click(dom.container.querySelector('button'))
+      expect(dom.container.textContent).not.toContain('messages hidden')
       const missing = { ...node, data: { carrierSeq: 5, range: { start: 2, end: 3 } } }
       const broken = { nodes: new Map([...snapshot.nodes, ['cold', missing]]) }
       await dom.render(createElement(row, { ...props, node: missing, useChat: (select) => select(broken) }))
@@ -151,19 +276,23 @@ describe('hide rules at the transcript boundary', () => {
     } finally { warn.mockRestore(); await dom.cleanup() }
   })
 
-  it('fails visibly and names the range when the node store or grouping cannot be read', async () => {
+  it.each(['node store', 'grouping'])('fails visibly and names the range when the %s cannot be read', async (failure) => {
     const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'resent' } }) } })
     await operations.run({ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: 'edited' })
     const rewindNode = { key: 'rewind-5', kind: 'dsh-resend-error', anchorSeq: 5,
       data: { carrierSeq: 5, range: { start: 2, end: 3 } } }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const dom = await renderDom(createElement(face.rewindRowSurface(operations, face.preferences), {
-      node: rewindNode, sessionId: 'session-1', t: (key) => key, useChat: (select) => select({}),
+    const Surface = face.withPanelBoundary(face.rewindRowSurface(operations, face.preferences), 'panel.error.hideRules')
+    const dom = await renderDom(createElement(Surface, {
+      node: rewindNode, sessionId: 'session-1', t: (key) => key,
+      useChat: (select) => select(failure === 'node store' ? {} : snapshot),
+      useConversation: failure === 'grouping' ? () => ({ views: { grouped() { throw new Error('grouping unavailable') } } }) : undefined,
     }))
     try {
       expect(dom.container.querySelector('[role=alert]')).not.toBeNull()
       expect(dom.container.textContent).toContain('row.hideFailed')
-      expect(warn.mock.calls.flat().join(' ')).toMatch(/range.*2,3.*node store/)
+      expect(warn.mock.calls.flat().join(' ')).toContain('range [[2,3]]')
+      expect(warn.mock.calls.flat().join(' ')).toContain(failure)
     } finally { warn.mockRestore(); await dom.cleanup() }
   })
 
@@ -222,7 +351,7 @@ describe('hide rules at the transcript boundary', () => {
     expect(scans).toBe(2)
   })
 
-  it('gets actual split flow placements from the host grouping store', () => {
+  it('keeps split assistant placements hidden after dismissing the notice', async () => {
     const chat = { nodes: { values: () => [
       { key: 'assigned-step', kind: 'assistant-step', anchorSeq: 21 },
       { key: 'assigned-user', kind: 'user', anchorSeq: 20 },
@@ -234,6 +363,26 @@ describe('hide rules at the transcript boundary', () => {
     const plan = face.hidePlanFor(chat, [{ carrierSeq: 22, shadowedSeqs: [20, 21] }], grouped)
     expect(plan.keys).toEqual(['assigned-user', '["assigned-step","reasoning"]', 'assigned-step'])
     expect(plan.byCarrier.get(22).count).toBe(3)
+    const operations = face.createResendOperations({ resend: { apply: async () => ({ ok: true,
+      value: { carrierSeq: 22, shadowedSeqs: [20, 21], resendMessageId: 'resent' } }) } })
+    await operations.run({ sessionId: 'split-session', targetSeq: 20, op: 'edit', text: 'edited' })
+    const keys = ['assigned-user', '["assigned-step","reasoning"]', 'assigned-step', 'unaffected']
+    const dom = await renderDom(createElement('div', null, [
+      ...keys.map((key) => createElement('div', { key, 'data-chat-anchor-key': key }, key)),
+      createElement(face.rewindRowSurface(operations, face.createPreferences()), {
+        key: 'point', node: { data: { carrierSeq: 22 } }, sessionId: 'split-session',
+        t: (key) => key === 'row.hiddenCount' ? '已隐藏 {count} 条消息' : key,
+        useChat: (select) => select(chat), useConversation: () => ({ views: { grouped: () => grouped } }),
+      }),
+    ]))
+    try {
+      expect(dom.container.textContent).toContain('已隐藏 3 条消息')
+      await dom.click(dom.container.querySelector('button'))
+      expect(dom.container.textContent).not.toContain('已隐藏 3 条消息')
+      for (const row of dom.container.querySelectorAll('[data-chat-anchor-key]')) {
+        expect(window.getComputedStyle(row).display).toBe(row.getAttribute('data-chat-anchor-key') === 'unaffected' ? 'block' : 'none')
+      }
+    } finally { await dom.cleanup() }
   })
 
   it('hides the platform key, including JSON grouped keys, while the negative control stays visible', async () => {

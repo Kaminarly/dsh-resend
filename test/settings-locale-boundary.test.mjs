@@ -2,7 +2,7 @@
  * Settings, localization, and the one shared error boundary (ticket 08; spec
  * §7 registration 4, §7.4, §10, §13.3 #19–#21).
  *
- * The end-to-end behaviour this ticket owns: three preferences that take
+ * The end-to-end behaviour this ticket owns: editable preferences that take
  * effect immediately in the very pass that flips them; a UI that is exactly
  * one of two languages at any moment, with slot-projected labels provided as
  * thunks so a language switch needs no re-registration; the trace text, whose
@@ -150,7 +150,7 @@ const buttonIn = (container, text) => [...container.querySelectorAll('button')].
 /** One settings toggle, by its field. */
 const toggleIn = (container, field) => container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
 
-describe('registration 4: the three preferences (spec §7)', () => {
+describe('registration 4: editable preferences and fixed hiding', () => {
   it('registers the settings row under its own id, with a thunk label and no owner props', async () => {
     const composition = await activated()
     const registration = settingsOf(composition)
@@ -166,13 +166,15 @@ describe('registration 4: the three preferences (spec §7)', () => {
     expect(typeof registration.component).toBe('function')
   })
 
-  it('defaults are all on, and a toggle takes effect in the very pass that flips it — hide off leaves rows visible with the notice row', async () => {
+  it('keeps hiding fixed while the remaining settings default to on', async () => {
     const composition = await activated()
     const settingsDom = await renderDom(createElement(settingsOf(composition).component))
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     try {
       // Every preference starts on.
-      for (const field of ['hideReplacedMessages', 'inlineEditorBeneathMessage', 'regenerateLastReply']) {
+      expect(toggleIn(settingsDom.container, 'hideReplacedMessages')).toBeNull()
+      expect(settingsDom.container.querySelectorAll('.dsh-resend-settings-toggle')).toHaveLength(2)
+      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply']) {
         const toggle = settingsDom.container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
         expect(toggle?.getAttribute('aria-pressed')).toBe('true')
       }
@@ -183,8 +185,8 @@ describe('registration 4: the three preferences (spec §7)', () => {
       await chatDom.key(chatDom.container.querySelector('textarea'), 'Enter')
       expect(composition.calls).toHaveLength(1)
 
-      // Hide on: the rules hide the replaced rows.
-      let style = chatDom.container.querySelector('style[data-dsh-resend-hide-rules]')
+      // Replaced rows are always hidden.
+      const style = chatDom.container.querySelector('style[data-dsh-resend-hide-rules]')
       expect(style.textContent).toContain('user-2')
       expect(style.textContent).toContain('display:none')
 
@@ -196,24 +198,18 @@ describe('registration 4: the three preferences (spec §7)', () => {
         await noticeDom.cleanup()
       }
 
-      // Off, from the settings row: the chat root re-renders in the same pass.
-      await settingsDom.click(toggleIn(settingsDom.container, 'hideReplacedMessages'))
-      await chatDom.act(async () => {})
-      expect(toggleIn(settingsDom.container, 'hideReplacedMessages')?.getAttribute('aria-pressed')).toBe('false')
-      style = chatDom.container.querySelector('style[data-dsh-resend-hide-rules]')
-      expect(style.textContent).toBe('')
-
-      // The notice row is what remains — the count, not the hiding.
-      const noticeAgain = await renderDom(createElement(rewindOf(composition).component, rewindProps(composition)))
-      try {
-        expect(noticeAgain.container.textContent).toContain('3 messages hidden')
-      } finally {
-        await noticeAgain.cleanup()
-      }
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()
     }
+  })
+
+  it('rejects writes to the retired hiding preference', () => {
+    const preferences = face.createPreferences()
+    expect(preferences.fields).not.toContain('hideReplacedMessages')
+    expect(preferences.getSnapshot()).not.toHaveProperty('hideReplacedMessages')
+    expect(() => preferences.set('hideReplacedMessages', false)).toThrow('unknown preference')
+    expect(() => preferences.set('hideReplacedMessages', true)).toThrow('unknown preference')
   })
 
   it('inline editor off removes the editor from the row and keeps the composer handoff', async () => {
@@ -277,14 +273,16 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     // And the chat surfaces are English through the slot's own translator.
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     try {
-      expect(settingsDom.container.textContent).toContain('Hide replaced messages')
+      expect(settingsDom.container.textContent).toContain('Inline editor beneath the message')
+      expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, 'Edit')).not.toBeNull()
 
       // One language at a time: flip the active locale. No register call follows.
       locale.active = 'zh'
       await settingsDom.render(createElement(registration.component))
       await chatDom.render(createElement(actionsOf(composition).component, actionProps(composition)))
-      expect(settingsDom.container.textContent).toContain('隐藏被替换的消息')
+      expect(settingsDom.container.textContent).toContain('消息下方的内联编辑器')
+      expect(settingsDom.container.textContent).not.toContain('隐藏被替换的消息')
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, '编辑')).not.toBeNull()
       expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
@@ -303,7 +301,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     const entry = composition.record.dictionaries.find((item) => item.namespace === 'dsh-resend')
     expect(Object.keys(entry.dictionaries).sort()).toEqual(['en', 'zh'])
     for (const key of [
-      'settings.heading', 'settings.hideReplacedMessages', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
+      'settings.heading', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
       'settings.on', 'settings.off',
       'panel.error.inlineEditor', 'panel.error.hideRules', 'panel.error.settings',
     ]) {

@@ -107,7 +107,8 @@ describe('saved display preferences', () => {
     expect((await service.apply(request)).ok).toBe(true)
     expect(state.calls.followupInputs[0].content).toEqual([{ type: 'text', text: 'first prompt' }])
   })
-  it('does not let a delayed successful response overwrite a newer save from another page', async () => {
+  it.each(['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'])(
+    'does not let a delayed successful $field response overwrite a newer save from another page', async field => {
     const h = await durable()
     let release
     let committed
@@ -121,16 +122,16 @@ describe('saved display preferences', () => {
     const a = clientHalf().exports
     const b = clientHalf().exports
     a.preferences.connect(first.forms); b.preferences.connect(second.forms)
-    const firstSave = a.preferences.set('regenerateLastReply', false)
+    const firstSave = a.preferences.set(field, false)
     await whenCommitted
     await second.forms.describe().load()
-    expect(b.preferences.getSnapshot().regenerateLastReply).toBe(false)
-    expect(await b.preferences.set('regenerateLastReply', true)).toBe(true)
+    expect(b.preferences.getSnapshot()[field]).toBe(false)
+    expect(await b.preferences.set(field, true)).toBe(true)
     await first.forms.describe().load()
     release()
     await firstSave
-    expect(a.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'ready', regenerateLastReply: true })
-    expect(h.settings.describe()[0].value.regenerateLastReply).toBe(true)
+    expect(a.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'ready', [field]: true })
+    expect(h.settings.describe()[0].value[field]).toBe(true)
   })
   it('keeps the open draft and formal values while saving, and retains editing/cancel during a read failure', async () => {
     const h = await durable()
@@ -228,7 +229,7 @@ describe('saved display preferences', () => {
     expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false })
   })
 
-  it.each(['regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'].flatMap(field =>
+  it.each(['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'].flatMap(field =>
     ['refused', 'committed-no-answer', 'unconfirmed'].map(failure => ({ field, failure }))))(
     'recovers authoritative $field after $failure and provides a usable retry', async ({ field, failure }) => {
       const h = await durable()

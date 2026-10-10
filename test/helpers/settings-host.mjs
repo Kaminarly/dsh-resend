@@ -64,7 +64,7 @@ export async function settingsHost(home, name, state) {
 import { readFileSync as requireRead } from 'node:fs'
 
 /** Materialize the installed client provider with this test's one React/store runtime. */
-export async function settingsClientProvider(host, { failRead, write } = {}) {
+export async function settingsClientProvider(host, { failRead, write, receiveEvent } = {}) {
   // Store runtime boundary: immutable snapshots, with the installed provider
   // itself owning reads, revisions, queues, recovery and invalidation handling.
   const createSnapshotStore = (initial) => {
@@ -91,7 +91,9 @@ export async function settingsClientProvider(host, { failRead, write } = {}) {
     constructor(scope) {
       super(scope, 'remote')
       this.$host = { isLoopback: true }
-      this.$on = (name, fn) => host.ctx.on(name, fn)
+      this.$on = (name, fn) => host.ctx.on(name, (...args) => {
+        if (receiveEvent?.(name, args) !== false) return fn(...args)
+      })
       new class extends Service {
         constructor(scope) { super(scope, 'remote.settings') }
         async describe() {

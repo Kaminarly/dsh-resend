@@ -82,7 +82,9 @@ const configForms = {describe:()=>settingsMirror,get:()=>({getSnapshot:()=>({mod
   settingsView={...settingsView,view:{...settingsView.view,namespaces:[{...row,value:{...row.value,[field]:value}}]}};
   settingsListeners.forEach(fn=>fn());return true;
 }})};
+const contextEvents = new Map();
 const ctx = {
+  on:(name,callback)=>{const held=contextEvents.get(name)??new Set();held.add(callback);contextEvents.set(name,held);return()=>held.delete(callback)},
   remote, configForms, root:{}, effect:(callback)=>callback(), inject:(_deps,callback)=>callback(ctx),
   locale:{ register:(ns,table)=>{dictionaries[ns]=table}, bind:translate },
   uiConversation:{events:{register:()=>()=>{}}},
@@ -121,7 +123,8 @@ seeds['react-dom/client'].createRoot(document.getElementById('root')).render(h(R
   heading('重试提示'),h(face.RewindRow,{t,outcome:{status:'resend-failed'},onSendAgain:()=>{}}),
   h(SettingsFixture),heading('文件回滚'),h(face.FileRollbackPreview,{t,operations,point:{sessionId:'fixture',carrierSeq:5}})
 ));
-window.uiFixture = {face,host,seeds,registrations,snapshot};
+window.uiFixture = {face,host,seeds,registrations,snapshot,remote,
+  reconnect:()=>{for(const callback of contextEvents.get('connection/reset')??[])callback()}};
 document.body.style.background = 'var(--dsw-alias-bg-base)';
 if (new URLSearchParams(location.search).has('dark')) document.body.setAttribute('data-ds-dark-theme','');
 `

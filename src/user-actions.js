@@ -72,12 +72,13 @@ export function UserActionsRow(props) {
   const input = typeof useInput === 'function' ? useInput(identity) : undefined
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
-  const stopReason = session?.running ? t('row.stopFirst') : data.text.trim() === '' ? t('row.noText') : undefined
-  const composerReason = input?.phase !== 'plain' ? t('row.composerBusy')
-    : typeof inputActions?.setDraft !== 'function' || typeof readInput !== 'function' ? t('row.composerUnavailable') : undefined
+  const preferenceReason = prefs.ready ? undefined : t(prefs.status === 'loading' ? 'settings.loading' : 'settings.read-error')
+  const stopReason = preferenceReason ?? (session?.running ? t('row.stopFirst') : data.text.trim() === '' ? t('row.noText') : undefined)
+  const composerReason = preferenceReason ?? (input?.phase !== 'plain' ? t('row.composerBusy')
+    : typeof inputActions?.setDraft !== 'function' || typeof readInput !== 'function' ? t('row.composerUnavailable') : undefined)
 
   const open = () => {
-    if (stopReason !== undefined || inFlight.current) return
+    if (!preferences.getSnapshot().ready || stopReason !== undefined || inFlight.current) return
     setText(data.text)
     setError(undefined)
     setEditing(true)
@@ -88,7 +89,7 @@ export function UserActionsRow(props) {
     setError(undefined)
   }
   const send = async () => {
-    if (inFlight.current || stopReason !== undefined || text.trim() === '') return
+    if (!preferences.getSnapshot().ready || inFlight.current || stopReason !== undefined || text.trim() === '') return
     inFlight.current = true
     setPending(true)
     setError(undefined)
@@ -105,7 +106,7 @@ export function UserActionsRow(props) {
     }
   }
   const editInComposer = () => {
-    if (inFlight.current || composerReason !== undefined) return
+    if (!preferences.getSnapshot().ready || inFlight.current || stopReason !== undefined || composerReason !== undefined) return
     // useInput is a React hook and cannot be invoked here. readInput resolves
     // the same session's public input facade and reads its live snapshot.
     try {

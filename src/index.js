@@ -16,6 +16,26 @@
 import { ENDPOINT, endpointOf, SERVICE } from './typert.js'
 import { ResendService } from './resend.js'
 import { TYPERT } from './typert.host.js'
+import Schema from '@deepseek-ai/schemastery'
+
+/** Live fields update in place through the Loader; the chat client never remounts. */
+export const Config = Schema.object({
+  inlineEditorBeneathMessage: Schema.boolean().default(true).volatile(),
+  regenerateLastReply: Schema.boolean().default(true).volatile(),
+})
+// Repair each legacy field independently before standard validation. Keep the
+// boolean form schema intact for SettingsForms and the Loader's volatile paths.
+const validateConfig = Config['~standard'].validate
+Object.defineProperty(Config, '~standard', { value: {
+  ...Config['~standard'],
+  validate(raw) {
+    const values = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
+    for (const field of Object.keys(Config.dict)) {
+      if (typeof values[field] !== 'boolean') values[field] = true
+    }
+    return validateConfig(values)
+  },
+} })
 
 export const name = 'dsh-resend'
 
@@ -54,6 +74,9 @@ export const inject = ['sessions', 'agents', 'sessionQuery', 'sessionPersistence
  * @param ctx - the fiber's context, which provides the services in {@link inject}.
  */
 export function apply(ctx) {
+  ctx.inject(['settings'], (scope) => {
+    scope.effect(() => scope.settings.configure({ auto: false }, ctx.fiber))
+  })
   // The receiver exists before the descriptor that names it is committed: the
   // registry emits its change synchronously inside `register()`, and a listener
   // that reacts by calling the endpoint must not find the service missing.

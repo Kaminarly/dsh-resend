@@ -1,75 +1,113 @@
 import { useSyncExternalStore } from 'react'
 
-/**
- * The editable preferences. Replaced-message hiding is a fixed policy.
- *
- * A client-side store, no persistence: "槽位缺失时用默认值" — when the host has
- * no `settings.general.item` slot the feature simply operates on the defaults,
- * because the store is what every chat surface reads, and the settings row is
- * the only writer. A set is IMMEDIATE: the snapshot is replaced (never mutated)
- * and the listeners fire in the same call, so every subscribing surface
- * re-renders in the very pass the toggle is clicked — there is no second pass
- * in which the UI still shows the old behaviour.
- */
-
-/** The editable preference fields, in the row's display order. */
 export const PREFERENCE_FIELDS = Object.freeze([
   'inlineEditorBeneathMessage',
   'regenerateLastReply',
 ])
+const DEFAULTS = Object.freeze({ inlineEditorBeneathMessage: true, regenerateLastReply: true })
 
-/** The defaults for the remaining preferences: both on. */
-const DEFAULTS = Object.freeze({
-  inlineEditorBeneathMessage: true,
-  regenerateLastReply: true,
-})
-
-/**
- * One preferences store.
- *
- * The snapshot is frozen and replaced wholesale on every set, so a surface that
- * caches it by identity is never stale, and a surface that re-reads it in the
- * same render pass sees the new value. `set` validates its field and value
- * loudly — a settings row that wrote a preference the feature does not know
- * would break every subscriber, so the failure is a throw, not a no-op.
- */
+/** The host's saved document is authoritative; no browser storage or optimistic values. */
 export function createPreferences() {
-  let listeners = new Set()
-  let snapshot = DEFAULTS
-
-  function subscribe(listener) {
-    listeners.add(listener)
+  const listeners = new Set()
+  let snapshot = Object.freeze({ ...DEFAULTS, ready: false, status: 'loading' })
+  let connection
+  let saving = false
+  let saveError = false
+  let retryWrite
+  const publish = (next) => {
+    if (Object.keys(next).every(key => next[key] === snapshot[key])) return
+    snapshot = Object.freeze(next)
+    for (const listener of [...listeners]) listener()
+  }
+  function sync() {
+    const held = connection?.mirror.getSnapshot()
+    const row = held?.view?.namespaces?.find(row => row.ns === 'dsh-resend')
+    const known = connection?.form.getSnapshot().mode === 'host' && held?.error == null && row !== undefined && held.status === 'ready'
+    const values = { ...DEFAULTS }
+    for (const field of PREFERENCE_FIELDS) {
+      if (typeof row?.value?.[field] === 'boolean') values[field] = row.value[field]
+    }
+    const loading = !held || held.status === 'loading' || held.status === 'idle' && held.error == null
+    publish({ ...(known && !saving ? values : snapshot), ready: known,
+      status: saving ? 'saving' : !known ? loading ? 'loading' : 'read-error' : saveError ? 'save-error' : 'ready' })
+  }
+  function connect(forms) {
+    if (connection) throw new Error('preferences already connected')
+    const current = { mirror: forms.describe(), form: forms.get('dsh-resend') }
+    connection = current
+    const unsubscribe = current.mirror.subscribe(sync)
+    sync()
+    // The provider refreshes this mirror on document-updated and connection/reset.
+    void Promise.resolve(current.mirror.ensure()).catch(() => {
+      if (connection === current) publish({ ...snapshot, ready: false, status: 'read-error' })
+    })
     return () => {
-      listeners.delete(listener)
+      unsubscribe()
+      if (connection !== current) return
+      connection = undefined
+      publish({ ...snapshot, ready: false, status: 'loading' })
     }
   }
-
-  function getSnapshot() {
-    return snapshot
-  }
-
   function set(field, value) {
     if (!PREFERENCE_FIELDS.includes(field)) throw new Error('unknown preference ' + field)
     if (typeof value !== 'boolean') throw new Error('preference ' + field + ' must be a boolean')
-    if (snapshot[field] === value) return
-    snapshot = Object.freeze({ ...snapshot, [field]: value })
-    for (const listener of [...listeners]) listener()
+    if (saving || !snapshot.ready || !connection) return Promise.resolve(false)
+    if (snapshot[field] === value) {
+      saveError = false
+      retryWrite = undefined
+      sync()
+      return Promise.resolve(true)
+    }
+    return save(field, value)
   }
-
+  async function save(field, value) {
+    const current = connection
+    saving = true
+    saveError = false
+    retryWrite = { field, value }
+    sync()
+    let accepted = false
+    try { accepted = await current.form.set(field, value) === true } catch {
+      // A rejected wire call may still have committed. Always re-read below.
+    }
+    // Even a successful response can arrive after another page's newer write.
+    // The native mirror folds write replies without a revision fence, so read
+    // the current Host document before publishing any settlement.
+    if (connection === current) {
+      publish({ ...snapshot, ready: false, status: 'saving' })
+      try { await current.mirror.load() } catch {
+        saving = false
+        saveError = true
+        publish({ ...snapshot, ready: false, status: 'read-error' })
+        return false
+      }
+    }
+    saving = false
+    if (connection !== current) return accepted
+    saveError = !accepted
+    if (accepted) retryWrite = undefined
+    sync()
+    return accepted
+  }
+  async function retry() {
+    if (saving || !connection) return false
+    if (snapshot.ready && saveError && retryWrite) return set(retryWrite.field, retryWrite.value)
+    const current = connection
+    publish({ ...snapshot, ready: false, status: 'loading' })
+    try { await current.mirror.load() } catch {
+      if (connection === current) publish({ ...snapshot, ready: false, status: 'read-error' })
+      return false
+    }
+    if (connection === current) sync()
+    return snapshot.ready
+  }
   return Object.freeze({
     fields: PREFERENCE_FIELDS,
-    subscribe,
-    getSnapshot,
-    set,
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
+    getSnapshot: () => snapshot,
+    connect, set, retry,
   })
 }
-
-/**
- * Subscribe a component to a preferences store: the current snapshot, and a
- * re-render in the same pass a toggle flips it. Every surface that reads a
- * preference goes through this one hook — the store's own subscribe/getSnapshot
- * pair, nowhere re-typed by a caller.
- */
 export function usePreferences(store) {
   return useSyncExternalStore(store.subscribe, store.getSnapshot)
 }

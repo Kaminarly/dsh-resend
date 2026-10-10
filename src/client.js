@@ -120,12 +120,8 @@ export const inject = ['remote']
 const NS = PACKAGE
 
 /**
- * This page's preferences store, created once per materialization (ticket 08,
- * spec §7 registration 4). Every chat surface and the settings row read the same
- * store, so a toggle in the settings row is immediate everywhere; and because
- * the store exists even when the host has no `settings.general.item` slot, a
- * missing slot means the feature simply runs on the defaults — "槽位缺失时用默认
- * 值，没有设置界面" — nothing else is affected.
+ * One store per page subscribes to the host's saved Profile configuration.
+ * It stays alive across settings changes so mounted editors keep their drafts.
  */
 const preferences = createPreferences()
 
@@ -213,7 +209,12 @@ const DICTIONARIES = {
     'panel.error.settings': '设置行无法显示',
     'settings.heading': '消息编辑设置',
     'settings.inlineEditorBeneathMessage': '消息下方的内联编辑器',
-    'settings.regenerateLastReply': '最后一条回复上的重新生成',
+    'settings.regenerateLastReply': '显示重新生成按钮',
+    'settings.loading': '正在读取设置…',
+    'settings.saving': '正在保存…',
+    'settings.read-error': '设置读取失败，请重试',
+    'settings.save-error': '设置保存失败，请重试',
+    'settings.retry': '重试',
     'settings.on': '开',
     'settings.off': '关',
   },
@@ -294,7 +295,12 @@ const DICTIONARIES = {
     'panel.error.settings': 'The settings row could not be displayed',
     'settings.heading': 'Message editing settings',
     'settings.inlineEditorBeneathMessage': 'Inline editor beneath the message',
-    'settings.regenerateLastReply': 'Regenerate on the last reply',
+    'settings.regenerateLastReply': 'Show regenerate buttons',
+    'settings.loading': 'Reading settings…',
+    'settings.saving': 'Saving…',
+    'settings.read-error': 'Could not read settings. Please retry.',
+    'settings.save-error': 'Could not save settings. Please retry.',
+    'settings.retry': 'Retry',
     'settings.on': 'On',
     'settings.off': 'Off',
   },
@@ -358,6 +364,9 @@ function conversationRegistrar(service) {
  * @param ctx - this row's own context, for the Remote service.
  */
 function mountSurfaces(scope, ctx) {
+  scope.inject(['configForms'], (settingsScope) => {
+    settingsScope.effect(() => preferences.connect(settingsScope.configForms), 'dsh-resend: saved preferences')
+  })
   scope.effect(() => scope.locale.register(NS, DICTIONARIES), 'dsh-resend: dictionaries')
 
   // The live translator: every label this half projects re-reads the active

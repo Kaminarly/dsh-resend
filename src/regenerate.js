@@ -140,7 +140,7 @@ export function RegenerateControl(props) {
   const inFlight = useRef(false)
 
   const regenerate = async () => {
-    if (inFlight.current || reason !== null) return
+    if (!preferences.getSnapshot().ready || !preferences.getSnapshot().regenerateLastReply || inFlight.current || reason !== null) return
     inFlight.current = true
     setPending(true)
     setError(null)
@@ -162,13 +162,13 @@ export function RegenerateControl(props) {
   // not a greyed chip, nothing at all, the same shape as the not-last verdict.
   if (prefs.regenerateLastReply === false) return null
   if (reason === 'notLast') return null
-  const disabledReason = reason === null ? undefined : t(REASON_TEXT[reason])
+  const disabledReason = !prefs.ready ? t(prefs.status === 'loading' ? 'settings.loading' : 'settings.read-error') : reason === null ? undefined : t(REASON_TEXT[reason])
   return createElement('div', { className: 'dsh-resend-regenerate' }, [
     createElement('button', {
       key: 'regenerate',
       type: 'button',
       className: 'dsh-resend-chip',
-      disabled: pending || reason !== null,
+      disabled: !prefs.ready || pending || reason !== null,
       title: disabledReason,
       onClick: () => {
         void regenerate()

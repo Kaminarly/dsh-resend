@@ -24,6 +24,36 @@ export const APP_MANIFEST = 'package.json'
  */
 export const ENTITIES = [
   {
+    entity: 'SettingsForms',
+    file: 'node_modules/@deepseek-ai/dsh-settings/lib/types/index.js',
+    service: 'settings', usedBy: 'src/index.js — live Profile preferences and page policy',
+    present: ['configure', 'describe', 'mutate'], absent: [],
+  },
+  {
+    entity: 'ConfigEditor',
+    file: 'node_modules/@deepseek-ai/dsh-config-editor/lib/index.js',
+    service: 'configEditor', usedBy: 'saved preferences integration — Profile patch and live reconciliation',
+    present: ['documentPath', 'edit'], absent: [],
+  },
+  {
+    entity: 'ConfigForms',
+    file: 'node_modules/@deepseek-ai/dsh-client-ui-settings/lib/client.js',
+    service: 'configForms', usedBy: 'src/preferences.js — shared saved configuration',
+    present: ['get', 'describe'], absent: [],
+  },
+  {
+    entity: 'ConfigFormController',
+    file: 'node_modules/@deepseek-ai/dsh-client-ui-settings/lib/client.js',
+    usedBy: 'src/preferences.js — Host write and persistence mode',
+    present: ['getSnapshot', 'set'], absent: [],
+  },
+  {
+    entity: 'SettingsDescribeMirror',
+    file: 'node_modules/@deepseek-ai/dsh-client-ui-settings/lib/client.js',
+    usedBy: 'src/preferences.js — read status, retry and document subscription',
+    present: ['getSnapshot', 'subscribe', 'load', 'ensure'], absent: [],
+  },
+  {
     entity: 'Session',
     file: 'node_modules/@deepseek-ai/dsh-session/lib/index.js',
     usedBy: 'src/log-read.js, src/write.js, src/resend.js, src/file-versions.js',

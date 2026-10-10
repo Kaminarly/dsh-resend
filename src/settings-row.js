@@ -10,9 +10,8 @@
  * surface whose slot passes no `t` still has to be able to draw its own
  * failure row.
  *
- * Each toggle row reads the live snapshot with `usePreferences`, so a
- * flip re-renders this row AND every chat surface subscribed to the same store
- * in the same pass — the "可改且立刻生效" the ticket is written around.
+ * Each toggle reads the saved Profile snapshot. During a write all switches
+ * wait for acceptance; chat surfaces keep their previous saved behavior.
  */
 import { createElement } from 'react'
 import { PREFERENCE_FIELDS, usePreferences } from './preferences.js'
@@ -31,6 +30,11 @@ export function SettingsRow({ preferences, t }) {
   const snapshot = usePreferences(preferences)
   return createElement('div', { className: 'dsh-resend-settings' }, [
     createElement('div', { key: 'heading', className: 'dsh-resend-settings-heading' }, t('settings.heading')),
+    snapshot.status === 'ready' ? null : createElement('div', {
+      key: 'status', role: snapshot.status.endsWith('error') ? 'alert' : 'status',
+    }, [t('settings.' + snapshot.status), snapshot.status.endsWith('error') ? createElement('button', {
+      key: 'retry', type: 'button', onClick: () => { void preferences.retry() },
+    }, t('settings.retry')) : null]),
     ...PREFERENCE_FIELDS.map((field) =>
       createElement('div', { key: field, className: 'dsh-resend-settings-row', 'data-field': field }, [
         createElement('span', { key: 'label', className: 'dsh-resend-settings-label' }, t(SETTING_KEYS[field])),
@@ -40,7 +44,8 @@ export function SettingsRow({ preferences, t }) {
           className: 'dsh-resend-chip dsh-resend-settings-toggle',
           'data-field': field,
           'aria-pressed': snapshot[field],
-          onClick: () => preferences.set(field, !snapshot[field]),
+          disabled: !snapshot.ready || snapshot.status === 'saving',
+          onClick: () => { void preferences.set(field, !snapshot[field]) },
         }, snapshot[field] ? t('settings.on') : t('settings.off')),
       ])),
   ])

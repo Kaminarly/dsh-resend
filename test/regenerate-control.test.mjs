@@ -1,5 +1,5 @@
 /**
- * The regenerate control on the last assistant reply (ticket 07; spec §7
+ * The regenerate control on effective assistant replies (ticket 07; spec §7
  * registration 3, §7.3, §9.2–§9.4).
  *
  * The host half of regenerate — the round's prompt text, the range to the tail
@@ -21,8 +21,8 @@
  *    the reason on hover, and never a post-click dialog;
  *  - one click is ONE `resend.apply` with `op: 'regenerate'` and no `text`
  *    member — the host re-sends the round's own prompt (§4.3);
- *  - earlier replies retain a disabled control explaining that only the last
- *    reply can be regenerated;
+ *  - earlier replies retain a disabled control under the default saved range
+ *    restriction, and become eligible when that independent restriction is off;
  *  - the registration is a brand-new list entry (`id: 'dsh-resend-regenerate'`)
  *    beside the shipped assistant-actions entries, through the shared boundary.
  */

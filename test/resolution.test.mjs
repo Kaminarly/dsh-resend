@@ -385,7 +385,7 @@ describe('op-specific refusals, in the order §4.3 and §4.4 fix', () => {
     expect(await codeOf({ session, request: { targetSeq: 3, op: 'edit', text: 'x' } })).toBe('not-user-message')
   })
 
-  it('regenerate aimed at anything but the last assistant reply', async () => {
+  it('rejects earlier replies under the default regenerate restriction and rejects non-assistant targets', async () => {
     const session = sessionFixture()
 
     expect(await codeOf({ session, request: { targetSeq: 1, op: 'regenerate' } })).toBe('not-last-reply')

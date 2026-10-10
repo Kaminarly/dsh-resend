@@ -34,6 +34,7 @@ const SPEC_ERROR_CODES = [
   'target-shadowed',
   'not-user-message',
   'not-last-reply',
+  'not-assistant-message',
   'blank-text',
   'no-text',
   'internal',
@@ -66,6 +67,7 @@ const INPUT_FAULT_CASES = {
  * The codes are §4.5's, and each case names the producer behind it.
  */
 const CASES = [
+  { code: 'not-assistant-message', why: 'a user message is never a regenerate target', request: { sessionId: SESSION_ID, targetSeq: 2, op: 'regenerate' } },
   { code: 'bad-request', why: 'an empty sessionId', request: { sessionId: '', targetSeq: 2, op: 'edit', text: 'x' } },
   { code: 'bad-request', why: 'a missing text for edit', request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit' } },
   INPUT_FAULT_CASES.badTarget,

@@ -9,6 +9,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpDir } from './helpers/dsh.mjs'
 import path from 'node:path'
 import { clientComposition } from './helpers/client.mjs'
+import { hostState } from './helpers/host.mjs'
 
 const resources = []
 afterEach(async () => {
@@ -50,6 +51,40 @@ function formsFixture(value = {}) {
 }
 
 describe('saved display preferences', () => {
+  it('persists the independent regenerate range through the installed host and a fresh page', async () => {
+    const h = await durable()
+    const first = await clientFor(h)
+    const page = clientHalf().exports
+    page.preferences.connect(first.forms)
+    expect(page.preferences.getSnapshot().restrictRegenerateToLastReply).toBe(true)
+    expect(await page.preferences.set('restrictRegenerateToLastReply', false)).toBe(true)
+    expect(await page.preferences.set('regenerateLastReply', false)).toBe(true)
+    const second = await clientFor(h)
+    const fresh = clientHalf().exports
+    fresh.preferences.connect(second.forms)
+    expect(fresh.preferences.getSnapshot()).toMatchObject({ restrictRegenerateToLastReply: false, regenerateLastReply: false, inlineEditorBeneathMessage: true })
+    expect(await fresh.preferences.set('regenerateLastReply', true)).toBe(true)
+    expect(fresh.preferences.getSnapshot().restrictRegenerateToLastReply).toBe(false)
+    expect(h.settings.describe()[0].value.restrictRegenerateToLastReply).toBe(false)
+  })
+  it('enforces the actual saved Profile rule through the direct operation service without remounting', async () => {
+    await mkdir(tmpDir, { recursive: true })
+    const home = await mkdtemp(path.join(tmpDir, 'saved-range-policy-'))
+    const state = hostState({ agent: 'delivering' })
+    const h = await settingsHost(home, 'range', state)
+    resources.push(h)
+    const client = await clientFor(h)
+    const page = clientHalf().exports
+    page.preferences.connect(client.forms)
+    const service = h.ctx.resend
+    const fiber = h.entry.fiber
+    const request = { sessionId: 'session-1', targetSeq: 1, op: 'regenerate' }
+    expect(await service.apply(request)).toEqual({ ok: false, error: { code: 'not-last-reply' } })
+    expect(await page.preferences.set('restrictRegenerateToLastReply', false)).toBe(true)
+    expect(h.entry.fiber === fiber).toBe(true)
+    expect((await service.apply(request)).ok).toBe(true)
+    expect(state.calls.followupInputs[0].content).toEqual([{ type: 'text', text: 'first prompt' }])
+  })
   it('does not let a delayed successful response overwrite a newer save from another page', async () => {
     const h = await durable()
     let release
@@ -95,7 +130,7 @@ describe('saved display preferences', () => {
       sessionId: 'session-1', node: nodes.get('actions'), t: composition.ctx.get('locale').bind('dsh-resend'),
       useChat: select => select({ nodes }), useSession: select => select({ running: false }),
       useInput: select => select({ phase: 'plain' }), inputActions: { setDraft: text => composition.record.draftWrites.push(text) },
-      ...registration.options.inject('session-1'),
+      ...(registration.options.inject?.('session-1') ?? {}),
     }
     const dom = await renderDom(createElement(registration.component, props))
     const button = label => [...dom.container.querySelectorAll('button')].find(button => button.getAttribute('aria-label') === label || button.textContent === label)
@@ -171,8 +206,9 @@ describe('saved display preferences', () => {
     expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false })
   })
 
-  it.each(['refused', 'committed-no-answer', 'unconfirmed'])(
-    'recovers authoritative state after %s and provides a usable retry', async (failure) => {
+  it.each(['regenerateLastReply', 'restrictRegenerateToLastReply'].flatMap(field =>
+    ['refused', 'committed-no-answer', 'unconfirmed'].map(failure => ({ field, failure }))))(
+    'recovers authoritative $field after $failure and provides a usable retry', async ({ field, failure }) => {
       const h = await durable()
       let failed = true
       let readFails = false
@@ -187,16 +223,16 @@ describe('saved display preferences', () => {
       })
       const page = clientHalf().exports
       page.preferences.connect(client.forms)
-      expect(await page.preferences.set('regenerateLastReply', false)).toBe(false)
+      expect(await page.preferences.set(field, false)).toBe(false)
       expect(page.preferences.getSnapshot()).toMatchObject(failure === 'unconfirmed'
         ? { ready: false, status: 'read-error' }
-        : { ready: true, status: 'save-error', regenerateLastReply: failure === 'refused' })
+        : { ready: true, status: 'save-error', [field]: failure === 'refused' })
       failed = false; readFails = false
       await page.preferences.retry()
       if (failure === 'unconfirmed') await page.preferences.retry()
-      expect(page.preferences.getSnapshot()).toMatchObject({ ready: true, regenerateLastReply: false })
+      expect(page.preferences.getSnapshot()).toMatchObject({ ready: true, [field]: false })
       expect(page.preferences.getSnapshot().status).toBe('ready')
-      expect(h.settings.describe()[0].value.regenerateLastReply).toBe(false)
+      expect(h.settings.describe()[0].value[field]).toBe(false)
     },
   )
   it('saves through the installed host and restores after both page refresh and host restart, isolating Profiles', async () => {
@@ -210,20 +246,21 @@ describe('saved display preferences', () => {
     expect(await page.preferences.set('inlineEditorBeneathMessage', false)).toBe(true)
     expect(await page.preferences.set('regenerateLastReply', false)).toBe(true)
     expect(h.entry.fiber).toBe(fiber)
-    expect(h.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: false, regenerateLastReply: false })
+    expect(h.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: true })
+    expect(await page.preferences.set('restrictRegenerateToLastReply', false)).toBe(true)
     await client.close()
     client = await settingsClientProvider(h)
     const refreshed = clientHalf().exports
     refreshed.preferences.connect(client.forms)
-    expect(refreshed.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false })
+    expect(refreshed.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false })
     await client.close(); await h.close()
     h = await settingsHost(home, 'first')
     client = await settingsClientProvider(h)
     const restarted = clientHalf().exports
     restarted.preferences.connect(client.forms)
-    expect(restarted.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false })
+    expect(restarted.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false })
     const other = await settingsHost(home, 'second')
-    expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true })
+    expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: true })
     await other.close(); await client.close(); await h.close()
   })
   it('exposes live host fields with independent defaults and keeps legal old values', () => {
@@ -231,6 +268,8 @@ describe('saved display preferences', () => {
     const parsed = resolveConfig(host, { inlineEditorBeneathMessage: false, regenerateLastReply: 'false' })
     expect(parsed.inlineEditorBeneathMessage.get()).toBe(false)
     expect(parsed.regenerateLastReply.get()).toBe(true)
+    expect(parsed.restrictRegenerateToLastReply.get()).toBe(true)
+    expect(resolveConfig(host, { restrictRegenerateToLastReply: false }).restrictRegenerateToLastReply.get()).toBe(false)
     expect(host.Config.dict.regenerateLastReply.meta.volatile).toBe(true)
   })
   it('loads authoritative values and updates a second page only after acceptance', async () => {

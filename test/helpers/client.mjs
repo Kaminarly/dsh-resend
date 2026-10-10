@@ -30,19 +30,29 @@ import { memoryConfigForms } from './preferences.mjs'
  * @returns `{ RecordingRemote, mounted, calls }` — the service class, the
  *   contributions it was asked to mount, and the requests it was asked to run.
  */
-export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'dsh-resend-edit-fixture-resend' } }] } = {}) {
+export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5, shadowedSeqs: [2, 3], resendMessageId: 'dsh-resend-edit-fixture-resend' } }], replyState = () => ({ assistantSeqs: [2, 6], lastReplySeq: 6 }) } = {}) {
   const mounted = []
   const calls = []
+
+  class RecordingResend extends Service {
+    constructor(ctx) {
+      super(ctx, 'remote.resend')
+    }
+
+    async apply(request) {
+      calls.push(request)
+      return results.length === 0 ? { ok: false, error: { code: 'agent-busy' } } : results[Math.min(calls.length - 1, results.length - 1)]
+    }
+
+    async conversation(request) {
+      return { ok: true, value: { ok: true, value: replyState(request) } }
+    }
+  }
 
   class RecordingRemote extends Service {
     constructor(ctx) {
       super(ctx, 'remote')
-      this.resend = {
-        apply: async (request) => {
-          calls.push(request)
-          return results[Math.min(calls.length - 1, results.length - 1)]
-        },
-      }
+      new RecordingResend(ctx)
     }
 
     $mount(contribution) {
@@ -183,10 +193,9 @@ function clientDoubles({ declared = true } = {}) {
  * @returns `{ ctx, record, mounted, calls }` — the context to activate the half
  *   in, what the doubles were asked for, and the Remote calls that were made.
  */
-export async function clientComposition({ results, conversation = 'events', declared = true, configForms } = {}) {
+export async function clientComposition({ results, conversation = 'events', declared = true, configForms, replyState, ctx = new Context() } = {}) {
   const { record, Slots, Locale, UiConversationFor, Sessions, Conversation } = clientDoubles({ declared })
-  const { RecordingRemote, mounted, calls } = recordingRemote(results === undefined ? {} : { results })
-  const ctx = new Context()
+  const { RecordingRemote, mounted, calls } = recordingRemote({ ...(results === undefined ? {} : { results }), replyState })
   await ctx.plugin(class extends Service {
     constructor(scope) {
       super(scope, 'configForms')
@@ -195,7 +204,7 @@ export async function clientComposition({ results, conversation = 'events', decl
       } : memoryConfigForms())
     }
   })
-  await ctx.plugin(RecordingRemote)
+  if (ctx.get('remote') === undefined) await ctx.plugin(RecordingRemote)
   await ctx.plugin(Slots)
   await ctx.plugin(Locale)
   await ctx.plugin(UiConversationFor(conversation))

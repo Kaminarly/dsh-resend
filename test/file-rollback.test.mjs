@@ -304,7 +304,7 @@ it('retains the private record across plugin restart without publishing contents
   expect(result.value).toEqual(preview.value)
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('before restart 中文')
   expect(JSON.stringify(preview)).not.toContain('before restart')
-  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback'])
+  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback', 'conversation'])
   const forged = await dispatchToHost(restarted, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase: 'preview', recordId: 'secret' } })
   expect(forged.ok).toBe(false)
 })

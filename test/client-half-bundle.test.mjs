@@ -122,6 +122,7 @@ describe('the Remote mount', () => {
     expect(mounted[0].descriptors.map((descriptor) => `${descriptor.service} ${descriptor.namespace}/${descriptor.method}`)).toEqual([
       'resend resend/apply',
       'resend resend/rollback',
+      'resend resend/conversation',
     ])
     expect(face.remoteMountState().status).toBe('mounted')
   })

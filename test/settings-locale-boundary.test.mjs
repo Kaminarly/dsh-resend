@@ -145,10 +145,10 @@ const SLOT_PROPS = Object.freeze({
 })
 
 /** One button in a rendered tree, by its visible text; `null` when absent. */
-const buttonIn = (container, text) => [...container.querySelectorAll('button')].find((button) => button.textContent === text) ?? null
+const buttonIn = (container, text) => [...container.querySelectorAll('button')].find((button) => button.textContent === text || button.getAttribute('aria-label') === text) ?? null
 
 /** One settings toggle, by its field. */
-const toggleIn = (container, field) => container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
+const toggleIn = (container, field) => container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
 
 describe('registration 4: editable preferences and fixed hiding', () => {
   it('registers the settings row under its own id, with a thunk label and no owner props', async () => {
@@ -173,10 +173,10 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     try {
       // Every preference starts on.
       expect(toggleIn(settingsDom.container, 'hideReplacedMessages')).toBeNull()
-      expect(settingsDom.container.querySelectorAll('.dsh-resend-settings-toggle')).toHaveLength(2)
-      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply']) {
-        const toggle = settingsDom.container.querySelector(`button.dsh-resend-settings-toggle[data-field="${field}"]`)
-        expect(toggle?.getAttribute('aria-pressed')).toBe('true')
+      expect(settingsDom.container.querySelectorAll('[role=switch]')).toHaveLength(3)
+      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply']) {
+        const toggle = settingsDom.container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
+        expect(toggle?.getAttribute('aria-checked')).toBe('true')
       }
 
       // Send one edit so this page has a record: seqs 2 and 3 are shadowed.
@@ -304,6 +304,8 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     expect(Object.keys(entry.dictionaries).sort()).toEqual(['en', 'zh'])
     for (const key of [
       'settings.heading', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
+      'settings.restrictRegenerateToLastReply', 'settings.regenerateRangeDescription',
+      'row.conversationUnavailable', 'operation.error.not-assistant-message',
       'settings.loading', 'settings.saving', 'settings.read-error', 'settings.save-error', 'settings.retry',
       'settings.on', 'settings.off',
       'panel.error.inlineEditor', 'panel.error.hideRules', 'panel.error.settings',

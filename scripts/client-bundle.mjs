@@ -59,6 +59,11 @@ const require_ = createRequire(new URL('../package.json', import.meta.url))
 export const MODULE_TABLE = Object.freeze({
   react: require_('react'),
   '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
+    Button: require_('react').forwardRef(({ variant, size, icon, children, ...props }, ref) => require_('react').createElement('button', { ...props, ref, 'data-variant': variant }, icon, children)),
+    Tooltip: ({ children }) => children,
+    Switch: ({ checked, onChange, label, className, disabled }) => require_('react').createElement('button', {
+      type: 'button', role: 'switch', className, disabled, 'aria-label': label, 'aria-checked': checked, onClick: () => { if (!disabled) onChange(!checked) },
+    }),
     IconCloseOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'close-outline', ...props }),
     IconEditOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'edit-outline', ...props }),
     IconPaperPlaneOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'paper-plane-outline', ...props }),

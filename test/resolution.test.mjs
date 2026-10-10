@@ -405,13 +405,13 @@ describe('op-specific refusals, in the order §4.3 and §4.4 fix', () => {
 
     expect(await codeOf({ session, request: { targetSeq: 1, op: 'regenerate' } })).toBe('not-last-reply')
     // A user message is not a reply either.
-    expect(await codeOf({ session, request: { targetSeq: 2, op: 'regenerate' } })).toBe('not-last-reply')
+    expect(await codeOf({ session, request: { targetSeq: 2, op: 'regenerate' } })).toBe('not-assistant-message')
   })
 
   it('regenerate is allowed on the surviving reply after a rewind shadowed a later round', async () => {
     const { session, carrierSeq } = rewoundFixture()
     // The carrier is not an assistant reply, so seq 1 is still the last one.
-    expect(await codeOf({ session, request: { targetSeq: carrierSeq, op: 'regenerate' } })).toBe('not-last-reply')
+    expect(await codeOf({ session, request: { targetSeq: carrierSeq, op: 'regenerate' } })).toBe('not-assistant-message')
 
     const { result } = await resolve({ session, request: { targetSeq: 1, op: 'regenerate' } })
     expect(result.ok).toBe(true)

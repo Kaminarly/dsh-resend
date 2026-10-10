@@ -9,7 +9,7 @@ import { rootDir } from './dsh.mjs'
 import vm from 'node:vm'
 
 /** Actual installed SettingsForms, ConfigEditor, Loader and root Include, over disposable Profiles. */
-export async function settingsHost(home, name) {
+export async function settingsHost(home, name, state) {
   const app = resolveHostApp()
   if (!app || app.kind !== 'dir') throw new Error('An unpacked DSH host is required for the durable settings test')
   const load = (pkg) => import(pathToFileURL(path.join(app.root, 'node_modules', pkg, 'lib/index.js')).href)
@@ -27,7 +27,11 @@ export async function settingsHost(home, name) {
   ctx.logger.exporter({ levels: { default: 0 }, export() {} })
   await ctx.plugin(Loader)
   await ctx.plugin(TypertRegistry)
-  await provideStandInServices(ctx, host, ['typert'])
+  if (state) {
+    const { plugHostDoubles } = await import('./host.mjs')
+    await plugHostDoubles(ctx, state)
+  }
+  await provideStandInServices(ctx, host, host.inject.filter(name => ctx.get(name) !== undefined))
   const profile = { name, home, dir, patchPath: path.join(dir, 'cordis.patch.yml'), installAnchor: path.join(app.root, 'package.json'), overlays: [] }
   // Keep the standard native YAML reader for the user's layer and the real
   // root Include for reconciliation; only the base bundle list is minimal.
@@ -39,8 +43,15 @@ export async function settingsHost(home, name) {
   await ctx.plugin(class extends Service {
     constructor(scope) { super(scope, 'profileContext'); Object.assign(this, profile) }
   })
-  await mountRootInclude(ctx, base, readProfilePatches('dsh', profile))
-  await ctx.get('loader').await()
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    await mountRootInclude(ctx, base, readProfilePatches('dsh', profile))
+    await ctx.get('loader').await()
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+  }
   await ctx.plugin(ConfigEditor)
   await ctx.plugin(SettingsForms)
   await ctx.get('loader').await()

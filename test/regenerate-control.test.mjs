@@ -14,27 +14,105 @@
  *  - the companion Definition — one invisible chat node per assistant reply,
  *    whose `start` is PURE (the assembler replays it after a window fill) and
  *    whose only neighbourhood is `previous(kind)`;
- *  - the "last reply" verdict, which is a CLIENT question answered by adjacency
- *    alone — a reply is last when no other reply's `prevSeq` points at it — and
- *    must survive a window fill that evicted its predecessors;
+ *  - the "last reply" verdict comes from the Host's complete effective surface;
+ *    partial history windows and paging never promote an older reply;
  *  - the four greyed-out refusal states (§9.3): streaming, already-shadowed,
  *    image-only prompt, off-surface target — each disabled, not clickable, with
  *    the reason on hover, and never a post-click dialog;
  *  - one click is ONE `resend.apply` with `op: 'regenerate'` and no `text`
  *    member — the host re-sends the round's own prompt (§4.3);
- *  - the control appears ONLY on the last reply; every other reply renders
- *    nothing;
+ *  - earlier replies retain a disabled control explaining that only the last
+ *    reply can be regenerated;
  *  - the registration is a brand-new list entry (`id: 'dsh-resend-regenerate'`)
  *    beside the shipped assistant-actions entries, through the shared boundary.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { mount, renderDom } from './helpers/render.mjs'
 import { clientComposition } from './helpers/client.mjs'
+import { installedConversationAssembler, assemblerChatSnapshot, installedChatDefinitions } from './helpers/conversation-assembler.mjs'
+import { resolveHostApp } from '../scripts/host-app.mjs'
+import { memoryConfigForms } from './helpers/preferences.mjs'
+import { hostComposition, dispatchToHost, clientComposition as gatewayClient } from './helpers/gateway.mjs'
+import { measuredFixture, hostState, appendUser, appendReply, logOf } from './helpers/host.mjs'
 
 const face = clientHalf().exports
 const DEFINITION = face.ASSISTANT_ACTIONS_DEFINITION
+
+it.skipIf(!resolveHostApp())('real host assembly preserves whole-conversation eligibility across history paging, live messages and rewind', async () => {
+  const session = measuredFixture()
+  const events = logOf(session)
+  const host = await hostComposition({ host: hostState({ session, agent: 'deaf' }) })
+  const client = await gatewayClient((endpoint, payload, signal) => dispatchToHost(host, endpoint, payload.args, signal))
+  const composition = await clientComposition({ ctx: client })
+  const page = clientHalf().exports
+  const fiber = composition.ctx.plugin(page)
+  await fiber
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const assembler = installedConversationAssembler([...installedChatDefinitions({ turnTail: true }), ...composition.record.definitions])
+  const registration = composition.record.mounts.find(entry => entry.options.id === 'dsh-resend-regenerate')
+  let snapshot
+  const assembledControls = () => {
+    const tails = [...snapshot.nodes.values()].filter(node => node.kind === 'turn-tail' && node.data.closing?.finalNode.messageId !== undefined)
+    return createElement('div', null, tails.map(tail => createElement('div', {
+      key: tail.key, 'data-reply-seq': tail.data.closing.finalNode.seq,
+    }, createElement(registration.component, {
+      sessionId: session.id, messageId: tail.data.closing.finalNode.messageId,
+      useChat: select => select(snapshot), useSession: select => select({ running: false }),
+    }))))
+  }
+  // An older-only window must not promote its apparent tail to the last reply.
+  assembler.replaceWindow(events.slice(0, 6).map(event => ({ type: 'durable', event })), true)
+  snapshot = assemblerChatSnapshot(assembler)
+  const dom = await renderDom(assembledControls())
+  const button = seq => dom.container.querySelector('[data-reply-seq="' + seq + '"] button')
+  try {
+    expect(button(3)).not.toBeNull()
+    expect(button(3).disabled).toBe(true)
+    assembler.replaceWindow(events.slice(6).map(event => ({ type: 'durable', event })), true)
+    snapshot = assemblerChatSnapshot(assembler)
+    await dom.render(assembledControls())
+    expect(button(9)).not.toBeNull()
+    expect(button(9).disabled).toBe(false)
+    assembler.prepend(events.slice(0, 6).map(event => ({ type: 'durable', event })), false)
+    snapshot = assemblerChatSnapshot(assembler)
+    await dom.render(assembledControls())
+    expect([...dom.container.querySelectorAll('[data-reply-seq]')].map(node => Number(node.dataset.replySeq)).sort((a, b) => a - b)).toEqual([3, 9])
+    expect(button(3).disabled).toBe(true)
+    // A following human question does not change the last assistant record.
+    const nextUser = appendUser(session, { id: 'next-human', text: '下一个问题' })
+    assembler.append({ type: 'durable', event: nextUser })
+    snapshot = assemblerChatSnapshot(assembler)
+    await dom.render(assembledControls())
+    expect(button(9).disabled).toBe(false)
+    session.append('turn/start', { turn: 3 })
+    session.append('step/start', { turn: 3, step: 1 })
+    appendReply(session, { id: 'latest-assistant', text: '最新回复', turn: 3 })
+    session.append('step/end', { turn: 3, step: 1 })
+    session.append('turn/end', { turn: 3, reason: { kind: 'completed' } })
+    for (const event of logOf(session).slice(13)) assembler.append({ type: 'durable', event })
+    snapshot = assemblerChatSnapshot(assembler)
+    await dom.render(assembledControls())
+    expect(button(9).disabled).toBe(true)
+    expect(button(15).disabled).toBe(false)
+    // A replacement removes the later replies; the surviving earlier reply is last again.
+    expect((await host.ctx.resend.apply({ sessionId: session.id, targetSeq: 6, op: 'edit', text: '修改后的问题' })).ok).toBe(true)
+    for (const event of logOf(session).slice(18)) assembler.append({ type: 'durable', event })
+    snapshot = assemblerChatSnapshot(assembler)
+    await dom.render(assembledControls())
+    expect(button(3).disabled).toBe(false)
+    expect(button(9).disabled).toBe(true)
+    expect(button(15).disabled).toBe(true)
+    // The actual restored control also sends through the real Gateway, whose
+    // transport envelope must be unwrapped before recording the rewind.
+    await dom.click(button(3))
+    await dom.act(async () => { await vi.waitFor(() => expect(host.host.calls.followups).toBe(2), { interval: 5 }) })
+    expect(dom.container.querySelector('[role="alert"]')).toBeNull()
+    expect(host.host.calls.followupInputs.at(-1).content).toEqual([{ type: 'text', text: 'first prompt' }])
+    expect(logOf(session).filter(event => event.type === 'compaction/prune')).toHaveLength(2)
+  } finally { await dom.cleanup(); await client.fiber.dispose(); await host.ctx.fiber.dispose() }
+})
 
 // ── Log fixtures: the client sees events, and that is all it may read ──────
 
@@ -53,20 +131,67 @@ const assistantMessage = (seq) => ({
   type: 'assistant/message',
   seq,
   surfaceOp: 'append',
-  data: { turn: 1, step: 1, stream: 'idle', message: { id: 'reply-' + seq } },
+  data: { turn: 1, step: 1, stream: [], message: { id: 'reply-' + seq, role: 'assistant', content: [{ type: 'text', text: '回复 ' + seq }] } },
 })
 
-/** The assembler's neighbourhood, as a Definition's `start` receives it. */
-const contextAt = (events, index) => ({
-  previous: (kind) => {
-    for (let i = index - 1; i >= 0; i -= 1) {
-      if (events[i].type === kind) return events[i]
+/** The real start signature: the third argument reads prior Definition contexts. */
+function startAt(events, index) {
+  const contexts = []
+  for (const event of events.slice(0, index + 1)) {
+    for (const definition of [face.USER_ACTIONS_DEFINITION, DEFINITION]) {
+      const matched = definition.match(event)
+      if (matched === null) continue
+      const reader = { previous: (kind) => contexts.findLast((entry) => entry.kind === kind && entry.startSeq < event.seq) }
+      const match = { event, role: matched.role }
+      const context = { kind: definition.kind, startSeq: event.seq, matches: [match] }
+      context.state = definition.start(context, match, reader)
+      contexts.push(context)
     }
-    return undefined
-  },
-})
+  }
+  return contexts.findLast((entry) => entry.kind === DEFINITION.kind)?.state
+}
 
-const startAt = (events, index) => DEFINITION.start(contextAt(events, index), { event: events[index] })
+it.skipIf(!resolveHostApp())('the installed assembler disables older replies and keeps only the latest reply enabled', async () => {
+  let lastReplySeq = 3
+  const composition = await clientComposition({ replyState: () => ({ assistantSeqs: [1, 3, ...(lastReplySeq === 5 ? [5] : [])], lastReplySeq }) })
+  const fiber = composition.ctx.plugin(face)
+  let dom
+  try {
+    await fiber
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const assembler = installedConversationAssembler(composition.record.definitions)
+    expect(assembler).toBeDefined()
+    const events = [userMessage(0, { text: '第一个问题' }), assistantMessage(1), userMessage(2, { text: '第二个问题' }), assistantMessage(3)]
+    assembler.replaceWindow(events.map((event) => ({ type: 'durable', event })), false)
+    const snapshot = assemblerChatSnapshot(assembler)
+    expect(face.companionStates(snapshot).map(({ seq, prevSeq, prompt }) => ({ seq, prevSeq, prompt }))).toEqual([
+      { seq: 1, prevSeq: null, prompt: { seq: 0, isAppend: true, sourceKind: 'user', hasText: true } },
+      { seq: 3, prevSeq: 1, prompt: { seq: 2, isAppend: true, sourceKind: 'user', hasText: true } },
+    ])
+    composition.ctx.locale.active = 'zh'
+    const t = composition.ctx.locale.bind('dsh-resend')
+    const registration = composition.record.mounts.find((entry) => entry.options.id === 'dsh-resend-regenerate')
+    const props = { sessionId: 'session-1', t, useChat: (select) => select(snapshot), useSession: (select) => select({ running: false }) }
+    dom = await renderDom(createElement(registration.component, { ...props, messageId: 'reply-1' }))
+    const button = dom.container.querySelector('button')
+    expect(button.disabled).toBe(true)
+    expect(button.parentElement.getAttribute('aria-label')).toBe('只能重新生成最后一条回复')
+    await dom.click(button)
+    expect(composition.calls).toHaveLength(0)
+    await dom.render(createElement(registration.component, { ...props, messageId: 'reply-3' }))
+    expect(dom.container.querySelector('button').disabled).toBe(false)
+    assembler.append({ type: 'durable', event: userMessage(4, { text: '第三个问题' }) })
+    assembler.append({ type: 'durable', event: assistantMessage(5) })
+    lastReplySeq = 5
+    const updatedSnapshot = assemblerChatSnapshot(assembler)
+    const updated = { ...props, useChat: (select) => select(updatedSnapshot) }
+    await dom.render(createElement(registration.component, { ...updated, messageId: 'reply-3' }))
+    expect(dom.container.querySelector('button').disabled).toBe(true)
+    expect(dom.container.querySelector('button').parentElement.getAttribute('aria-label')).toBe('只能重新生成最后一条回复')
+    await dom.render(createElement(registration.component, { ...updated, messageId: 'reply-5' }))
+    expect(dom.container.querySelector('button').disabled).toBe(false)
+  } finally { await dom?.cleanup(); await fiber.dispose() }
+})
 
 describe('the companion Definition (§7.3)', () => {
   it('matches append assistant messages and refuses every neighbour', () => {
@@ -87,8 +212,8 @@ describe('the companion Definition (§7.3)', () => {
     ]
 
     // The whole state, and nothing the control does not read: this reply's seq
-    // and durable id, the PREVIOUS reply's seq (the only "am I last?" evidence a
-    // client may keep), and the nearest prompt's eligibility facts.
+    // and durable id, the PREVIOUS reply's seq (neighbour context only), and
+    // the nearest prompt's eligibility facts.
     expect(startAt(full, 1)).toEqual({
       seq: 2, id: 'reply-2', prevSeq: null,
       prompt: { seq: 1, isAppend: true, sourceKind: 'user', hasText: true },
@@ -129,9 +254,10 @@ describe('the companion Definition (§7.3)', () => {
       userMessage(5, { text: 'third prompt' }), assistantMessage(6),
     ]
 
-    const verdict = (states) => states.filter((state) => face.isLastReply(state, states)).map((state) => state.seq)
+    const effective = { ready: true, assistantSeqs: [2, 4, 6], lastReplySeq: 6 }
+    const verdict = (states) => states.filter((state) => face.isLastReply(state, effective)).map((state) => state.seq)
 
-    // The whole window: one last reply, and the verdict is the adjacency itself.
+    // The whole window: one last reply, established by the Host's saved view.
     const fullStates = [startAt(full, 1), startAt(full, 3), startAt(full, 5)]
     expect(verdict(fullStates)).toEqual([6])
 
@@ -141,8 +267,8 @@ describe('the companion Definition (§7.3)', () => {
     const filled = full.slice(2)
     const replayed = [startAt(filled, 1), startAt(filled, 3)]
     expect(verdict(replayed)).toEqual([6])
-    expect(face.isLastReply(replayed[0], replayed)).toBe(false)
-    expect(face.isLastReply(replayed[1], replayed)).toBe(true)
+    expect(face.isLastReply(replayed[0], effective)).toBe(false)
+    expect(face.isLastReply(replayed[1], effective)).toBe(true)
 
     // Purity itself: the same replay, twice, from the same inputs — identical
     // state, the event window untouched.
@@ -194,25 +320,63 @@ describe('the client-side refusal predictions (§9.3)', () => {
     expect(face.promptRefusal(state({ seq: 5, isAppend: true, sourceKind: 'steering', hasText: true }))).toBeUndefined()
   })
 
-  it('decides "last" by adjacency: a reply is last when no reply points at it', () => {
+  it('uses the whole effective conversation even when a loaded window has only one reply', () => {
     const chain = [
       { seq: 2, id: 'reply-2', prevSeq: null },
       { seq: 4, id: 'reply-4', prevSeq: 2 },
       { seq: 6, id: 'reply-6', prevSeq: 4 },
     ]
-    expect(face.isLastReply(chain[0], chain)).toBe(false)
-    expect(face.isLastReply(chain[1], chain)).toBe(false)
-    expect(face.isLastReply(chain[2], chain)).toBe(true)
+    const effective = { ready: true, assistantSeqs: [2, 4, 6], lastReplySeq: 6 }
+    expect(face.isLastReply(chain[0], effective)).toBe(false)
+    expect(face.isLastReply(chain[1], effective)).toBe(false)
+    expect(face.isLastReply(chain[2], effective)).toBe(true)
 
-    // A lone reply is its own last. And a shadowed reply still ANSWERS to the
-    // verdict — its companion survives shadowing (`append` forever), so a
-    // shadowed last reply is where the greyed control goes, not a reply that no
-    // longer exists.
-    expect(face.isLastReply(chain[2], [chain[2]])).toBe(true)
+    // A lone loaded reply still needs the Host's last-reply address. Shadowed
+    // companions survive in Chat, so their presence cannot establish eligibility.
+    expect(face.isLastReply(chain[2], effective)).toBe(true)
+    expect(face.isLastReply(chain[0], effective)).toBe(false)
+    expect(face.isLastReply(chain[2], undefined)).toBe(false)
   })
 })
 
 describe('the registered regenerate control (§9.2, §9.3)', () => {
+  it.each([
+    ['not-last-reply', '只能重新生成最后一条回复，请选择最后一条回复。'],
+    ['not-assistant-message', '目标不是可重新生成的助手回复，请重新选择。'],
+  ])('localizes the %s rejection in the registered control', async (code, text) => {
+    const { cleanup } = await rendered({ locale: 'zh', results: [{ ok: false, error: { code } }] })
+    try {
+      await cleanup.click(cleanup.__container.querySelector('button'))
+      expect(cleanup.__container.querySelector('[role="alert"]').textContent).toContain(text)
+    } finally { await cleanup() }
+  })
+  it('enables an earlier effective reply only after saving the range off, while keeping the consequence text visible', async () => {
+    const configForms = memoryConfigForms()
+    const composition = await clientComposition({ configForms })
+    const page = clientHalf().exports
+    const fiber = composition.ctx.plugin(page)
+    await fiber
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const registration = composition.record.mounts.find(entry => entry.options.id === 'dsh-resend-regenerate')
+    const settings = composition.record.mounts.find(entry => entry.options.id === 'dsh-resend-preferences')
+    composition.ctx.get('locale').active = 'zh'
+    const snapshot = { nodes: new Map([['earlier', companionNode(2, null)]]) }
+    const props = { sessionId: 'session-1', messageId: 'reply-2', useChat: select => select(snapshot), useSession: select => select({ running: false }) }
+    const dom = await renderDom(createElement(registration.component, props))
+    const settingsDom = await renderDom(createElement(settings.component))
+    try {
+      expect(dom.container.querySelector('button').disabled).toBe(true)
+      const text = '关闭后可重新生成较早回复。操作将从该回复对应的问题重新续接，其后的对话将退出当前上下文，原始记录仍保留。'
+      expect(settingsDom.container.textContent).toContain(text)
+      const toggle = settingsDom.container.querySelector('[data-field="restrictRegenerateToLastReply"] button')
+      expect(toggle).not.toBeNull()
+      await settingsDom.click(toggle)
+      expect(settingsDom.container.textContent).toContain(text)
+      expect(dom.container.querySelector('button').disabled).toBe(false)
+      await dom.click(dom.container.querySelector('button'))
+      expect(composition.calls).toEqual([{ sessionId: 'session-1', targetSeq: 2, op: 'regenerate' }])
+    } finally { await dom.cleanup(); await settingsDom.cleanup(); await fiber.dispose() }
+  })
   /** One activated composition, with the assistant-actions entry found by id. */
   async function activated(options = {}) {
     const composition = await clientComposition(options)
@@ -241,12 +405,20 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
     expect(record.definitions.some((definition) => definition.kind === 'dsh-resend-regenerate')).toBe(true)
   })
 
-  it('renders nothing at all on a reply that is not the last', async () => {
-    const { registration, snapshot, cleanup } = await rendered({ replySeqs: [2, 6], messageId: 'reply-2' })
+  it.each([
+    ['zh', '只能重新生成最后一条回复'],
+    ['en', 'Only the last reply can be regenerated'],
+  ])('keeps an earlier reply disabled with a localized reason (%s)', async (locale, reason) => {
+    const { calls, record, snapshot, cleanup } = await rendered({ replySeqs: [2, 6], messageId: 'reply-2', locale })
     try {
-      // Not the last reply: no chip, no reason, nothing the strip can grey out.
-      expect(snapshot.container.querySelector('button')).toBeNull()
-      expect(snapshot.container.querySelector('[data-icon="refresh-outline"]')).toBeNull()
+      const button = snapshot.container.querySelector('button')
+      expect(button.disabled).toBe(true)
+      expect(button.querySelector('[data-icon="refresh-outline"]')).not.toBeNull()
+      expect(button.parentElement.getAttribute('aria-label')).toBe(reason)
+      expect(button.parentElement.tabIndex).toBe(0)
+      await cleanup.click(button)
+      expect(calls).toHaveLength(0)
+      expect(record.missingKeys).toEqual([])
     } finally {
       await cleanup()
     }
@@ -259,7 +431,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
       expect(chip).toHaveLength(1)
       expect(chip[0].disabled).toBe(false)
       expect(chip[0].querySelector('[data-icon="refresh-outline"]')).not.toBeNull()
-      expect(chip[0].textContent).toContain('Regenerate')
+      expect(chip[0].getAttribute('aria-label')).toContain('Regenerate')
 
       // One click: ONE `resend.apply`, `op: 'regenerate'`, and no `text` member —
       // the host re-sends the round's own prompt, not anything the client typed.
@@ -291,7 +463,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
       const chip = cleanup.__container.querySelector('button')
       expect(chip).not.toBeNull()
       expect(chip.disabled).toBe(true)
-      expect(chip.title).toBe(reasonText)
+      expect(chip.parentElement.getAttribute('aria-label')).toBe(reasonText)
       await cleanup.click(chip)
       expect(calls).toHaveLength(0)
       // §9.3: a refusal is the greyed control, never an error dialog after the
@@ -301,6 +473,47 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
     } finally {
       await cleanup()
     }
+  })
+
+  it.each([
+    [{ running: true }, 'row.stopFirst'],
+    [{ shadow: [6] }, 'row.shadowed'],
+    [{ prompt: { seq: 5, isAppend: true, sourceKind: 'user', hasText: false } }, 'row.imageOnly'],
+    [{ companion: false }, 'row.offSurface'],
+  ])('keeps original protections when the range is disabled: %s', async (options) => {
+    const { calls, cleanup } = await rendered({ ...options, restrict: false })
+    try {
+      const button = cleanup.__container.querySelector('button')
+      expect(button.disabled).toBe(true)
+      await cleanup.click(button)
+      expect(calls).toEqual([])
+    } finally { await cleanup() }
+  })
+
+  it('withholds both controls on an unreadable conversation and recovers through retry', async () => {
+    let readable = false
+    const page = clientHalf().exports
+    const composition = await clientComposition({ replyState: () => {
+      if (!readable) throw new Error('failed to read effective conversation')
+      return { assistantSeqs: [2, 6], lastReplySeq: 6 }
+    } })
+    const fiber = composition.ctx.plugin(page)
+    await fiber
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const registration = composition.record.mounts.find(entry => entry.options.id === 'dsh-resend-regenerate')
+    const snapshot = { nodes: new Map([['companion', companionNode(6, null)]]) }
+    const dom = await renderDom(createElement(registration.component, { sessionId: 'session-1', messageId: 'reply-6',
+      t: composition.ctx.get('locale').bind('dsh-resend'), useChat: select => select(snapshot) }))
+    try {
+      expect(dom.container.querySelector('button').disabled).toBe(true)
+      expect(dom.container.textContent).not.toContain('failed to read effective conversation')
+      const retry = dom.container.querySelector('button[aria-label="Retry"]')
+      expect(retry).not.toBeNull()
+      readable = true
+      await dom.click(retry)
+      expect(dom.container.querySelector('button').disabled).toBe(false)
+      expect(composition.calls).toEqual([])
+    } finally { await dom.cleanup(); await fiber.dispose() }
   })
 
   it('answers a host refusal with inline text, not a dialog (§9.3, §4.4)', async () => {
@@ -327,13 +540,13 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
 
   it('speaks exactly one language — never both at once (§10)', async () => {
     const { registration, cleanup } = await rendered({ replySeqs: [2, 6], messageId: 'reply-6', locale: 'zh', results: [] })
-    const zhText = cleanup.__container.querySelector('button').textContent
+    const zhText = cleanup.__container.querySelector('button').getAttribute('aria-label')
     expect(zhText).toContain('重新生成')
     expect(zhText).not.toContain('Regenerate')
     await cleanup()
 
     const en = await rendered({ replySeqs: [2, 6], messageId: 'reply-6', locale: 'en', results: [] })
-    const enText = en.cleanup.__container.querySelector('button').textContent
+    const enText = en.cleanup.__container.querySelector('button').getAttribute('aria-label')
     expect(enText).toContain('Regenerate')
     expect(enText).not.toContain('重新生成')
     await en.cleanup()
@@ -341,6 +554,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
 
   it('is contained by the shared boundary like every other surface (§7.4)', async () => {
     const throwing = {
+      conversationFor() { throw new Error('this surface read a path that was permanently undefined') },
       subscribe() {
         throw new Error('this surface read a path that was permanently undefined')
       },
@@ -390,7 +604,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
  */
 async function rendered(options) {
   const { replySeqs = [6], shadow = [], companion = true, prompt, results, locale = 'en', running = false, messageId } = options
-  const composition = await clientComposition({ results })
+  const composition = await clientComposition({ results, configForms: memoryConfigForms({ restrictRegenerateToLastReply: options.restrict !== false }) })
   await composition.ctx.plugin(face)
   await new Promise((resolve) => setTimeout(resolve, 20))
   const registration = composition.record.mounts.find((entry) => entry.options.name === 'conversation.chat.assistant-actions')

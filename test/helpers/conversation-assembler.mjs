@@ -24,7 +24,7 @@ export function assemblerChatSnapshot(assembler) {
 }
 
 /** The installed host's message, assistant and tool Definitions, without its UI. */
-export function installedChatDefinitions() {
+export function installedChatDefinitions({ turnTail = false } = {}) {
   const app = resolveHostApp()
   if (!app) return undefined
   try {
@@ -36,12 +36,17 @@ export function installedChatDefinitions() {
       '../../core/session/lib/types/surface.js',
       'lib/types/client/conversation-nodes/message.js',
       'lib/types/client/conversation-nodes/tool.js',
+      ...(turnTail ? [
+        '../../llm/llm/lib/types/assistant-stream.js',
+        '../../llm/token-meter/lib/types/turn-usage.js',
+        'lib/types/client/conversation-nodes/turn-tail.js',
+      ] : []),
     ].map((name) => {
       const start = source.indexOf('//#region ' + name)
       const end = source.indexOf('//#endregion', start)
       if (start < 0 || end < start) throw new Error('Installed Chat Definition region changed: ' + name)
       return source.slice(start, end)
     })
-    return vm.runInNewContext(regions.join('\n') + '\n[messageDefinition, assistantDefinition, toolDefinition]')
+    return vm.runInNewContext(regions.join('\n') + '\n[messageDefinition, assistantDefinition, toolDefinition' + (turnTail ? ', turnTailDefinition' : '') + ']')
   } finally { app.close?.() }
 }

@@ -45,7 +45,7 @@ export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5,
     }
 
     async conversation(request) {
-      return { ok: true, value: { ok: true, value: replyState(request) } }
+      return { ok: true, value: { ok: true, value: { userSeqs: [0, 2], lastUserSeq: 2, ...replyState(request) } } }
     }
   }
 

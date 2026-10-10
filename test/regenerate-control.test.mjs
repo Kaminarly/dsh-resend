@@ -43,7 +43,7 @@ const DEFINITION = face.ASSISTANT_ACTIONS_DEFINITION
 it.skipIf(!resolveHostApp())('real host assembly preserves whole-conversation eligibility across history paging, live messages and rewind', async () => {
   const session = measuredFixture()
   const events = logOf(session)
-  const host = await hostComposition({ host: hostState({ session, agent: 'deaf' }) })
+  const host = await hostComposition({ host: hostState({ session, agent: 'deaf' }), config: { restrictEditToLastUserMessage: false } })
   const client = await gatewayClient((endpoint, payload, signal) => dispatchToHost(host, endpoint, payload.args, signal))
   const composition = await clientComposition({ ctx: client })
   const page = clientHalf().exports

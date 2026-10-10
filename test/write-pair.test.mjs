@@ -167,9 +167,9 @@ async function writeOn(session, request, { state = {}, plan: override, traceText
 }
 
 /** Dispatch one `resend.apply` through the real Gateway. */
-async function applyThroughGateway(state = {}, fixture, request) {
+async function applyThroughGateway(state = {}, fixture, request, config) {
   const session = fixture ?? sessionFixture()
-  const host = await hostComposition({ host: hostState({ session, ...state }) })
+  const host = await hostComposition({ host: hostState({ session, ...state }), config })
   const wire = await dispatchToHost(host, 'resend/apply', { request: { sessionId: SESSION_ID, ...request } })
   expect(wire.ok, `the boundary refused the call: ${JSON.stringify(wire.error)}`).toBe(true)
   return { envelope: wire.value, host, session }
@@ -236,7 +236,7 @@ describe('the pair is validated before the first append, and no seq is ever inve
     // Three surface nodes in the range [7, 4, 5]; the plan cites only its ends,
     // which passes this plugin's own contract and is refused by the host's fold —
     // exactly the omission that makes a session unloadable (§5.4).
-    const { result, host } = await writeOn(session, { targetSeq: 7, op: 'edit', text: 'edited again' }, {
+    const { result, host } = await writeOn(session, { targetSeq: 4, op: 'edit', text: 'edited again' }, {
       plan: { op: 'edit', targetSeq: 7, rangeStartSeq: 7, endSeq: 5, shadowedSeqs: [7, 5], resendText: 'edited again' },
     })
 
@@ -383,11 +383,13 @@ describe('adjacency and citation (§5.4, §13.1 #3)', () => {
 })
 
 describe('a numerically descending range is accepted and written unchanged (§13.1 #6)', () => {
-  it('rewinds the carrier itself and reloads cold from the written log', async () => {
+  it('the low-level writer accepts a descending replacement plan and reloads cold', async () => {
     const { session, carrierSeq } = middleRewoundFixture()
     expect(session.surface.nodes).toEqual([0, 1, carrierSeq, 4, 5])
 
-    const { result } = await writeOn(session, { targetSeq: carrierSeq, op: 'edit', text: 'edited again' })
+    const { result } = await writeOn(session, { targetSeq: 4, op: 'edit', text: 'edited again' }, {
+      plan: { op: 'edit', targetSeq: carrierSeq, rangeStartSeq: carrierSeq, endSeq: 5, shadowedSeqs: [carrierSeq, 4, 5], resendText: 'edited again' },
+    })
     const { log, audit, carrier } = pairAtEnd(session)
     const keys = runtimeEndpointKeys()
 
@@ -395,7 +397,7 @@ describe('a numerically descending range is accepted and written unchanged (§13
     expect(carrier.surfaceOp[keys.start]).toBeGreaterThan(carrier.surfaceOp[keys.end])
     expect(carrier.surfaceOp[keys.start]).toBe(carrierSeq)
     // WRITTEN UNCHANGED: the claim states the same descending pair, so the range
-    // that reached the log is the one the resolver produced and not a normalized
+    // that reached the log is the supplied low-level plan, not a normalized
     // or reordered copy.
     expect(audit.data.shadowedRange).toEqual({ start: carrierSeq, end: 5 })
     expect(carrier.sourceEventSeqs.slice(1)).toEqual([carrierSeq, 4, 5])
@@ -905,7 +907,7 @@ describe('the operation end to end through the Gateway (§4.1, §4.4, §5.5 seam
   })
 
   it('an edit near the top of the session rewinds everything after it (§9)', async () => {
-    const { envelope, session } = await applyThroughGateway({}, undefined, { targetSeq: 0, op: 'edit', text: FIRST_PROMPT })
+    const { envelope, session } = await applyThroughGateway({}, undefined, { targetSeq: 0, op: 'edit', text: FIRST_PROMPT }, { restrictEditToLastUserMessage: false })
     const { carrier } = pairAtEnd(session)
 
     expect(envelope.ok).toBe(true)

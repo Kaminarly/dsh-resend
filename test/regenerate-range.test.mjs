@@ -41,7 +41,7 @@ it('provides reply eligibility from the complete effective conversation, indepen
   const h = await host()
   appendUser(h.host.session, { id: 'later-user', text: 'a later question' })
   const result = await dispatchToHost(h, 'resend/conversation', { request: { sessionId: 'session-1' } })
-  expect(result).toEqual({ ok: true, value: { ok: true, value: { assistantSeqs: [1, 3], lastReplySeq: 3 } } })
+  expect(result).toEqual({ ok: true, value: { ok: true, value: { assistantSeqs: [1, 3], lastReplySeq: 3, userSeqs: [0, 2, 4], lastUserSeq: 4 } } })
   expect(h.host.calls.followups).toBe(0)
   expect(auditCount(h.host.session)).toBe(0)
 })

@@ -173,8 +173,8 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     try {
       // Every preference starts on.
       expect(toggleIn(settingsDom.container, 'hideReplacedMessages')).toBeNull()
-      expect(settingsDom.container.querySelectorAll('[role=switch]')).toHaveLength(3)
-      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply']) {
+      expect(settingsDom.container.querySelectorAll('[role=switch]')).toHaveLength(4)
+      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage']) {
         const toggle = settingsDom.container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
         expect(toggle?.getAttribute('aria-checked')).toBe('true')
       }

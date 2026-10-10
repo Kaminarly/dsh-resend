@@ -34,7 +34,7 @@ async function editor(options = {}) {
     ...registration.options.inject('session-1'),
   }
   const dom = await renderDom(createElement(registration.component, props))
-  return { ...composition, ...dom, props, registration, button: (text) => [...dom.container.querySelectorAll('button')].find((button) => button.textContent === text) }
+  return { ...composition, ...dom, props, registration, button: (text) => [...dom.container.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === text || button.textContent === text) }
 }
 
 describe('edit and resend at the registered action row', () => {
@@ -298,9 +298,12 @@ describe('hide rules at the transcript boundary', () => {
 
   it('scopes a hide-plan error to the user row covered by its bad range', async () => {
     const badRecords = [{ carrierSeq: 8, shadowedSeqs: [2, 'bad'], range: { start: 2, end: 4 } }]
+    const unavailable = Object.freeze({ ready: false })
     const brokenOperations = {
       recordsFor: () => badRecords,
       subscribe: () => () => {},
+      conversationFor: () => unavailable,
+      refreshConversation: async () => {},
     }
     const rows = [2, 4].map((seq) => ({ key: 'actions-' + seq, kind: 'dsh-resend-user-actions', anchorSeq: seq + 0.5, data: { seq, text: 'message ' + seq } }))
     const chat = { nodes: new Map([

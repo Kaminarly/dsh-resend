@@ -96,11 +96,11 @@ describe('the range is the surface from the target to its end (§4.3)', () => {
     })
   })
 
-  it('edit near the top takes the whole surface with it', async () => {
+  it('edit near the top is refused by the default saved range', async () => {
     const session = sessionFixture()
     const { result } = await resolve({ session, request: { targetSeq: 0, op: 'edit', text: 'x' } })
 
-    expect(result.value.shadowedSeqs).toEqual([0, 1, 2, 3])
+    expect(result.error.code).toBe('not-last-user-message')
   })
 
   it('regenerate: the target reply’s ROUND, and that round’s prompt as the text (§4.3, §9.2)', async () => {
@@ -113,27 +113,12 @@ describe('the range is the surface from the target to its end (§4.3)', () => {
     })
   })
 
-  it('a numerically descending range resolves, and the real validator takes it unchanged (§13.1 #6, §16.7)', async () => {
+  it('rejects Carrier as an edit target even on a numerically descending surface', async () => {
     const { session, carrierSeq } = middleRewoundFixture()
     expect(session.surface.nodes).toEqual([0, 1, carrierSeq, 4, 5])
 
-    // A second rewind aimed at the carrier is exactly the shape §16.7 measured:
-    // startSeq is numerically GREATER than endSeq.
     const { result } = await resolve({ session, request: { targetSeq: carrierSeq, op: 'edit', text: 'edited again' } })
-    expect(result.ok).toBe(true)
-    expect(result.value.rangeStartSeq).toBeGreaterThan(result.value.endSeq)
-    expect(result.value.shadowedSeqs).toEqual([carrierSeq, 4, 5])
-
-    // The pre-flight that makes "resolved" mean "writable": the planned range is
-    // handed to the REAL append contract (no stub that always accepts), which
-    // validates range membership, `sourceEventSeqs` completeness and the
-    // `surfaceOp` shape, and writes it back unchanged.
-    const before = session.seq
-    const written = appendRewindPair(session, result.value, { id: 'dsh-resend-edit-prefight' })
-    expect(session.seq).toBe(before + 2)
-    expect(written.carrier.surfaceOp).toEqual({ op: 'replace', startSeq: result.value.rangeStartSeq, endSeq: result.value.endSeq })
-    expect(written.carrier.sourceEventSeqs).toEqual([written.audit.seq, ...result.value.shadowedSeqs])
-    expect(session.surface.nodes).toEqual([0, 1, before + 1])
+    expect(result.error.code).toBe('not-user-message')
   })
 
   it('the pre-flight is the real contract: it refuses a citation that omits a shadowed node', () => {

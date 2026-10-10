@@ -203,3 +203,24 @@ descriptors.push({
   } }],
   result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#RollbackResult`, create: rollbackResultSchema },
 })
+
+/** Only eligibility addresses cross this read-only seam; no prompt text or log. */
+export function conversationRequestSchema() {
+  return z.strictObject({ sessionId: z.readonly(z.string()) })
+}
+export function conversationResultSchema() {
+  return z.union([
+    z.strictObject({ ok: z.literal(true), value: z.strictObject({
+      assistantSeqs: z.array(z.number()), lastReplySeq: z.optional(z.number()),
+    }) }),
+    z.strictObject({ ok: z.literal(false), error: z.union(ERROR_CODES.map(code => z.strictObject({ code: z.literal(code) }))) }),
+  ])
+}
+descriptors.push({
+  id: `${PACKAGE}#${NAMESPACE}/conversation`, service: SERVICE, namespace: NAMESPACE, method: 'conversation',
+  invocation: { kind: 'direct' },
+  parameters: [{ name: 'request', wire: 'request', source: 'json', codec: {
+    mode: 'strict', typeSymbol: `${PACKAGE}/types#ConversationRequest`, create: conversationRequestSchema,
+  } }],
+  result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#ConversationResult`, create: conversationResultSchema },
+})

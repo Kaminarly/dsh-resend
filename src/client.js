@@ -194,6 +194,7 @@ const DICTIONARIES = {
     'row.composerUnavailable': '当前输入框无法接收文本',
     'row.operationFailed': '编辑并重发失败，请重试',
     'row.regenerate': '重新生成',
+    'row.notLast': '只能重新生成最后一条回复',
     'row.shadowed': '这条回复已被重写',
     'row.imageOnly': '这条提示词没有可重发的文本',
     'row.offSurface': '这条回复不在当前对话面上',
@@ -208,8 +209,13 @@ const DICTIONARIES = {
     'panel.error.hideRules': '隐藏规则无法显示',
     'panel.error.settings': '设置行无法显示',
     'settings.heading': '消息编辑设置',
+    'operation.error.not-last-reply': '只能重新生成最后一条回复，请选择最后一条回复。',
+    'operation.error.not-assistant-message': '目标不是可重新生成的助手回复，请重新选择。',
+    'row.conversationUnavailable': '暂时无法确认当前有效对话，请重试',
     'settings.inlineEditorBeneathMessage': '消息下方的内联编辑器',
     'settings.regenerateLastReply': '显示重新生成按钮',
+    'settings.restrictRegenerateToLastReply': '只允许重新生成最后一条助手回复',
+    'settings.regenerateRangeDescription': '关闭后可重新生成较早回复。操作将从该回复对应的问题重新续接，其后的对话将退出当前上下文，原始记录仍保留。',
     'settings.loading': '正在读取设置…',
     'settings.saving': '正在保存…',
     'settings.read-error': '设置读取失败，请重试',
@@ -280,6 +286,7 @@ const DICTIONARIES = {
     'row.composerUnavailable': 'The composer cannot accept text',
     'row.operationFailed': 'Edit and resend failed; try again',
     'row.regenerate': 'Regenerate',
+    'row.notLast': 'Only the last reply can be regenerated',
     'row.shadowed': 'This reply was already rewound',
     'row.imageOnly': 'The prompt has no text to re-send',
     'row.offSurface': 'This reply is off the current surface',
@@ -294,8 +301,13 @@ const DICTIONARIES = {
     'panel.error.hideRules': 'The hide rules could not be displayed',
     'panel.error.settings': 'The settings row could not be displayed',
     'settings.heading': 'Message editing settings',
+    'operation.error.not-last-reply': 'Only the last reply can be regenerated. Select it.',
+    'operation.error.not-assistant-message': 'The target is not an assistant reply that can be regenerated. Select another reply.',
+    'row.conversationUnavailable': 'Could not confirm the effective conversation. Please retry.',
     'settings.inlineEditorBeneathMessage': 'Inline editor beneath the message',
     'settings.regenerateLastReply': 'Show regenerate buttons',
+    'settings.restrictRegenerateToLastReply': 'Only allow regenerating the last assistant reply',
+    'settings.regenerateRangeDescription': 'Turn off to regenerate earlier replies. The conversation resumes from the question for that reply. Later conversation leaves the current context; the original log is retained.',
     'settings.loading': 'Reading settings…',
     'settings.saving': 'Saving…',
     'settings.read-error': 'Could not read settings. Please retry.',
@@ -374,7 +386,7 @@ function mountSurfaces(scope, ctx) {
   // registered option carries a THUNK, never a projected string (spec §10).
   const translate = scope.locale.bind(NS)
 
-  const operations = createResendOperations(ctx.remote)
+  const operations = createResendOperations(scope.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
 
   // The rewind point and the user action row are both chat nodes because a
@@ -481,5 +493,5 @@ export async function apply(ctx) {
     return
   }
   mount = { status: 'mounted', error: undefined }
-  ctx.inject(['slots', 'locale', 'uiConversation'], (scope) => mountSurfaces(scope, ctx))
+  ctx.inject(['remote.resend', 'slots', 'locale', 'uiConversation'], (scope) => mountSurfaces(scope, ctx))
 }

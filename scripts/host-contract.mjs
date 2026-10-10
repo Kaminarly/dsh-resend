@@ -242,13 +242,13 @@ export const SLOT_CATALOG = {
     {
       slot: 'conversation.chat.node',
       kind: 'keyed',
-      standardProps: ['useChat', 'useConversation', 'useInput', 'inputActions', 'sessionId', 'useProjection'],
+      standardProps: ['useChat', 'useConversation', 'useSession', 'useInput', 'inputActions', 'sessionId', 'useProjection'],
       ownerProps: [],
     },
     {
       slot: 'conversation.chat.assistant-actions',
       kind: 'list',
-      standardProps: ['useChat', 'useConversation', 'useInput', 'inputActions', 'sessionId', 'useProjection'],
+      standardProps: ['useChat', 'useConversation', 'useSession', 'useInput', 'inputActions', 'sessionId', 'useProjection'],
       ownerProps: ['messageId'],
     },
   ],
@@ -284,7 +284,7 @@ export const EXPORTS = [
     file: 'node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js',
     specifier: '@deepseek-ai/dsh-client-ui-primitives',
     usedBy: 'src/user-actions.js, src/regenerate.js, src/rewind-row.js',
-    names: ['IconEditOutlineRegular', 'IconPaperPlaneOutlineRegular', 'IconCloseOutlineRegular', 'IconRefreshOutlineRegular', 'IconWarningOutlineRegular'],
+    names: ['Button', 'Tooltip', 'Switch', 'IconEditOutlineRegular', 'IconPaperPlaneOutlineRegular', 'IconCloseOutlineRegular', 'IconRefreshOutlineRegular', 'IconWarningOutlineRegular'],
   },
 ]
 

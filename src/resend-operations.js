@@ -29,6 +29,17 @@
 /** The status of a rewind point whose prompt the agent did not take (spec §9.4). */
 export const RESEND_FAILED = 'resend-failed'
 
+/** The Gateway wraps the business result in its own transport result. */
+export function unwrapRemoteResult(result) {
+  if (result?.ok === false) return result
+  if (result?.ok !== true || typeof result.value?.ok !== 'boolean') {
+    const error = new Error('The Gateway did not return a business result')
+    error.code = 'client/result-invalid'
+    throw error
+  }
+  return result.value
+}
+
 /**
  * Build the operations object one page's client half uses.
  *
@@ -47,6 +58,8 @@ export function createResendOperations(remote) {
   const emptyRecords = Object.freeze([])
   const listeners = new Set()
   const rollbackResults = new Map()
+  const conversations = new Map()
+  const unreadConversation = Object.freeze({ ready: false, status: 'loading' })
 
   const notify = () => {
     for (const listener of Array.from(listeners)) listener()
@@ -90,13 +103,45 @@ export function createResendOperations(remote) {
    * @returns the host's `RemoteResult`.
    */
   async function run(request) {
-    const result = await remote.resend.apply(request)
+    const response = await remote.resend.apply(request)
+    // Direct in-process callers already carry a business result; Gateway calls
+    // wrap that result once. Unwrap the wire envelope before recording it.
+    const result = response?.ok === true && typeof response.value?.ok === 'boolean'
+      ? unwrapRemoteResult(response) : response
     record(request, result)
     return result
   }
 
   return {
     run,
+    conversationFor(sessionId, revision) {
+      const entry = conversations.get(sessionId)
+      return entry?.revision === revision ? entry.snapshot : unreadConversation
+    },
+    async refreshConversation(sessionId, revision, retry = false) {
+      const previous = conversations.get(sessionId)
+      if (previous?.revision === revision && !retry) return previous.promise
+      const entry = { revision, snapshot: unreadConversation }
+      conversations.set(sessionId, entry)
+      notify()
+      entry.promise = (async () => {
+        let next
+        try {
+          const result = unwrapRemoteResult(await remote.resend.conversation({ sessionId }))
+          if (result.ok !== true) throw result.error
+          const { assistantSeqs, lastReplySeq } = result.value
+          if (!Array.isArray(assistantSeqs) || assistantSeqs.some(seq => !Number.isSafeInteger(seq) || seq < 0) ||
+              (lastReplySeq !== undefined && lastReplySeq !== assistantSeqs.at(-1))) throw new Error('invalid conversation eligibility')
+          next = Object.freeze({ ready: true, status: 'ready', assistantSeqs, lastReplySeq })
+        } catch {
+          next = Object.freeze({ ready: false, status: 'read-error' })
+        }
+        if (conversations.get(sessionId) !== entry) return
+        entry.snapshot = next
+        notify()
+      })()
+      return entry.promise
+    },
     async rollback(request) {
       const result = await remote.resend.rollback(request)
       const conversation = result.ok ? result.value.conversation : result.error.conversation
@@ -138,6 +183,7 @@ export function createResendOperations(remote) {
       bySession.clear()
       recordsBySession.clear()
       rollbackResults.clear()
+      conversations.clear()
       listeners.clear()
     },
   }

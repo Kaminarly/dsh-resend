@@ -20,6 +20,7 @@ export const ERROR_CODES = Object.freeze([
   'target-shadowed',
   'not-user-message',
   'not-last-reply',
+  'not-assistant-message',
   'blank-text',
   'no-text',
   'internal',

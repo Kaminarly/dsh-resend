@@ -3,8 +3,9 @@ import { useSyncExternalStore } from 'react'
 export const PREFERENCE_FIELDS = Object.freeze([
   'inlineEditorBeneathMessage',
   'regenerateLastReply',
+  'restrictRegenerateToLastReply',
 ])
-const DEFAULTS = Object.freeze({ inlineEditorBeneathMessage: true, regenerateLastReply: true })
+const DEFAULTS = Object.freeze({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: true })
 
 /** The host's saved document is authoritative; no browser storage or optimistic values. */
 export function createPreferences() {

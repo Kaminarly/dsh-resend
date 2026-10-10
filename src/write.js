@@ -46,6 +46,7 @@ import { coveringRefusalCode, eventAtSeq, readCoveringLog } from './log-read.js'
 import { MARKER_PREFIX, hasMarkerPrefix } from './marker.js'
 import { OP_KEY, REPLACE_OP, runtimeShapeBinding } from './shape-probe.js'
 import { shadowPriceSource, shadowedTokenCount } from './token-price.js'
+import { regenerateTargetRefusal, restrictRegenerate } from './resolve.js'
 
 /** The audit claim's event type (spec §5.3). */
 const AUDIT_TYPE = 'compaction/prune'
@@ -368,7 +369,7 @@ function verifyWrittenPair({ audit, carrier }, { auditSeq, carrierSeq, binding =
  *   refusal — `{ ok: false, error: { code, detail? } }` — with nothing written
  *   unless the detail says otherwise.
  */
-export async function writeRewindPair(ctx, { sessions, session, sessionId, plan, carrierId, traceText, binding = runtimeShapeBinding() }) {
+export async function writeRewindPair(ctx, { sessions, session, sessionId, plan, carrierId, traceText, request, binding = runtimeShapeBinding() }) {
   // §5.3 — the official price, or no write at all. A missing meter is `internal`
   // and never a node count, which is the documented overestimation bug.
   const price = shadowPriceSource(ctx)
@@ -416,6 +417,16 @@ export async function writeRewindPair(ctx, { sessions, session, sessionId, plan,
 
   // §5.2 steps 2–4: the two appends are adjacent, and there is no `await`
   // between them or before the flush.
+  if (request?.op === 'regenerate') {
+    const nodes = session.surface.nodes
+    const refusal = regenerateTargetRefusal(covering.log, nodes, request.targetSeq, restrictRegenerate(ctx))
+    if (refusal) return refusal
+    const range = nodes.slice(nodes.indexOf(plan.rangeStartSeq))
+    if (session.seq !== prevTail || range.length !== plan.shadowedSeqs.length || range.some((seq, index) => seq !== plan.shadowedSeqs[index])) {
+      return refuse('message-pending', 'the effective conversation changed before the rewind write')
+    }
+    if (hostService(ctx, 'agents')?.get(sessionId)?.status !== 'idle') return refuse('agent-busy', 'the agent started before the rewind write')
+  }
   let audit
   try {
     audit = session.append(AUDIT_TYPE, pair.audit.data)

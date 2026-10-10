@@ -1,9 +1,10 @@
 /**
- * The settings row: registration point 4 on `settings.general.item` (ticket 08,
+ * The Message editing page: registration point 4 on `settings.general.item` (ticket 08,
  * spec §7).
  *
- * The owner of this slot passes NO props at all — `children?: never` in the
- * catalog, and nothing projects a `label` here either — so the row is a pure
+ * The section renders from its own bound preferences and translator. Its
+ * owner also passes a close action, which these preference controls do not need.
+ * The page is a pure
  * function of two things it binds itself: the preferences store (the only
  * writer of those fields) and the live translator the registration factory
  * hands it. The boundary factory's third argument exists for exactly this: a
@@ -14,12 +15,15 @@
  * wait for acceptance; chat surfaces keep their previous saved behavior.
  */
 import { createElement } from 'react'
+import { Button, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { UIStyles } from './ui.js'
 import { PREFERENCE_FIELDS, usePreferences } from './preferences.js'
 
 /** One row per preference field, keyed by the field's i18n label. */
 const SETTING_KEYS = Object.freeze({
   inlineEditorBeneathMessage: 'settings.inlineEditorBeneathMessage',
   regenerateLastReply: 'settings.regenerateLastReply',
+  restrictRegenerateToLastReply: 'settings.restrictRegenerateToLastReply',
 })
 
 /** The id this row registers under — brand-new, never a shipped one. */
@@ -29,24 +33,28 @@ export const SETTINGS_ROW_ID = 'dsh-resend-preferences'
 export function SettingsRow({ preferences, t }) {
   const snapshot = usePreferences(preferences)
   return createElement('div', { className: 'dsh-resend-settings' }, [
+    createElement(UIStyles, { key: 'ui' }),
     createElement('div', { key: 'heading', className: 'dsh-resend-settings-heading' }, t('settings.heading')),
     snapshot.status === 'ready' ? null : createElement('div', {
       key: 'status', role: snapshot.status.endsWith('error') ? 'alert' : 'status',
-    }, [t('settings.' + snapshot.status), snapshot.status.endsWith('error') ? createElement('button', {
-      key: 'retry', type: 'button', onClick: () => { void preferences.retry() },
+    }, [t('settings.' + snapshot.status), snapshot.status.endsWith('error') ? createElement(Button, {
+      key: 'retry', onClick: () => { void preferences.retry() },
     }, t('settings.retry')) : null]),
     ...PREFERENCE_FIELDS.map((field) =>
       createElement('div', { key: field, className: 'dsh-resend-settings-row', 'data-field': field }, [
-        createElement('span', { key: 'label', className: 'dsh-resend-settings-label' }, t(SETTING_KEYS[field])),
-        createElement('button', {
+        createElement('div', { key: 'label', className: 'dsh-resend-settings-label' }, [
+          createElement('span', { key: 'name' }, t(SETTING_KEYS[field])),
+          field === 'restrictRegenerateToLastReply' ? createElement('p', {
+            key: 'description', className: 'dsh-resend-settings-description', id: 'dsh-resend-regenerate-range-description',
+          }, t('settings.regenerateRangeDescription')) : null,
+        ]),
+        createElement(Switch, {
           key: 'toggle',
-          type: 'button',
-          className: 'dsh-resend-chip dsh-resend-settings-toggle',
-          'data-field': field,
-          'aria-pressed': snapshot[field],
-          disabled: !snapshot.ready || snapshot.status === 'saving',
-          onClick: () => { void preferences.set(field, !snapshot[field]) },
-        }, snapshot[field] ? t('settings.on') : t('settings.off')),
+          className: 'dsh-resend-settings-toggle', label: t(SETTING_KEYS[field]),
+          checked: snapshot[field], disabled: !snapshot.ready || snapshot.status === 'saving',
+          'aria-describedby': field === 'restrictRegenerateToLastReply' ? 'dsh-resend-regenerate-range-description' : undefined,
+          onChange: (next) => { void preferences.set(field, next) },
+        }),
       ])),
   ])
 }

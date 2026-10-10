@@ -93,7 +93,7 @@ function sameSurface(left, right) {
  * @param nodes - the current surface node seqs, in surface order.
  * @returns `{ status: 'found' | 'unreadable', seq }` or `{ status: 'absent' }`.
  */
-function lastAssistantSeq(log, nodes) {
+export function lastAssistantSeq(log, nodes) {
   for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const event = eventAtSeq(log, nodes[index])
     // A node whose event this read does not hold ends the walk, the same rule
@@ -103,6 +103,43 @@ function lastAssistantSeq(log, nodes) {
     if (event.type === 'assistant/message') return { status: 'found', seq: event.seq }
   }
   return { status: 'absent' }
+}
+
+/** One saved-policy check shared by resolution and the synchronous write boundary. */
+export function regenerateTargetRefusal(log, nodes, targetSeq, restrict = true) {
+  const target = eventAtSeq(log, targetSeq)
+  if (target === undefined) return refuse('message-pending', 'the target is no longer readable')
+  if (target.type !== 'assistant/message' || !isAppendSurfaceEvent(target)) {
+    return refuse('not-assistant-message', `seq ${targetSeq} is not an append assistant reply`)
+  }
+  if (!nodes.includes(targetSeq)) return refuse('target-shadowed', 'the target left the effective conversation')
+  if (restrict !== false) {
+    const last = lastAssistantSeq(log, nodes)
+    if (last.status === 'unreadable') return refuse('message-pending', `surface node ${last.seq} is unreadable`)
+    if (last.seq !== targetSeq) return refuse('not-last-reply', `seq ${targetSeq} is not the last assistant reply`)
+  }
+}
+
+/** Loader volatile fields are live refs, rather than the raw saved booleans. */
+export function restrictRegenerate(ctx) {
+  return ctx.fiber?.config?.restrictRegenerateToLastReply?.get?.() !== false
+}
+
+/** Read the complete model surface; a Chat window never establishes its tail. */
+export async function effectiveAssistantReplies(ctx, session) {
+  const covering = await readCoveringLog(ctx, session.id)
+  if (covering.status === 'refused') return refuse(coveringRefusalCode(covering.reason), covering.detail)
+  let fold
+  try { fold = foldSurface(covering.log, currentSessionMessageProjections) } catch {
+    return refuse('message-pending', 'the effective conversation could not be established')
+  }
+  if (!sameSurface(fold.nodes, asArray(session.surface.nodes))) return refuse('message-pending', 'the effective conversation changed during the read')
+  const assistantSeqs = fold.nodes.filter(seq => {
+    const event = eventAtSeq(covering.log, seq)
+    return event?.type === 'assistant/message' && isAppendSurfaceEvent(event)
+  })
+  const lastReplySeq = assistantSeqs.at(-1)
+  return { ok: true, value: { assistantSeqs, ...(lastReplySeq === undefined ? {} : { lastReplySeq }) } }
 }
 
 /**
@@ -199,6 +236,17 @@ function resendOnlyPlan(log, fold, request) {
   const carrierId = carrier?.data?.id
   if (carrier?.type !== 'user/message' || !isCarrierIdFor(op, carrierId)) return undefined
   if (logHoldsMessage(log, resendIdFor(carrierId))) return undefined
+  if (op === 'regenerate') {
+    const recordedTarget = /-target-(\d+)$/.exec(carrierId)
+    if (recordedTarget !== null) {
+      if (Number(recordedTarget[1]) !== targetSeq) return undefined
+    } else {
+      // Legacy carriers did not record the reply address. They only ever acted
+      // on the last assistant reply, so recover exactly that original target.
+      const original = foldSurface(log.filter(event => event.seq < replacement.seq - 1), currentSessionMessageProjections)
+      if (lastAssistantSeq(log, original.nodes).seq !== targetSeq) return undefined
+    }
+  }
 
   let resendText
   if (op === 'edit') {
@@ -305,6 +353,12 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
 
   const coveredByCarrier = fold !== undefined && fold.replacements.some((replacement) => replacement.shadowedSeqs.includes(targetSeq))
 
+  // Type validation also precedes the owed-prompt exception: a user or carrier
+  // must never masquerade as a regenerate retry inside the shadowed range.
+  if (op === 'regenerate' && (target.type !== 'assistant/message' || !isAppendSurfaceEvent(target))) {
+    return refuse('not-assistant-message', `seq ${targetSeq} is not an append assistant reply`)
+  }
+
   // §4.3 step 2: decided from the LOG — a carrier's replacement range covering
   // the target is the positive fact, and being off the (now agreed) surface is
   // the same fact seen from the other side. A log-only seq, e.g. a tool/call
@@ -329,18 +383,10 @@ export async function resolveTarget(ctx, request, liveSurfaceNodes) {
     return refuse('not-user-message', `seq ${targetSeq} is a ${String(target.type)}, not a user message`)
   }
 
-  // §4.3 step 5: regenerate acts on the LAST assistant reply, and only on it.
+  // The saved Profile rule decides the allowed range; the caller cannot override it.
   if (op === 'regenerate') {
-    const lastReply = lastAssistantSeq(log, liveNodes)
-    // The read cannot see a node after the target, so it cannot establish that
-    // the target is the last reply: retryable, and never a claim that the reply
-    // is not the last one (§4.2's "a read that does not cover it is a failure").
-    if (lastReply.status === 'unreadable') {
-      return refuse('message-pending', `the covering read does not hold surface node ${lastReply.seq}`)
-    }
-    if (lastReply.seq !== targetSeq) {
-      return refuse('not-last-reply', `seq ${targetSeq} is not the last assistant reply on the surface`)
-    }
+    const refusal = regenerateTargetRefusal(log, liveNodes, targetSeq, restrictRegenerate(ctx))
+    if (refusal) return refusal
   }
 
   // §4.4 step 6: op-specific text validation, after target resolution.

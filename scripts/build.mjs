@@ -100,7 +100,7 @@ const ESM_ENTRIES = [
   { entry: 'src/resolve.js', out: 'resolve.js', external: ['./host.js', './log-read.js', './marker.js'] },
   { entry: 'src/shape-probe.js', out: 'shape-probe.js' },
   { entry: 'src/trace-text.js', out: 'trace-text.js' },
-  { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './marker.js', './shape-probe.js'] },
+  { entry: 'src/write.js', out: 'write.js', external: ['./host.js', './log-read.js', './marker.js', './shape-probe.js', './resolve.js'] },
   { entry: 'src/typert.host.js', out: 'typert.host.js' },
   { entry: 'src/typert.client.js', out: 'typert.client.js' },
 ]

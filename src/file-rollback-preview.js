@@ -1,33 +1,53 @@
-import { createElement, useState } from 'react'
+import { createElement, useId, useRef, useState, useSyncExternalStore } from 'react'
 
 /** A transient dry run, displayed at its rewind point. It contains no file contents. */
 export function FileRollbackPreview({ operations, point, t }) {
   const [result, setResult] = useState()
   const [busy, setBusy] = useState(false)
   const [completed, setCompleted] = useState(false)
+  const [scope, setScope] = useState('artifacts')
+  const scopeName = useId()
+  const running = useRef(false)
+  const inherited = useSyncExternalStore(operations.subscribe, () => operations.rollbackOutcomeOf?.(point))
   async function run(phase) {
-    if (busy) return
+    if (running.current) return
+    running.current = true
     setBusy(true)
     try {
-      const answer = await operations.rollback({ ...point, phase, ...(phase === 'preview' ? {} : { planId: result?.value?.planId }) })
+      const answer = await operations.rollback({ ...point, scope, phase, ...(phase === 'preview' ? {} : { planId: result?.value?.planId }) })
       setResult(phase === 'cancel' && answer.ok ? undefined : answer)
       setCompleted(phase === 'execute' && answer.ok)
     } catch { setResult({ ok: false, error: { code: 'internal' } }) }
-    finally { setBusy(false) }
+    finally { running.current = false; setBusy(false) }
   }
-  const preview = result?.ok === true ? result.value : undefined
+  const answer = result ?? inherited
+  const finished = completed || (result === undefined && inherited !== undefined)
+  const preview = answer?.ok === true ? answer.value : undefined
+  const conversation = preview?.conversation ?? answer?.error?.conversation
   return createElement('section', { 'aria-label': t('files.preview'), 'aria-busy': busy }, [
+    createElement('fieldset', { key: 'scope', disabled: busy }, [
+      createElement('legend', { key: 'label' }, t('rollback.scope')),
+      ...['conversation', 'artifacts', 'both'].map((value) => createElement('label', { key: value }, [
+        createElement('input', { key: 'input', type: 'radio', name: scopeName, value, checked: scope === value, onChange: () => {
+          setScope(value); setResult(undefined); setCompleted(false)
+        } }), t(`rollback.scope.${value}`),
+      ])),
+    ]),
     createElement('button', { key: 'preview', type: 'button', disabled: busy, onClick: () => { setCompleted(false); void run('preview') } }, t('files.preview')),
-    result?.ok === false && createElement('p', { key: 'error', role: 'alert' }, t(`files.error.${result.error.code}`)),
-    result?.ok === false && result.error.files && createElement('ul', { key: 'partial' }, result.error.files.map((file) => createElement('li', { key: file.path },
+    conversation && createElement('p', { key: 'conversation' }, String(t(`rollback.conversation.${conversation.action}`)).replace('{count}', String(conversation.count))),
+    preview && !conversation && createElement('p', { key: 'conversation-unchanged' }, t('rollback.conversation.notSelected')),
+    answer?.ok === false && createElement('p', { key: 'error', role: 'alert' }, t(`files.error.${answer.error.code}`)),
+    answer?.ok === false && answer.error.files && createElement('ul', { key: 'partial' }, answer.error.files.map((file) => createElement('li', { key: file.path },
       `${file.path} — ${t(`files.${file.action}`)}${file.reason === undefined ? '' : `：${t(`files.reason.${file.reason}`)}`}`))),
     preview && createElement('div', { key: 'plan', 'aria-live': 'polite' }, [
-      createElement('p', { key: 'heading' }, t(completed ? 'files.completed' : 'files.heading')),
-      preview.files.length === 0 && createElement('p', { key: 'empty' }, t('files.empty')),
+      preview.scope && createElement('p', { key: 'selected-scope' }, String(t('rollback.selectedScope')).replace('{scope}', t(`rollback.scope.${preview.scope}`))),
+      createElement('p', { key: 'heading' }, t(finished ? (preview.scope === 'artifacts' || preview.scope === undefined ? 'files.completed' : 'rollback.completed') : 'files.heading')),
+      preview.files.length === 0 && createElement('p', { key: 'empty' }, t(preview.scope === 'conversation' ? 'rollback.files.notSelected' : 'files.empty')),
+      finished && !preview.files.some((file) => file.action === 'refuse') && createElement('p', { key: 'no-refusals' }, t('rollback.noRefusals')),
       createElement('ul', { key: 'files' }, preview.files.map((file, index) => createElement('li', { key: `${index}:${file.path}` },
-        `${file.path} — ${t(`files.${completed && file.action === 'restore' ? 'restored' : file.action}`)}${file.reason === undefined ? '' : `：${t(`files.reason.${file.reason}`)}`}`))),
-      !completed && createElement('button', { key: 'execute', type: 'button', disabled: busy || !preview.files.some((file) => file.action === 'restore'), onClick: () => { void run('execute') } }, t('files.execute')),
-      !completed && createElement('button', { key: 'cancel', type: 'button', disabled: busy, onClick: () => { void run('cancel') } }, t('files.cancel')),
+        `${file.path} — ${t(`files.${finished && file.action === 'restore' ? 'restored' : file.action}`)}${file.reason === undefined ? '' : `：${t(`files.reason.${file.reason}`)}`}`))),
+      !finished && createElement('button', { key: 'execute', type: 'button', disabled: busy, onClick: () => { void run('execute') } }, t(scope === 'artifacts' ? 'files.execute' : 'rollback.execute')),
+      !finished && createElement('button', { key: 'cancel', type: 'button', disabled: busy, onClick: () => { void run('cancel') } }, t('files.cancel')),
     ]),
   ])
 }

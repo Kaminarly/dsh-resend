@@ -46,6 +46,7 @@ export function createResendOperations(remote) {
   const recordsBySession = new Map()
   const emptyRecords = Object.freeze([])
   const listeners = new Set()
+  const rollbackResults = new Map()
 
   const notify = () => {
     for (const listener of Array.from(listeners)) listener()
@@ -96,7 +97,16 @@ export function createResendOperations(remote) {
 
   return {
     run,
-    rollback: (request) => remote.resend.rollback(request),
+    async rollback(request) {
+      const result = await remote.resend.rollback(request)
+      const conversation = result.ok ? result.value.conversation : result.error.conversation
+      if (request.phase === 'execute' && conversation?.carrierSeq !== undefined) {
+        rollbackResults.set(JSON.stringify([request.sessionId, conversation.carrierSeq]), result)
+        notify()
+      }
+      return result
+    },
+    rollbackOutcomeOf: ({ sessionId, carrierSeq }) => rollbackResults.get(JSON.stringify([sessionId, carrierSeq])),
     outcomeOf,
     recordsFor: (sessionId) => recordsBySession.get(sessionId) ?? emptyRecords,
     /**
@@ -127,6 +137,7 @@ export function createResendOperations(remote) {
     dispose() {
       bySession.clear()
       recordsBySession.clear()
+      rollbackResults.clear()
       listeners.clear()
     },
   }

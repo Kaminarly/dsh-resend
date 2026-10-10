@@ -42,10 +42,27 @@ beforeAll(() => {
 })
 
 describe('check-syntax', () => {
-  it('parses the real lib/ and passes', () => {
+  it('parses both the real src/ and lib/ before the build and passes', () => {
     const { status, stdout } = runGate('scripts/check-syntax.mjs')
     expect(status).toBe(0)
     expect(stdout).toContain('check-syntax: OK')
+    expect(stdout).toMatch(/under src\b/)
+    expect(stdout).toMatch(/under lib\b/)
+  })
+
+  it('rejects broken source even when its generated artifact still parses', () => {
+    const script = readFileSync(path.join(rootDir, 'scripts/check-syntax.mjs'), 'utf8')
+    const walker = readFileSync(path.join(rootDir, 'scripts/walk-javascript.mjs'), 'utf8')
+    const dir = writeFixture({
+      'stale-source/scripts/check-syntax.mjs': script,
+      'stale-source/scripts/walk-javascript.mjs': walker,
+      'stale-source/src/index.js': 'export const broken = (\n',
+      'stale-source/lib/index.js': 'export const previous = 1\n',
+    })
+    const { status, stdout, stderr } = runGate(path.join(dir, 'stale-source/scripts/check-syntax.mjs'))
+    expect(status).toBe(1)
+    expect(stderr).toMatch(/src\/index\.js:\d+:\d+/)
+    expect(stdout).toMatch(/under lib\b/)
   })
 
   it('fails on a broken file that is NOT the first one, and names it', () => {

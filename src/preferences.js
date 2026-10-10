@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 /**
- * The three preferences (ticket 08, spec §7 registration 4).
+ * The editable preferences. Replaced-message hiding is a fixed policy.
  *
  * A client-side store, no persistence: "槽位缺失时用默认值" — when the host has
  * no `settings.general.item` slot the feature simply operates on the defaults,
@@ -12,16 +12,14 @@ import { useSyncExternalStore } from 'react'
  * in which the UI still shows the old behaviour.
  */
 
-/** The three preference fields, in the row's display order. */
+/** The editable preference fields, in the row's display order. */
 export const PREFERENCE_FIELDS = Object.freeze([
-  'hideReplacedMessages',
   'inlineEditorBeneathMessage',
   'regenerateLastReply',
 ])
 
-/** The defaults, in the spec's own words: all three on. */
+/** The defaults for the remaining preferences: both on. */
 const DEFAULTS = Object.freeze({
-  hideReplacedMessages: true,
   inlineEditorBeneathMessage: true,
   regenerateLastReply: true,
 })

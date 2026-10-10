@@ -23,7 +23,6 @@
  * not issue the call has nothing to replay and falls back to the notice state.
  */
 import { createElement, useEffect, useState, useSyncExternalStore } from 'react'
-import { usePreferences } from './preferences.js'
 import { IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { hasMarkerPrefix } from './marker.js'
 import { HideRulesSurface } from './hide-rules.js'
@@ -143,14 +142,13 @@ export function rewindRowSurface(operations, preferences) {
  * @returns the row, wrapped by the caller in the shared boundary.
  */
 function RewindRowSurface(props) {
-  const { node, sessionId, operations, preferences, t } = props
+  const { node, sessionId, operations, t } = props
   const point = { sessionId, carrierSeq: node?.data?.carrierSeq }
   // `operations.subscribe` is passed as the method itself, not wrapped: React
   // re-subscribes whenever that argument's identity changes, so a fresh closure
   // per render would tear the subscription down and rebuild it on every pass.
   const outcome = useSyncExternalStore(operations.subscribe, () => operations.outcomeOf(point))
-  const prefs = usePreferences(preferences)
-  const { plan, css, error } = useHiding({ ...props, hide: prefs.hideReplacedMessages })
+  const { plan, css, error } = useHiding(props)
   const [dismissed, setDismissed] = useState(false)
   const hidePlan = plan?.byCarrier.get(point.carrierSeq)
   const missingPlan = plan !== undefined && hidePlan === undefined && !plan.errors.has(point.carrierSeq)

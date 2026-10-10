@@ -62,7 +62,7 @@ export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.
 export function UserActionsRow(props) {
   const { node, sessionId, inputActions, useInput, useSession, readInput, operations, preferences, t } = props
   const prefs = usePreferences(preferences)
-  const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true, hide: prefs.hideReplacedMessages })
+  const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
   const data = node.data
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(data.text)

@@ -19,7 +19,6 @@ import { PREFERENCE_FIELDS, usePreferences } from './preferences.js'
 
 /** One row per preference field, keyed by the field's i18n label. */
 const SETTING_KEYS = Object.freeze({
-  hideReplacedMessages: 'settings.hideReplacedMessages',
   inlineEditorBeneathMessage: 'settings.inlineEditorBeneathMessage',
   regenerateLastReply: 'settings.regenerateLastReply',
 })

@@ -6,16 +6,18 @@
 
 该包可以安装并加载：Host plugin 会注册 Typert 描述符表并创建 `resend` 服务，Client plugin 通过 `ctx.remote.$mount` 挂载相同的贡献。因此，`resend.apply` 从头到尾都是一个真实且严格类型化的 Remote 调用，**所有拒绝路径都已经实现**：对于任意输入，它都会返回十二种代码中正确的一种，包括空 Session 或未知 Session、缺少 agent 或 agent 正在流式处理、从未存在过的目标、仍处于 pending 状态的目标、已经 rewind 的目标、消息类型错误、空白编辑，以及仅包含图片的提示。
 
+Host 在插件启动时只注册一次描述符，由插件 fiber 持有整个生命周期；仅在 fiber 结束时，由宿主的 effect disposer 撤回注册。一旦 endpoint 被见到是 strict，撤回后回落到反射路径就会被**永久禁止**，调用会以 `gateway/definition-unavailable` 失败。因此，不要在插件运行期间注销再注册。
+
 范围和 resend 文本通过一次覆盖范围的日志读取解析，再使用官方的 `foldSurface` 进行折叠；凡是解析成功的请求都会被**写入**：rewind 由一对事件组成，即 audit claim（`compaction/prune`）和 carrier（携带 `surfaceOp` + `sourceEventSeqs` 的 `user/message`），两者在第一次 append 前通过宿主自己的 replay 一起校验，随后相邻追加，并且只 flush 一次。Carrier 不渲染；被替换的范围会离开 model surface，但仍留在 Transcript 中；audit claim 携带**官方** shadow price，因此宿主自己的 token fold 会扣除该范围，而不会静默地高估。
 
 **resend 也已经生效。** flush 完成后，提示会通过 `agent.followup` 排入 agent 队列，结果 envelope 会报告已排队消息的 id。该消息是用户唯一能看到的新行，因为 carrier 不渲染。`followup` 是 fire-and-forget 调用并返回 `undefined`，因此唯一的接受信号是紧接调用后读取的 `agent.status`：如果 agent 没有接收提示，rewind 会保留，envelope 只会省略该 id。此时 Client 会在 rewind point 渲染错误行，并提供「再次发送」按钮；按下按钮会重放同一个请求，Host 会重新发送提示，但**不会执行第二次 rewind**。如果 agent 已接收 Turn、之后才失败，这不属于本插件的报告范围，agent 会在 Transcript 中自行报告。
 
-按钮提供的重试只在记录该状态的页面加载期间有效，因为它所重放的请求（包括编辑后的消息文本）按设计保存在 Client 状态中。Client 现在会在用户消息下注册 action row，并隐藏被 rewind 覆盖的行。内联编辑器的「在 Composer 中编辑」操作只通过 `inputActions.setDraft(text)` 发送纯文本：`@` 文件引用以及 `/` 技能或命令会作为字面文本显示，必须从 Composer 的 Trigger 菜单中重新构建。附件不会复制到 draft 中，需要在 Composer 里重新选择。
-如果未来的集成需要保留附件，支持的升级路径是通过 `createDrafts(sessionId, File[])` 再次提供文件对象，并传入生成的附件 id；本插件不会自行创建或持久化这些文件。
+按钮提供的重试只在记录该状态的页面加载期间有效，因为它所重放的请求（包括编辑后的消息文本）按设计保存在 Client 状态中。Client 现在会在用户消息下注册 action row，并隐藏被 rewind 覆盖的行。内联编辑器的「在输入框中编辑」（Composer）操作只通过 `inputActions.setDraft(text)` 携带纯文本，chip 占位符会被剥掉：`@` 文件引用以及 `/` 技能或命令会作为字面文本回显，用户需要从输入框的 Trigger 触发菜单中手工重建引用。附件不会复制到 draft 中，需要在 Composer 里重新选择。
+如果未来的集成需要保留附件，支持的升级路径是让附件按 id 随草稿走：通过附件服务的 `createDrafts(sessionId, File[])` 创建草稿附件，再将生成的 id 交给 `inputActions.addAttachments(ids)`。`createDrafts` 是服务方法，不是 `inputActions` 的一部分；用户需要再次提供文件对象，插件不能从历史消息的附件 id 还原 `File`。本插件尚未实现这条升级路径，不会自行创建或持久化这些文件。
 
-rewind 会从模型可见的 surface 中移除受影响的范围。人类看到的 Transcript 按设计以追加来源为准，不受影响，因此本插件通过 React 渲染的 CSS 自行隐藏受影响的行。这是插件行为，不是平台删除。用户可以关闭计数通知，但其样式规则仍会保持挂载，以确保隐藏的行不会重新出现。
+重写（rewind）把该区间从模型可见表面移除；人类记录（Transcript）在设计上就是 append-origin（以追加来源为准）、不受影响，所以插件自己隐藏了受影响的行。隐藏规则由 React 渲染的 CSS 提供：这是插件有意覆盖平台有文档记载的展示行为。用户可以关闭计数通知，但其样式规则仍会保持挂载，以确保隐藏的行不会重新出现。
 
-此前提议的「最多隐藏会话 40%」安全阀已被否决。因此，在长 Session 的顶部附近进行大范围 rewind，会按设计造成明显的视觉变化；局部计数通知是用户与几乎空白的 Transcript 之间唯一的说明。隐藏计划失败时，会在受影响的行和诊断日志中报告，而不会悄悄留下不一致的视图。
+用户已拒绝此前提议的「最多隐藏 40% 对话」安全阀，其后果是：**大规模重写在设计上就是视觉上破坏性的，计数是用户与空白页面之间的唯一东西。** 在长 Session 的顶部附近进行重写，可能隐藏几乎整个 Transcript；重写位置的通知会显示实际隐藏的行数。隐藏计划失败时，会在受影响的行和诊断日志中报告，而不会悄悄留下不一致的视图。
 
 ## 目标上游版本
 
@@ -25,7 +27,11 @@ rewind 会从模型可见的 surface 中移除受影响的范围。人类看到�
 | `@deepseek-ai/dsh-*` | `0.2.0-rc.2` |
 | `@deepseek-ai/cordis` | `4.0.4` |
 
-兼容性由 **host surface** 决定，不能只看 semver：插件会读取已安装 Host 实际暴露的成员；当当前断言的某个成员缺失或形状发生变化时，`npm run check` 会失败。`package.json` 中的 `peerDependencies` 范围是 DSH 评估时强制使用的机制（带有 `includePrerelease`），并且范围有上下界；如果运行时不满足 peer 范围，DSH 会报告 `incompatible-version`。上表是本包**验证过**的版本组合，也是开发依赖锁定的版本组合；peer 范围有意设置为更宽的下限，因为如果范围排除了仍能运行该包的 Host 版本，Loader 会静默跳过该 Bundle。
+兼容性由**宿主表面（host surface）决定，不由 semver 决定**：插件会读取已安装 Host 实际暴露的成员；当当前断言的某个成员缺失或形状发生变化时，`npm run check` 会失败。`package.json` 中的 `peerDependencies` 范围是 DSH 评估时强制使用的机制（带有 `includePrerelease`），并且范围有上下界；如果运行时不满足 peer 范围，DSH 会报告 `incompatible-version`。上表是本包**验证过**的版本组合，也是开发依赖锁定的版本组合；peer 范围有意设置为更宽的下限，因为如果范围排除了仍能运行该包的 Host 版本，Loader 会静默跳过该 Bundle。
+
+本包不提供 `./typert` 导出，也不使用 Typert loader 注册描述符。该 loader 需要本插件不使用的完整反射图（`model`），把解析结果与导入的清单缓存到整个进程生命周期，且失败模式是静默跳过；事后补上导出还需要重启应用。直接调用 `ctx.typert.register()` 避开了这些限制。这里的 loader 指 Typert 描述符 loader；插件本身仍通过 `cordis.patch.yml` 加载，浏览器脚本仍通过模块加载器注册。
+
+本包不声明第三方契约包依赖：描述符与写入规则由本包实现，并用宿主自己的校验器和 replay 验证；运行时依赖只有 `zod`。Host 注册和 Client 挂载都通过 `ctx` 访问宿主服务，Client bundle 不直接导入 Typert registry。
 
 ## 目录结构
 
@@ -40,7 +46,9 @@ scripts/probe-profile.mjs  启动隔离 Profile 并验证两侧
 test/                   vitest 测试套件
 ```
 
-`lib/` 是生成目录，并且已提交到仓库。CI 会在运行 `npm run build` 后立即执行 `git diff --exit-code -- lib/`，以证明它与源代码一致；这是唯一能捕获「修改了源代码但没有重新构建」情况的门禁。
+`lib/` 是生成目录，当前全部 11 个生成文件（含 `lib/client.bundle.js`）均已提交到仓库。每个文件都带有 `GENERATED FILE — do not edit by hand` 横幅，点名对应的 `src/` 来源和构建脚本。CI 会在运行 `npm run build` 后立即执行 `git diff --exit-code -- lib/`，以证明它与源代码一致；diff 门禁只在 build 之后才有意义，是构建产物诚实性的保障。
+
+CI 在同一个任务内依次执行 `check → build → git diff --exit-code -- lib/ → test`，任一阶段失败即整体失败。
 
 ## 开发
 
@@ -48,13 +56,14 @@ test/                   vitest 测试套件
 npm install
 npm run check     # 1. 源代码语法  2. 描述符校验  3. Host 契约
 npm run build     # 重建 lib/
+git diff --exit-code -- lib/  # 构建之后确认已提交产物与源码一致
 npm test          # vitest 测试套件
 npm run probe     # 启动隔离 Profile 并验证两侧（仅限 Desktop）
 ```
 
 门禁包括：
 
-1. **`scripts/check-syntax.mjs`** —— 使用打包器自己的解析器解析 `lib/` 下的每个文件。（普通的 `node --check` 只会静默校验第一个参数，因此这里必须遍历目录。）
+1. **`scripts/check-syntax.mjs`** —— 使用打包器自己的解析器解析 `src/` 和 `lib/` 下的每个 JavaScript 文件；这样在 build 之前，源码和已提交产物中的语法错误都能被发现。（普通的 `node --check` 只会静默校验第一个参数，因此这里必须遍历目录。）
 2. **`scripts/check-typert.mjs`** —— 通过已安装的 `@deepseek-ai/dsh-typert-registry` 校验器驱动 Typert 描述符的两侧，而不是重复实现校验规则，因此门禁会随 Host 变化。脚本通过逐项修改真实贡献的副本来断言 §6.3 的七条规则：每次破坏一个字段，校验器都必须根据对应规则拒绝；同时使用接受探测作为正向对照。两条注册路径都会被驱动（Host 侧使用 `ctx.typert.register`，Client 侧使用 `ctx.typert.remotes.register`），并读取实际运行的两个产物，再与两侧进行比较（`lib/index.js` 中的注册和 `lib/client.bundle.js` 中的挂载），因为只验证没人发布的侧面没有意义。描述符表为空时会失败：没有内容可供断言，脚手架所需的 `--allow-empty-descriptors` 让步已经移除（现在传入该参数会以用法错误退出）。
 3. **`scripts/check-host-contract.mjs`** —— 直接读取已安装的 DSH Desktop 应用（`app.asar` 或未打包的 `resources/app`），不联网、不改动 Profile；断言表在 `scripts/host-contract.mjs`，它按**声明该成员的 Host 实体**（类）而不是按文件来组织，因为 `events`、`append`、`get` 这类名字在打包产物里到处都是。两个方向都会被断言：插件读取的每个成员必须仍在（PRESENT），上游已移除的成员必须保持消失（ABSENT，即复活警报），插件两侧按名字导入的绑定同样会被检查（改名的导出会让 Host 侧加载即报错、让浏览器 Bundle 静默失效）。三条规则与断言同等重要：文件、包清单或 Slot 目录项找不到算漂移而非通过；反向断言宁可过度匹配——类字段、getter、方法、构造函数赋值、对象字面量属性，以及 `Object.assign(X.prototype, …)` / `Object.defineProperty` / 计算成员这类挂载式写法都要匹配，连无法枚举成员的 `Object.assign(X.prototype, methods)` 也算；此外还有一条插件侧不变量，扫描 `src/` 与 `lib/`，除日志读取模块外任何文件读取 legacy 事件视图成员（包括 `session["events"]` 这种计算写法）都会以 `file:line` 失败。读取器内置在 `scripts/asar.mjs`（不引依赖），并在打开任何路径之前设置 `process.noAsar = true`，因为 DSH Desktop 在 Electron 的 Node 下运行包脚本，其 asar 包装会拦截以 `.asar` 结尾的路径。没有安装应用时，脚本会打印明确的 `SKIP` 并以零退出，因为该门禁对 Desktop 是可选的；这也是它在 CI Runner 上会显示为「绿色但为空」的原因。
 

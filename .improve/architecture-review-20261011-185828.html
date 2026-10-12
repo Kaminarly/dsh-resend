@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>文件回滚 · 稳定性与架构改进</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad:true, theme:'neutral', securityLevel:'strict' });
+  </script>
+  <style>
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#f5f4ef;color:#172825;font-family:"Microsoft YaHei",system-ui,sans-serif;font-size:15px;line-height:1.8}main{max-width:1100px;margin:auto;padding:64px 32px}h1,h2,h3,p{margin:0}h1{font-size:46px;line-height:1.3;letter-spacing:-2px}h2{font-size:25px;line-height:1.5}h3{font-size:17px}.eyebrow{font-size:12px;letter-spacing:3px;color:#64746d;text-transform:uppercase}.intro{margin:20px 0;color:#4d6159;max-width:780px}.rule{height:1px;background:#cfd7cf;margin:32px 0}.metric-row{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.metric{background:#fff;padding:22px;border:1px solid #dce2d9;border-radius:14px}.metric strong{display:block;font-size:34px;font-weight:600;line-height:1.4}.muted{color:#617369}.tag{display:inline-block;padding:3px 10px;border-radius:5px;font-size:12px;background:#edf3ed;color:#47674e}.strong{background:#deeee1;color:#285c3b}.amber{background:#f3e6c9;color:#805a1e}.card{margin-top:26px;border:1px solid #d3dcd2;background:white;border-radius:18px;overflow:hidden}.card-head{padding:26px 30px;border-bottom:1px solid #e3e8df;display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.files{font-family:Consolas,monospace;font-size:12px;color:#6b7b71;overflow-wrap:anywhere;margin-top:10px}.card-body{padding:26px 30px}.compare{display:grid;grid-template-columns:1fr 1fr;gap:22px}.canvas{min-height:295px;padding:22px;border:1px solid #dce3d9;border-radius:12px;background:#f9faf6;display:flex;flex-direction:column;justify-content:center;gap:10px}.canvas-label{font-size:12px;color:#708274;letter-spacing:2px;margin-bottom:8px}.node{padding:9px 16px;border:1px solid #bccbbc;border-radius:6px;text-align:center;background:white;font-size:13px}.arrow{text-align:center;color:#7b8c7c;line-height:1.2}.leak{color:#a65248;border-color:#d7a59c;background:#fff7f5}.deep{padding:20px;background:#17382e;color:#eef6ef;border:2px solid #17382e;border-radius:10px;text-align:center}.deep .inside{color:#b5d0bc;font-size:13px;padding-top:14px}.seam{border:1px dashed #95ae9a;padding:6px;border-radius:5px}.facts{display:grid;grid-template-columns:70px 1fr;gap:8px 14px;margin-top:20px}.facts dt{color:#69796f}.facts dd{margin:0}.benefits{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.evidence{margin-top:42px}.table-wrap{overflow-x:auto;margin-top:20px}table{border-collapse:collapse;width:100%;font-size:13px}th{text-align:left;font-weight:500;color:#718073;border-bottom:2px solid #ccd7ca;padding:12px}td{padding:14px 12px;border-bottom:1px solid #d8dfd4;vertical-align:top}td:first-child{white-space:nowrap}.risk{margin-top:26px;background:#eee7d8;padding:22px 26px;border-radius:12px;color:#6c5737}.risk ul{margin:8px 0 0;padding-left:20px}.top{margin-top:40px;padding:30px;background:#17382e;color:white;border-radius:16px}.top a{color:#d5eccd}.top p{color:#c7d9cb;margin:12px 0}.flow{background:white;margin-top:28px;padding:26px;border:1px solid #d9e2d6;border-radius:16px}.mermaid{overflow-x:auto;font-size:13px;white-space:pre-wrap}.legend{display:flex;flex-wrap:wrap;gap:20px;font-size:12px;color:#68796d;margin:25px 0}.legend span:before{content:"";display:inline-block;width:14px;height:10px;border:1px solid #9eaf9e;margin-right:6px}.legend .l-seam:before{border-style:dashed}.legend .l-deep:before{background:#17382e}.legend .l-risk:before{border-color:#b16960;background:#fff0ed}footer{margin-top:30px;color:#758174;font-size:12px}a{color:#2b694d}.num{font-family:Consolas,monospace;font-size:12px;color:#95a48e}.stack{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mass{height:120px;display:flex;align-items:center;justify-content:center;border-radius:6px}.small-interface{height:34px;border:1px dashed #91ad99;display:flex;align-items:center;justify-content:center;font-size:12px}svg{width:100%;height:auto;display:block}.status{font-size:13px;color:#2d6246;margin-top:8px}.callout{padding:15px;background:#f6f8f1;border-radius:8px;margin-top:16px;font-size:13px;color:#597057}@media(max-width:700px){main{padding:32px 16px}h1{font-size:34px}.metric-row{gap:8px}.metric{padding:14px}.metric strong{font-size:27px}.compare{grid-template-columns:1fr}.card-head,.card-body{padding:20px}.card-head{flex-direction:column;gap:10px}.canvas{min-height:230px}.facts{grid-template-columns:50px 1fr}.top{padding:22px}}@media print{body{background:white}main{padding:20px}.card{break-inside:avoid}.risk{break-inside:avoid}}
+  </style>
+  <style>
+    body h1{font-size:46px;font-weight:600;line-height:1.3;letter-spacing:-2px}body h2{font-size:25px;font-weight:600;line-height:1.5}body h3{font-size:17px;font-weight:600}body a{color:#2b694d}.risk ul{list-style:disc}@media(max-width:700px){body h1{font-size:34px}}
+  </style>
+</head>
+<body>
+<main class="max-w-6xl mx-auto">
+  <header>
+    <div class="eyebrow">DSH Resend · 2026 年 10 月 11 日</div>
+    <h1>文件回滚<br>稳定性与架构改进</h1>
+    <p class="intro">已实施安全写入、恢复进度持久保存、快照核验与特殊文件保护。正常使用和可控失败路径已验证；多文件恢复仍按文件逐项执行。</p>
+    <div class="metric-row">
+      <div class="metric"><strong>2134</strong><span class="muted">全量测试通过 · 8 项跳过</span></div>
+      <div class="metric"><strong>17</strong><span class="muted">新增异常路径回归</span></div>
+      <div class="metric"><strong>181</strong><span class="muted">回滚与清理相关测试通过</span></div>
+    </div>
+    <div class="legend"><span>module</span><span class="l-seam">seam</span><span class="l-deep">deep module</span><span class="l-risk">风险或职责泄漏</span></div>
+  </header>
+
+  <section aria-label="架构改进候选方案">
+    <article class="card" id="rollback">
+      <div class="card-head"><div><div class="num">01 / 首要推荐</div><h2>收拢文件回滚的预览与恢复状态</h2><div class="files">src/file-versions.js · src/file-rollback.js</div></div><div><span class="tag strong">强烈推荐</span> <span class="tag">可本地替代</span><div class="status">已实施并验证</div></div></div>
+      <div class="card-body">
+        <div class="compare">
+          <div class="canvas"><div class="canvas-label">之前 · 多种状态交织</div><div class="node">工具观察与历史准备</div><div class="arrow">↓</div><div class="stack"><div class="node">预览计划</div><div class="node">文件恢复</div></div><div class="arrow">↓</div><div class="node leak">完成结果依赖内存与最后一次保存</div></div>
+          <div class="canvas"><div class="canvas-label">之后 · 一个恢复 interface</div><div class="node">文件观察与历史准备 module</div><div class="arrow">↓</div><div class="deep"><div class="seam">文件回滚 interface</div><div class="inside">计划核验 → 持久意图 → 逐文件恢复<br>进度保存 → 重启判定 → 完成结果</div></div></div>
+        </div>
+        <dl class="facts"><dt>问题</dt><dd>理解一次恢复需要同时掌握观察、计划、磁盘写入和完成缓存；失败后的顺序要求暴露在宽 interface 中。</dd><dt>方案</dt><dd>由一个 deep 文件回滚 module 拥有完整恢复过程，历史准备保留在原 module。</dd><dt>收益</dt><dd>depth 增加；locality 集中在恢复状态，leverage 覆盖面板、重启和多 Host；测试从同一 Remote interface 检查真实文件结果。</dd></dl>
+        <div class="benefits"><span class="tag">locality：恢复状态集中</span><span class="tag">leverage：重启与多窗口</span><span class="tag">测试覆盖同一 interface</span></div>
+      </div>
+    </article>
+
+    <article class="card" id="workfiles">
+      <div class="card-head"><div><div class="num">02 / 安全写入</div><h2>让工作文件保护成为 deep module</h2><div class="files">src/rollback-files.js · src/file-versions.js · src/file-rollback.js</div></div><div><span class="tag strong">强烈推荐</span> <span class="tag">可本地替代</span><div class="status">已实施并验证</div></div></div>
+      <div class="card-body">
+        <div class="compare">
+          <div class="canvas"><div class="canvas-label">之前 · 检查与写入分离</div><div class="node">路径检查 + 当前内容读取</div><div class="arrow">↓</div><div class="node leak">直接覆盖目标文件</div><div class="arrow">↓</div><div class="node leak">写入失败可能留下半份内容</div></div>
+          <div class="canvas"><div class="canvas-label">之后 · 条件检查收在 seam 后</div><div class="deep"><div class="seam">读取 / 恢复 interface</div><div class="inside">路径与文件身份保护<br>拒绝硬链接 · 暂存并刷盘<br>再次核验 · 替换 · 事后核验</div></div><div class="node">目标文件完整保留或明确报告结果</div></div>
+        </div>
+        <dl class="facts"><dt>问题</dt><dd>读取与恢复共用的安全规则没有覆盖硬链接，最终写入方式仍会暴露截断风险。</dd><dt>方案</dt><dd>把安全读取和暂存替换放到同一个 module；工具观察与恢复执行共用其 implementation。</dd><dt>收益</dt><dd>locality 集中路径与字节保护；leverage 同时覆盖观察与恢复。删除这个 module 会把复杂检查重新分散，符合 deletion test。</dd></dl>
+        <div class="callout">通过真实文件系统 adapter 注入部分写入失败和外部编辑。最终核验与替换之间仍存在短暂调度窗口，未承诺任意外部写入下的原子条件更新。</div>
+      </div>
+    </article>
+
+    <article class="card" id="snapshots">
+      <div class="card-head"><div><div class="num">03 / 可信内容</div><h2>统一私有快照的核验承诺</h2><div class="files">src/file-snapshots.js · test/file-rollback.test.mjs</div></div><div><span class="tag strong">强烈推荐</span> <span class="tag">可本地替代</span><div class="status">已实施并验证</div></div></div>
+      <div class="card-body">
+        <div class="compare">
+          <div class="canvas"><div class="canvas-label">之前 · 两个 adapter 的承诺不同</div><div class="small-interface">读取内容地址 interface</div><div class="stack"><div class="node">CAS adapter<br>核验 SHA-256</div><div class="node leak">Git adapter<br>直接返回 blob</div></div><div class="node leak">错误 blob 可能进入恢复计划</div></div>
+          <div class="canvas"><div class="canvas-label">之后 · 统一可信内容</div><div class="deep"><div class="seam">私有快照 interface</div><div class="inside">CAS adapter：核验内容散列<br>Git adapter：核验 blob 地址<br>不匹配 → 拒绝读取</div></div><div class="node">预览明确显示无法还原原因</div></div>
+        </div>
+        <dl class="facts"><dt>问题</dt><dd>相同 interface 在 Git 与 CAS 下给出不同的内容可信度，调用者无法判断快照是否受损。</dd><dt>方案</dt><dd>保留两个实际 adapter 的 seam，将 Git 地址核验补到快照 module 内。</dd><dt>收益</dt><dd>无需新增 shallow 转发层；implementation 吸收核验差异，locality 与 leverage 同时改善。</dd></dl>
+      </div>
+    </article>
+
+    <article class="card" id="coordination">
+      <div class="card-head"><div><div class="num">04 / 存储协作</div><h2>让锁的归属在发布时完整可见</h2><div class="files">src/private-storage.js · test/storage-cleanup.test.mjs</div></div><div><span class="tag strong">强烈推荐</span> <span class="tag">可本地替代</span><div class="status">已实施并验证</div></div></div>
+      <div class="card-body">
+        <div class="compare">
+          <div class="canvas"><div class="canvas-label">之前 · 分两步发布锁</div><div class="node">创建锁目录</div><div class="arrow leak">↓ 中途退出</div><div class="node leak">缺少 owner 的锁无法判定归属</div><div class="arrow">↓</div><div class="node">后续操作反复等待失败</div></div>
+          <div class="canvas"><div class="canvas-label">之后 · 完整归属先准备</div><div class="node">先准备完整 PID / owner</div><div class="arrow">↓</div><div class="deep"><div class="seam">存储协作 interface</div><div class="inside">原子独占发布<br>已知死亡主锁 → 回收<br>未知旧锁 → 明确拒绝</div></div></div>
+        </div>
+        <dl class="facts"><dt>问题</dt><dd>存储协作 module 向调用者泄漏“锁可能没有归属”的隐含状态，重复等待不能解决问题。</dd><dt>方案</dt><dd>完整 owner 文件先写好，再以独占链接发布；无法证明归属的遗留锁保守拒绝。</dd><dt>收益</dt><dd>locality 集中协作规则；leverage 覆盖编辑重发、文件回滚和清理。真实子进程验证正常死亡主锁可恢复。</dd></dl>
+        <div class="callout">保留 ADR-0001 的清理原则：未知回滚数据可以在确认后清理，整体扫描失败不能当成全部无归属。工作文件与未知协调锁不按这一原则盲目删除。</div>
+      </div>
+    </article>
+  </section>
+
+  <section class="flow" aria-label="优化后的文件回滚流程">
+    <h2>优化后的恢复流程</h2>
+    <p class="muted">预览只检查工作文件。确认后，每次文件变化都由持久进度保护。</p>
+    <pre class="mermaid">flowchart LR
+      A[用户确认原预览] --> B[整份清单重新核验]
+      B --> C[保存该文件恢复意图]
+      C --> D[暂存并刷盘]
+      D --> E[核验目标及回复状态]
+      E --> F[替换或删除文件]
+      F --> G[事后核验并保存进度]
+      G --> H[保存完成结果]
+      C -.重启发现结果不确定.-> I[保留当前文件]
+      classDef deep fill:#17382e,color:#ffffff,stroke:#17382e;
+      class C,G,H deep
+    </pre>
+  </section>
+
+  <section class="evidence" aria-label="稳定性证据">
+    <h2>稳定性证据</h2>
+    <div class="table-wrap"><table><thead><tr><th>检查</th><th>结果</th><th>保护对象</th></tr></thead><tbody>
+      <tr><td>部分暂存写入失败</td><td>目标完整；普通失败清除暂存；重试恢复原字节</td><td>中文、CRLF 与原文件内容</td></tr>
+      <tr><td>恢复中外部编辑</td><td>替换前重新核验，替换后检测；明确停止</td><td>最新编辑与后续待处理文件</td></tr>
+      <tr><td>重启与部分重试</td><td>已恢复及不确定文件不自动重做</td><td>同一 Rewind point 的防重复规则</td></tr>
+      <tr><td>两个 Host plugin</td><td>重新读取变化中的进度，完成状态共享</td><td>多窗口恢复一致性</td></tr>
+      <tr><td>特殊路径与损坏快照</td><td>硬链接、junction 与错误 Git blob 被拒绝</td><td>目录外内容与目标原始内容</td></tr>
+      <tr><td>完整检查与真实宿主</td><td>构建、契约、全量测试与隔离启动通过</td><td>可安装产物与宿主兼容性</td></tr>
+    </tbody></table></div>
+    <div class="risk"><h3>已明确的限制</h3><ul><li>多文件恢复逐项执行，后续失败不会撤销此前已发生的恢复。</li><li>外部写入不参与插件锁；最终核验与替换之间仍有短暂竞争窗口。</li><li>未做整机断电耐久性测试；硬终止可能留下工作目录暂存文件。</li><li>未知旧锁或死亡恢复锁明确拒绝，需要退出宿主后检查归属。</li><li>大文件规模与内存占用未做压测；恢复承诺覆盖内容，不涵盖全部文件元数据。</li></ul></div>
+  </section>
+
+  <section class="top" id="top-recommendation">
+    <div class="eyebrow" style="color:#b3c6b4">首要推荐</div><h2>先收拢恢复状态，再统一安全写入</h2>
+    <p>这两项直接影响失败后的文件保护与防重复行为。已根据本次优化请求实施，并通过真实文件、重启与多 Host 测试验证。</p>
+    <a href="#rollback">查看首要方案 ↑</a>　<a href="../docs/file-rollback-stability-report.md">阅读完整稳定性报告</a>
+  </section>
+  <footer>审查基于当前工作区 · 保留已有改动与原有中文 · 未替换真实 Profile 中的已安装插件<br>使用 improve-codebase-architecture、codebase-design 与领域建模流程；独立子代理审查。CDN 不可用时，正文和前后结构图仍可阅读。</footer>
+</main>
+</body>
+</html>

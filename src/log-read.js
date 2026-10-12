@@ -160,7 +160,8 @@ export async function readCoveringLog(ctx, sessionId) {
   // handle: the live session still comes from `sessions.get(id)` (spec §4.2).
   // Reading the surface out of the header here would be reading a snapshot that
   // knows nothing about the plugin's own latest appends.
-  const log = asArray(covering?.events)
+  if (!Array.isArray(covering?.events)) return { status: 'refused', reason: 'internal', detail: 'the covering log is not an array' }
+  const log = covering.events
   return { status: 'ok', log, lastCoveredSeq: lastSeqOf(log) }
 }
 

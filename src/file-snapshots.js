@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { safePrivatePath } from './private-storage.js'
 
 function git(args, cwd, input) {
   return new Promise((resolve, reject) => {
@@ -34,6 +35,7 @@ export function createSnapshotStore(home) {
   }
   return {
     async backend(cwd) {
+      safePrivatePath(home, 'objects.git/objects')
       try {
         const result = await git(['rev-parse', '--is-inside-work-tree'], cwd)
         if (result.code === 0 && result.output.toString('utf8').trim() === 'true') {
@@ -48,6 +50,7 @@ export function createSnapshotStore(home) {
       return 'cas'
     },
     async put(bytes, backend) {
+      safePrivatePath(home, backend === 'git' ? 'objects.git/objects' : 'objects')
       if (bytes === null) return null
       if (backend === 'git') {
         const oid = (await checked([`--git-dir=${gitDir}`, 'hash-object', '-w', '--stdin'], home, bytes)).toString('utf8').trim()
@@ -56,14 +59,21 @@ export function createSnapshotStore(home) {
       const oid = digest(bytes)
       const directory = path.join(home, 'objects')
       await mkdir(directory, { recursive: true })
-      await writeFile(path.join(directory, oid), bytes, { flag: 'wx', mode: 0o600 }).catch((error) => { if (error.code !== 'EEXIST') throw error })
+      await writeFile(safePrivatePath(home, `objects/${oid}`), bytes, { flag: 'wx', mode: 0o600 }).catch((error) => { if (error.code !== 'EEXIST') throw error })
       return `cas:${oid}`
     },
     async get(ref) {
+      safePrivatePath(home, 'objects.git/objects')
       if (ref === null) return null
-      if (/^git:[a-f0-9]{40,64}$/.test(ref)) return checked([`--git-dir=${gitDir}`, 'cat-file', 'blob', ref.slice(4)], home)
+      if (/^git:(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(ref)) {
+        const oid = ref.slice(4)
+        const bytes = await checked([`--git-dir=${gitDir}`, 'cat-file', 'blob', oid], home)
+        const address = createHash(oid.length === 40 ? 'sha1' : 'sha256').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+        if (address !== oid) throw new Error('snapshot content does not match its address')
+        return bytes
+      }
       if (/^cas:[a-f0-9]{64}$/.test(ref)) {
-        const bytes = await readFile(path.join(home, 'objects', ref.slice(4)))
+        const bytes = await readFile(safePrivatePath(home, `objects/${ref.slice(4)}`))
         if (digest(bytes) !== ref.slice(4)) throw new Error('snapshot content does not match its address')
         return bytes
       }

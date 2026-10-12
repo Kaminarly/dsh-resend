@@ -1,19 +1,16 @@
 /** Private Phase 2 substrate. No service field or Remote method exposes records. */
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createSnapshotStore, digest } from './file-snapshots.js'
 import { readCoveringLog, eventAtSeq } from './log-read.js'
 import { describeError, hostService, logWarning } from './host.js'
-import { hasMarkerPrefix } from './marker.js'
-import { planConversationRollback, executeConversationRollback } from './conversation-rollback.js'
+import { createPrivateStorage, safePrivatePath } from './private-storage.js'
+import { createStorageCleanup } from './storage-cleanup.js'
+import { contents, fileTarget, sameContents as equal } from './rollback-files.js'
+import { createFileRollback } from './file-rollback.js'
 
 const refused = (code) => ({ ok: false, error: { code } })
-const refusedFiles = (files, reasons = new Map()) => files.map((file) => ({
-  path: file.path, action: 'refuse', reason: file.reason ?? reasons.get(file.path) ?? 'execution-stopped',
-}))
-const equal = (a, b) => a === null || b === null ? a === b : a.equals(b)
 const normalizedText = (bytes, keepBom = false) => bytes === null ? null : new TextDecoder('utf-8', { fatal: true, ignoreBOM: keepBom }).decode(bytes).replaceAll('\r\n', '\n')
 
 /** The legacy editor returns only a status; verify its deterministic change. */
@@ -42,44 +39,31 @@ function mutationPath(name, args) {
   if (name === 'str_replace_editor' && ['create', 'str_replace', 'insert'].includes(args?.command)) return args.path
 }
 
-/** Refuse links and metadata paths, including links in parent directories. */
-async function fileTarget(cwd, name) {
-  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || typeof name !== 'string' || name === '') throw new Error('unsafe-path')
-  const absolute = path.resolve(cwd, name)
-  const relative = path.relative(cwd, absolute)
-  const parts = relative.split(path.sep)
-  if (relative === '' || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative) || parts.some((part) => part.toLowerCase() === '.git')) throw new Error('unsafe-path')
-  let current = path.parse(absolute).root
-  for (const part of absolute.slice(current.length).split(path.sep)) {
-    current = path.join(current, part)
-    try {
-      if ((await lstat(current)).isSymbolicLink()) throw new Error('unsafe-path')
-    } catch (error) { if (error.code !== 'ENOENT') throw error }
-  }
-  return absolute
-}
-
-async function contents(cwd, name) {
-  const absolute = await fileTarget(cwd, name)
-  try {
-    if (!(await lstat(absolute)).isFile()) throw new Error('not-regular-file')
-    return await readFile(absolute)
-  } catch (error) { if (error.code === 'ENOENT') return null; throw error }
-}
-
 export function createFileVersions(ctx) {
-  const home = path.join(path.resolve(process.env.DSH_HOME?.trim() || path.join(homedir(), '.dsh')), 'plugins', 'dsh-resend')
+  const storage = createPrivateStorage(ctx)
+  const { home } = storage
   const snapshots = createSnapshotStore(home)
   // Observations are not versions: they stay private in memory until a rewind.
   const observations = new Map()
-  const plans = new Map()
-  const recordPath = (sessionId, id) => path.join(home, 'records', `${digest(JSON.stringify([sessionId, id]))}.json`)
+  const rollback = createFileRollback(ctx, { home, snapshots })
+  const generations = new Map()
+  const recordPath = (sessionId, id) => safePrivatePath(home, `records/${digest(JSON.stringify([sessionId, id]))}.json`)
   const observationKey = (sessionId, callId) => JSON.stringify([sessionId, callId])
+
+  function synchronizeGeneration(sessionId) {
+    const generation = storage.generation(sessionId)
+    if (generations.get(sessionId) === generation) return
+    generations.set(sessionId, generation)
+    rollback.invalidate(sessionId)
+    for (const key of observations.keys()) if (JSON.parse(key)[0] === sessionId) observations.delete(key)
+  }
 
   ctx.on('tools/execute', async (exec, next) => {
     const session = exec.agent?.session
     const name = mutationPath(exec.name, exec.arguments)
     if (session === undefined || name === undefined) return next()
+    return storage.activity(session.id, 'generating', async () => {
+    synchronizeGeneration(session.id)
     const cwd = session.header.cwd
     let before
     let reason
@@ -109,14 +93,15 @@ export function createFileVersions(ctx) {
     } catch { reason ??= 'unreadable-file' }
     observations.set(observationKey(session.id, exec.callId), { path: normalized, before, after, reason })
     return result
+    })
   })
   ctx.on('session/disposed', (session) => {
     for (const key of observations.keys()) if (JSON.parse(key)[0] === session.id) observations.delete(key)
-    for (const [key, plan] of plans) if (plan.sessionId === session.id) plans.delete(key)
   })
-  ctx.effect(() => () => { observations.clear(); plans.clear() })
+  ctx.effect(() => () => { observations.clear() })
 
   async function prepare(session, plan, carrierId) {
+    synchronizeGeneration(session.id)
     const covering = await readCoveringLog(ctx, session.id)
     if (covering.status !== 'ok') throw new Error(covering.detail)
     const files = new Map()
@@ -138,8 +123,10 @@ export function createFileVersions(ctx) {
       const change = observed ?? { path: name, reason: 'prior-state-unavailable' }
       // Failed calls with no mutations are not part of the file set.
       if (observed !== undefined && observed.reason === undefined && equal(observed.before, observed.after)) continue
-      const previous = files.get(change.path)
-      if (previous === undefined) files.set(change.path, { ...change })
+      // Windows names with different casing still refer to the same file.
+      const key = process.platform === 'win32' ? change.path.toLowerCase() : change.path
+      const previous = files.get(key)
+      if (previous === undefined) files.set(key, { ...change })
       else {
         if (previous.reason === undefined && change.reason === undefined && !equal(previous.after, change.before)) previous.reason = 'diverged-between-writes'
         previous.reason ??= change.reason
@@ -149,116 +136,42 @@ export function createFileVersions(ctx) {
     const backend = [...files.values()].some((file) => file.reason === undefined) ? await snapshots.backend(session.header.cwd) : 'cas'
     const records = []
     for (const file of files.values()) {
+      if (file.reason === undefined && equal(file.before, file.after)) continue
       if (file.reason !== undefined) records.push({ path: file.path, reason: file.reason })
       else records.push({ path: file.path, before: await snapshots.put(file.before, backend), after: await snapshots.put(file.after, backend) })
     }
     const target = recordPath(session.id, carrierId)
     await mkdir(path.dirname(target), { recursive: true })
     const staging = `${target}.${randomUUID()}.pending`
-    await writeFile(staging, JSON.stringify(records), { flag: 'wx', mode: 0o600 })
+    await writeFile(staging, JSON.stringify({ sessionId: session.id, carrierId, files: records }), { flag: 'wx', mode: 0o600 })
     await rename(staging, target)
     return {
+      preview: () => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, phase: 'preview' }, carrierId),
+      rollback: request => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, ...request }, carrierId),
       async discardUnlessWritten() {
         const read = await readCoveringLog(ctx, session.id)
-        if (read.status === 'ok' && !read.log.some((event) => event.type === 'user/message' && event.data.id === carrierId)) await unlink(target)
+        if (read.status === 'ok' && !read.log.some((event) => event.type === 'user/message' && event.data.id === carrierId)) {
+          await unlink(target).catch(error => { if (error.code !== 'ENOENT') throw error })
+        }
       },
     }
   }
 
-  async function rollback(request) {
-    const { sessionId, carrierSeq, phase, planId } = request
-    // Omitted scope retains ticket 12's artifacts-only Remote behavior.
-    const scope = request.scope ?? 'artifacts'
-    if (!['conversation', 'artifacts', 'both'].includes(scope) || !['preview', 'execute', 'cancel'].includes(phase)) return refused('bad-request')
-    if (typeof sessionId !== 'string' || sessionId === '' || !Number.isSafeInteger(carrierSeq) || carrierSeq < 0) return refused('bad-request')
-    const session = hostService(ctx, 'sessions')?.get(sessionId)
-    if (session === undefined) return refused('session-not-found')
-    const agent = hostService(ctx, 'agents')?.get(sessionId)
-    if (agent?.status !== 'idle') {
-      const pending = plans.get(planId)
-      return phase === 'execute' && pending?.sessionId === sessionId && pending.carrierSeq === carrierSeq
-        ? { ok: false, error: { code: 'agent-busy', files: refusedFiles(pending.files) } } : refused('agent-busy')
-    }
-    const covering = await readCoveringLog(ctx, sessionId)
-    if (covering.status !== 'ok') return refused('internal')
-    const carrier = eventAtSeq(covering.log, carrierSeq)
-    if (carrier?.type !== 'user/message' || !hasMarkerPrefix(carrier.data?.id) || carrier.surfaceOp?.op !== 'replace') return refused('no-target-state')
-    if (phase !== 'preview') {
-      const plan = plans.get(planId)
-      if (plan === undefined || plan.sessionId !== sessionId || plan.carrierSeq !== carrierSeq) return refused('plan-not-found')
-      if (plan.scope !== scope) return refused('plan-scope-mismatch')
-      plans.delete(planId)
-      if (phase === 'cancel') return { ok: true, value: plan.preview }
-      if (phase !== 'execute') return refused('bad-request')
-      if (plan.conversation !== undefined && session.seq !== plan.conversation.tail) return { ok: false, error: {
-        code: 'conversation-stale', files: refusedFiles(plan.files),
-      } }
-      // Revalidate the SAME plan, never silently calculate a new one.
-      const divergences = new Map()
-      for (const file of plan.files) {
-        if (file.action === 'refuse') continue
-        try { if (!equal(await contents(session.header.cwd, file.path), file.after)) divergences.set(file.path, 'content-diverged') }
-        catch (error) { divergences.set(file.path, error.message === 'unsafe-path' ? 'unsafe-path' : 'unreadable-file') }
-      }
-      if (divergences.size > 0) return { ok: false, error: { code: 'preview-stale', files: refusedFiles(plan.files, divergences) } }
-      if (agent.status !== 'idle') return { ok: false, error: { code: 'agent-busy', files: refusedFiles(plan.files) } }
-      let conversation
-      if (plan.conversation !== undefined) {
-        const result = await executeConversationRollback(ctx, session, plan.conversation, prepare)
-        if (!result.ok) return { ok: false, error: { ...result.error, files: refusedFiles(plan.files) } }
-        conversation = result.value
-      }
-      const processed = []
-      for (const file of plan.files) {
-        if (file.action === 'refuse') continue
-        try {
-          const absolute = await fileTarget(session.header.cwd, file.path)
-          if (!equal(await contents(session.header.cwd, file.path), file.after)) throw new Error('content-diverged')
-          if (agent.status !== 'idle') throw new Error('agent-busy')
-          if (file.before === null) await unlink(absolute)
-          else await writeFile(absolute, file.before)
-          processed.push(file.path)
-        } catch (error) {
-          const reason = ['content-diverged', 'unsafe-path', 'agent-busy'].includes(error.message) ? error.message : 'restore-failed'
-          return { ok: false, error: { code: 'execution-stopped', ...(conversation === undefined ? {} : { conversation }), files: plan.files.map((entry) => processed.includes(entry.path)
-            ? { path: entry.path, action: 'restored' }
-            : { path: entry.path, action: 'refuse', reason: entry.reason ?? (entry.path === file.path ? reason : 'execution-stopped') }) } }
-        }
-      }
-      return { ok: true, value: { ...plan.preview, ...(conversation === undefined ? {} : { conversation }) } }
-    }
-    let record
-    try { record = scope === 'conversation' ? [] : JSON.parse(await readFile(recordPath(sessionId, carrier.data.id), 'utf8')) }
-    catch (error) { if (error.code === 'ENOENT') return refused('no-target-state'); throw error }
-    const files = []
-    for (const file of record) {
-      let reason = file.reason
-      let before
-      let after
-      if (reason === undefined) {
-        try {
-          before = await snapshots.get(file.before)
-          after = await snapshots.get(file.after)
-          if (!equal(await contents(session.header.cwd, file.path), after)) reason = 'content-diverged'
-        } catch (error) { reason = error.message === 'unsafe-path' ? 'unsafe-path' : 'snapshot-unavailable' }
-      }
-      files.push({ path: file.path, action: reason === undefined ? 'restore' : 'refuse', ...(reason === undefined ? { before, after } : { reason }) })
-    }
-    for (const [id, plan] of plans) if (plan.sessionId === sessionId && plan.carrierSeq === carrierSeq) plans.delete(id)
-    const id = randomUUID()
-    const conversation = scope === 'artifacts' ? undefined : planConversationRollback(session, carrier)
-    if (scope !== 'artifacts' && conversation === undefined) return refused('target-shadowed')
-    const preview = { planId: id, ...(request.scope === undefined ? {} : { scope }),
-      ...(conversation === undefined ? {} : { conversation: { action: conversation.count === 0 ? 'unchanged' : 'rewind', count: conversation.count } }),
-      files: files.map(({ path, action, reason }) => ({ path, action, ...(reason === undefined ? {} : { reason }) })) }
-    plans.set(id, { sessionId, carrierSeq, scope, conversation, files, preview })
-    return { ok: true, value: preview }
-  }
+
   return {
-    prepare,
+    generation: sessionId => storage.generation(sessionId),
+    prepare: (...args) => storage.exclusive(() => prepare(...args)),
+    cleanup: createStorageCleanup(ctx, storage),
+    async withOperation(sessionId, reason, task) {
+      try { return await storage.operation(sessionId, reason, task) }
+      catch (error) {
+        logWarning(ctx, `private storage operation failed: ${describeError(error)}`)
+        return refused(['storage-busy', 'storage-recovery-required'].includes(error.message) ? error.message : 'internal')
+      }
+    },
     async rollback(request) {
-      try { return await rollback(request) }
-      catch (error) { logWarning(ctx, `file rollback failed: ${describeError(error)}`); return refused('internal') }
+      synchronizeGeneration(request.sessionId)
+      return rollback.rollback(request)
     },
   }
 }

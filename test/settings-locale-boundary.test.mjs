@@ -166,17 +166,17 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     expect(typeof registration.component).toBe('function')
   })
 
-  it('keeps hiding fixed while the remaining settings default to on', async () => {
+  it('keeps hiding fixed with display settings on and range restrictions off by default', async () => {
     const composition = await activated()
     const settingsDom = await renderDom(createElement(settingsOf(composition).component))
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     try {
-      // Every preference starts on.
+      // Display preferences start on; independent range restrictions start off.
       expect(toggleIn(settingsDom.container, 'hideReplacedMessages')).toBeNull()
       expect(settingsDom.container.querySelectorAll('[role=switch]')).toHaveLength(4)
       for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage']) {
         const toggle = settingsDom.container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
-        expect(toggle?.getAttribute('aria-checked')).toBe('true')
+        expect(toggle?.getAttribute('aria-checked')).toBe(String(!field.startsWith('restrict')))
       }
 
       // Send one edit so this page has a record: seqs 2 and 3 are shadowed.
@@ -264,7 +264,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
 
     // The slot-projected labels are thunks, and they read the live locale.
     expect(typeof registration.options.label).toBe('function')
-    expect(registration.options.label().props.text).toBe('Message editing')
+    expect(registration.options.label().props.text).toBe('DSH Resend')
     expect(typeof strip.options.label).toBe('function')
     expect(strip.options.label()).toBe('Regenerate')
 
@@ -288,7 +288,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, '编辑')).not.toBeNull()
       expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
-      expect(registration.options.label().props.text).toBe('消息编辑')
+      expect(registration.options.label().props.text).toBe('DSH Resend')
       expect(strip.options.label()).toBe('重新生成')
       expect(composition.record.dictionaries).toHaveLength(1)
       expect(composition.record.mounts).toHaveLength(5)

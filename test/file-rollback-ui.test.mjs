@@ -3,76 +3,129 @@ import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { renderDom } from './helpers/render.mjs'
 
-it('shows every planned file and refusal before executing the same plan; cancel writes nothing', async () => {
+async function panel(rollback, status = async () => ({ ok: true, value: { planId: '', completed: false, files: [] } })) {
   const { FileRollbackPreview, createResendOperations } = clientHalf().exports
   const calls = []
+  const operations = createResendOperations({ resend: { rollback: async (request) => {
+    if (request.phase === 'status') return { ok: true, value: await status(request) }
+    calls.push(request)
+    return { ok: true, value: await rollback(request) }
+  } } })
+  const dom = await renderDom(createElement(FileRollbackPreview, { operations, point: { sessionId: 's', carrierSeq: 5 }, t: (key) => key }))
+  const button = (key) => [...dom.container.querySelectorAll('button')].find((node) => node.textContent === key)
+  return { dom, calls, button }
+}
+
+it('starts compact, previews every file and refusal, cancels without executing, and executes the same file-only plan', async () => {
   const preview = { ok: true, value: { planId: 'opaque-plan', files: [
-    { path: 'safe.txt', action: 'restore' },
+    { path: 'src/safe.txt', action: 'restore' },
     { path: 'user.txt', action: 'refuse', reason: 'content-diverged' },
   ] } }
-  const operations = createResendOperations({ resend: { rollback: async (request) => { calls.push(request); return { ok: true, value: preview } } } })
-  const dom = await renderDom(createElement(FileRollbackPreview, { operations, point: { sessionId: 's', carrierSeq: 5 }, t: (key) => key }))
+  const { dom, calls, button } = await panel(async () => preview)
   try {
-    const button = (key) => [...dom.container.querySelectorAll('button')].find((node) => node.textContent === key)
-    await dom.click(button('files.preview'))
+    expect(dom.container.querySelectorAll('input[type=radio]')).toHaveLength(0)
+    expect(dom.container.querySelectorAll('button')).toHaveLength(1)
+    expect(dom.container.querySelector('ul')).toBeNull()
+    await dom.click(button('files.previewShort'))
     expect(dom.container.textContent).toContain('safe.txt')
+    expect(dom.container.textContent).toContain('src/')
     expect(dom.container.textContent).toContain('user.txt')
     expect(dom.container.textContent).toContain('files.reason.content-diverged')
     expect(calls.map((call) => call.phase)).toEqual(['preview'])
     await dom.click(button('files.cancel'))
     expect(calls.map((call) => call.phase)).toEqual(['preview', 'cancel'])
-    await dom.click(button('files.preview'))
-    await dom.click(button('files.execute'))
+    expect(dom.container.querySelector('ul')).toBeNull()
+    await dom.click(button('files.previewShort'))
+    await dom.click(button('files.executeCount'))
     expect(calls.at(-1)).toEqual({ sessionId: 's', carrierSeq: 5, scope: 'artifacts', phase: 'execute', planId: 'opaque-plan' })
     expect(dom.container.textContent).toContain('files.completed')
-    expect(dom.container.textContent).toContain('user.txt')
+    expect(dom.container.textContent).toContain('files.restored')
+    expect(dom.container.textContent).toContain('files.kept')
+    expect(button('files.executeCount')).toBeUndefined()
+    await dom.click(button('files.closeResult'))
+    expect(dom.container.querySelector('ul')).toBeNull()
+    expect(button('files.previewShort') === undefined).toBe(true)
+    expect(dom.container.textContent).toContain('files.finished')
+    expect(button('files.viewResult')).toBeDefined()
+    await dom.click(button('files.viewResult'))
+    expect(dom.container.textContent).toContain('files.restored')
+    expect(button('files.executeCount')).toBeUndefined()
+    expect(calls.map((call) => call.phase)).toEqual(['preview', 'cancel', 'preview', 'execute'])
+    expect(dom.container.textContent).not.toContain('rollback.conversation')
   } finally { await dom.cleanup() }
 })
 
-it('offers three independent scopes and requires a fresh preview after switching scope', async () => {
-  const { FileRollbackPreview, createResendOperations } = clientHalf().exports
-  const calls = []
-  const operations = createResendOperations({ resend: { rollback: async (request) => {
-    calls.push(request)
-    return { ok: true, value: { ok: true, value: { planId: 'plan', scope: request.scope, files: [], conversation: { action: 'rewind', count: 3 } } } }
-  } } })
-  const dom = await renderDom(createElement(FileRollbackPreview, { operations, point: { sessionId: 's', carrierSeq: 5 }, t: (key) => key }))
+it('loads a persisted completion as a collapsed result without offering preview or execution', async () => {
+  let reads = 0
+  const { dom, calls, button } = await panel(async () => { throw new Error('completed points cannot preview or execute') }, async () => {
+    reads++
+    return { ok: true, value: { planId: 'saved-plan', completed: true, files: [{ path: 'saved.txt', action: 'restore' }] } }
+  })
   try {
-    const button = (key) => [...dom.container.querySelectorAll('button')].find((node) => node.textContent === key)
-    expect([...dom.container.querySelectorAll('input[type=radio]')].map((node) => node.value)).toEqual(['conversation', 'artifacts', 'both'])
-    await dom.click(dom.container.querySelector('input[value=conversation]'))
-    expect(button('rollback.execute')).toBeUndefined()
-    await dom.click(button('files.preview'))
-    expect(calls.at(-1).scope).toBe('conversation')
-    expect(dom.container.textContent).toContain('rollback.conversation.rewind')
-    expect(button('rollback.execute').disabled).toBe(false)
-    await dom.click(dom.container.querySelector('input[value=both]'))
-    expect(button('rollback.execute')).toBeUndefined()
-    await dom.click(button('files.preview'))
-    await dom.click(button('rollback.execute'))
-    expect(calls.at(-1)).toMatchObject({ phase: 'execute', scope: 'both', planId: 'plan' })
+    expect(reads).toBe(1)
+    expect(button('files.previewShort') === undefined).toBe(true)
+    expect(dom.container.textContent).toContain('files.finished')
+    expect(dom.container.querySelector('ul')).toBeNull()
+    await dom.click(button('files.viewResult'))
+    expect(dom.container.textContent).toContain('saved.txt')
+    expect(dom.container.textContent).toContain('files.restored')
+    expect(button('files.executeCount')).toBeUndefined()
+    await dom.click(button('files.closeResult'))
+    expect(button('files.previewShort') === undefined).toBe(true)
+    expect(dom.container.textContent).toContain('files.finished')
+    expect(calls).toEqual([])
   } finally { await dom.cleanup() }
 })
 
-it.each([true, false])('keeps the final refusal report at the replacement point (success=%s)', async (ok) => {
-  const { FileRollbackPreview, createResendOperations } = clientHalf().exports
-  const files = [{ path: 'user.txt', action: 'refuse', reason: 'content-diverged' }]
-  const conversation = { action: 'rewound', count: 2, carrierSeq: 9, shadowedSeqs: [5, 6, 7] }
-  const completed = ok ? { ok: true, value: { planId: 'plan', scope: 'both', files, conversation } }
-    : { ok: false, error: { code: 'execution-stopped', files, conversation } }
-  const operations = createResendOperations({ resend: { rollback: async (request) => ({ ok: true, value: request.phase === 'preview'
-    ? { ok: true, value: { planId: 'plan', scope: 'both', files, conversation: { action: 'rewind', count: 2 } } }
-    : completed }) } })
-  const props = { operations, t: (key) => key }
-  const dom = await renderDom(createElement(FileRollbackPreview, { ...props, key: 5, point: { sessionId: 's', carrierSeq: 5 } }))
+it.each([{ files: [] }, { files: [{ path: 'user.txt', action: 'refuse', reason: 'content-diverged' }] }])('has no confirmation action when no files can be restored: $files', async ({ files }) => {
+  const { dom, calls, button } = await panel(async () => ({ ok: true, value: { planId: 'no-restores', files } }))
   try {
-    await dom.click(dom.container.querySelector('input[value=both]'))
-    await dom.click([...dom.container.querySelectorAll('button')].find((node) => node.textContent === 'files.preview'))
-    await dom.click([...dom.container.querySelectorAll('button')].find((node) => node.textContent === 'rollback.execute'))
-    await dom.render(createElement(FileRollbackPreview, { ...props, key: 9, point: { sessionId: 's', carrierSeq: 9 } }))
-    expect(dom.container.textContent).toContain('user.txt')
-    expect(dom.container.textContent).toContain('files.reason.content-diverged')
-    expect(dom.container.textContent).toContain('rollback.conversation.rewound')
-    expect(dom.container.textContent).toContain(ok ? 'rollback.completed' : 'files.error.execution-stopped')
+    await dom.click(button('files.previewShort'))
+    expect(button('files.executeCount')).toBeUndefined()
+    expect(dom.container.textContent).toContain(files.length ? 'files.reason.content-diverged' : 'files.empty')
+    await dom.click(button('files.close'))
+    expect(calls.map((call) => call.phase)).toEqual(['preview', 'cancel'])
+    expect(dom.container.querySelector('ul')).toBeNull()
+  } finally { await dom.cleanup() }
+})
+
+it('retains both restored and refused files after execution stops and requires a fresh preview to retry', async () => {
+  let previews = 0
+  const { dom, calls, button } = await panel(async (request) => request.phase === 'preview'
+    ? { ok: true, value: { planId: `plan-${++previews}`, files: [
+      { path: 'first.txt', action: 'restore' }, { path: 'second.txt', action: 'restore' },
+    ] } }
+    : { ok: false, error: { code: 'execution-stopped', files: [
+      { path: 'first.txt', action: 'restored' }, { path: 'second.txt', action: 'refuse', reason: 'content-diverged' },
+    ] } })
+  try {
+    await dom.click(button('files.previewShort'))
+    await dom.click(button('files.executeCount'))
+    expect(dom.container.textContent).toContain('files.error.execution-stopped')
+    expect(dom.container.textContent).toContain('first.txt')
+    expect(dom.container.textContent).toContain('second.txt')
+    expect(dom.container.textContent).toContain('files.restored')
+    expect(dom.container.textContent).toContain('files.kept')
+    expect(button('files.executeCount')).toBeUndefined()
+    expect(dom.container.textContent).not.toContain('files.completed')
+    await dom.click(button('files.retry'))
+    expect(calls.at(-1)).toEqual({ sessionId: 's', carrierSeq: 5, scope: 'artifacts', phase: 'preview' })
+    await dom.click(button('files.executeCount'))
+    expect(calls.at(-1).planId).toBe('plan-2')
+  } finally { await dom.cleanup() }
+})
+
+it('shows a preview failure and can recover without exposing a confirmation for an invalid plan', async () => {
+  let attempts = 0
+  const { dom, button } = await panel(async () => ++attempts === 1
+    ? { ok: false, error: { code: 'agent-busy' } }
+    : { ok: true, value: { planId: 'fresh-plan', files: [{ path: 'safe.txt', action: 'restore' }] } })
+  try {
+    await dom.click(button('files.previewShort'))
+    expect(dom.container.textContent).toContain('files.error.agent-busy')
+    expect(button('files.executeCount')).toBeUndefined()
+    await dom.click(button('files.retry'))
+    expect(dom.container.textContent).not.toContain('files.error.agent-busy')
+    expect(button('files.executeCount')).toBeDefined()
   } finally { await dom.cleanup() }
 })

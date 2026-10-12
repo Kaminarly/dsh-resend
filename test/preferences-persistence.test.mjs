@@ -18,7 +18,7 @@ afterEach(async () => {
 async function durable(name = 'first') {
   await mkdir(tmpDir, { recursive: true })
   const home = await mkdtemp(path.join(tmpDir, 'saved-preferences-'))
-  const h = await settingsHost(home, name)
+  const h = await settingsHost(home, name, undefined, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
   resources.push(h)
   return h
 }
@@ -55,7 +55,7 @@ describe('saved display preferences', () => {
     const state = hostState({ agent: 'delivering' })
     await mkdir(tmpDir, { recursive: true })
     const home = await mkdtemp(path.join(tmpDir, 'saved-edit-range-'))
-    const h = await settingsHost(home, 'edit-range', state)
+    const h = await settingsHost(home, 'edit-range', state, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
     resources.push(h)
     const first = await clientFor(h)
     const page = clientHalf().exports
@@ -93,7 +93,7 @@ describe('saved display preferences', () => {
     await mkdir(tmpDir, { recursive: true })
     const home = await mkdtemp(path.join(tmpDir, 'saved-range-policy-'))
     const state = hostState({ agent: 'delivering' })
-    const h = await settingsHost(home, 'range', state)
+    const h = await settingsHost(home, 'range', state, { restrictRegenerateToLastReply: true })
     resources.push(h)
     const client = await clientFor(h)
     const page = clientHalf().exports
@@ -269,7 +269,7 @@ describe('saved display preferences', () => {
     expect(await page.preferences.set('inlineEditorBeneathMessage', false)).toBe(true)
     expect(await page.preferences.set('regenerateLastReply', false)).toBe(true)
     expect(h.entry.fiber).toBe(fiber)
-    expect(h.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
+    expect(h.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     expect(await page.preferences.set('restrictRegenerateToLastReply', false)).toBe(true)
     expect(await page.preferences.set('restrictEditToLastUserMessage', false)).toBe(true)
     await client.close()
@@ -284,7 +284,7 @@ describe('saved display preferences', () => {
     restarted.preferences.connect(client.forms)
     expect(restarted.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     const other = await settingsHost(home, 'second')
-    expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
+    expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     await other.close(); await client.close(); await h.close()
   })
   it('exposes live host fields with independent defaults and keeps legal old values', () => {
@@ -292,8 +292,9 @@ describe('saved display preferences', () => {
     const parsed = resolveConfig(host, { inlineEditorBeneathMessage: false, regenerateLastReply: 'false' })
     expect(parsed.inlineEditorBeneathMessage.get()).toBe(false)
     expect(parsed.regenerateLastReply.get()).toBe(true)
-    expect(parsed.restrictRegenerateToLastReply.get()).toBe(true)
-    expect(parsed.restrictEditToLastUserMessage.get()).toBe(true)
+    expect(parsed.restrictRegenerateToLastReply.get()).toBe(false)
+    expect(parsed.restrictEditToLastUserMessage.get()).toBe(false)
+    expect(resolveConfig(host, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true }).restrictEditToLastUserMessage.get()).toBe(true)
     expect(resolveConfig(host, { restrictRegenerateToLastReply: false }).restrictRegenerateToLastReply.get()).toBe(false)
     expect(host.Config.dict.regenerateLastReply.meta.volatile).toBe(true)
   })

@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtemp, rm, writeFile, readFile, readdir, stat, utimes } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile, readdir, stat, utimes, link, symlink, mkdir, chmod } from 'node:fs/promises'
+import { deflateSync } from 'node:zlib'
 import { execFileSync } from 'node:child_process'
 import { Session } from '@deepseek-ai/dsh-session'
 import { tmpdir } from 'node:os'
@@ -9,6 +10,66 @@ import { appendUser, appendReply, hostState, SESSION_ID, sessionFixture, withRef
 
 const cleanups = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
+
+async function cleanupCall(host, request) {
+  const wire = await dispatchToHost(host, 'resend/cleanup', { request })
+  expect(wire.ok, JSON.stringify(wire)).toBe(true)
+  return wire.value
+}
+
+it('invalidates an already loaded file restore preview in another host and keeps work files unchanged', async () => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), 'before')
+  await w.write('file.txt', 'after')
+  const carrierSeq = await w.rewind()
+  const other = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => other.ctx.fiber.dispose())
+  const wire = await dispatchToHost(other, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase: 'preview' } })
+  const planId = wire.value.value.planId
+  const preview = await cleanupCall(w.host, { phase: 'preview', mode: 'sessions', sessionIds: [SESSION_ID] })
+  expect(preview.ok).toBe(true)
+  const executed = await cleanupCall(w.host, { phase: 'execute', mode: 'sessions', planId: preview.value.planId })
+  expect(executed.value.results[0].status).toBe('cleaned')
+  const stale = await dispatchToHost(other, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase: 'execute', planId } })
+  expect(stale.value).toEqual({ ok: false, error: { code: 'plan-not-found' } })
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('after')
+  expect((await w.call({ carrierSeq, phase: 'preview' })).error.code).toBe('no-target-state')
+})
+
+it('does not write cached completion back after cleanup and still records subsequent new operations', async () => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), 'before')
+  await w.write('file.txt', 'after')
+  const carrierSeq = await w.rewind()
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })
+  const other = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => other.ctx.fiber.dispose())
+  const plan = await cleanupCall(other, { phase: 'preview', mode: 'sessions', sessionIds: [SESSION_ID] })
+  expect((await cleanupCall(other, { phase: 'execute', mode: 'sessions', planId: plan.value.planId })).ok).toBe(true)
+  const status = await w.call({ carrierSeq, phase: 'status' })
+  expect(status.value.completed).toBe(false)
+  expect(await readdir(path.join(w.home, 'data', 'plugins', 'dsh-resend', 'outcomes'))).toEqual([])
+  appendUser(w.session, { text: 'next user', id: 'new-user' })
+  await w.write('new.txt', 'new content')
+  const result = await dispatchToHost(w.host, 'resend/apply', { request: { sessionId: SESSION_ID,
+    targetSeq: w.session.snapshotEvents().find(e => e.type === 'user/message' && e.data.id === 'new-user').seq, op: 'edit', text: 'modified next user' } })
+  expect(result.value.ok, JSON.stringify(result)).toBe(true)
+  const files = await w.call({ carrierSeq: result.value.value.carrierSeq, phase: 'preview' })
+  expect(files.value.files).toEqual([{ path: 'new.txt', action: 'restore' }])
+})
+
+it('rejects path parameters at the cleanup gateway and does not clean before confirmation', async () => {
+  const w = await workspace()
+  await w.write('file.txt', 'after')
+  await w.rewind()
+  const preview = await cleanupCall(w.host, { phase: 'preview', mode: 'sessions', sessionIds: [SESSION_ID] })
+  expect(preview.ok).toBe(true)
+  expect(await readdir(path.join(w.home, 'data', 'plugins', 'dsh-resend', 'records'))).toHaveLength(1)
+  const invalid = await dispatchToHost(w.host, 'resend/cleanup', { request: { phase: 'execute', mode: 'sessions', planId: preview.value.planId, path: w.cwd } })
+  expect(invalid.ok).toBe(false)
+  expect(await readdir(path.join(w.home, 'data', 'plugins', 'dsh-resend', 'records'))).toHaveLength(1)
+})
 
 async function workspace(git = false) {
   const home = await mkdtemp(path.join(tmpdir(), 'resend-files-'))
@@ -168,125 +229,69 @@ it('compares bytes rather than timestamps and preserves a refused external edit 
   expect(await readFile(safe)).toEqual(original)
 })
 
-it('rolls back conversation only to the rewind point without restoring files or sending a prompt', async () => {
-  const w = await workspace()
-  await w.write('file.txt', 'agent')
-  const carrierSeq = await w.rewind()
-  const atPoint = w.session.surface.nodes.map((seq) => w.session.eventAt(seq).data)
-  appendUser(w.session, { id: 'later', text: 'new conversation' })
-  appendReply(w.session, { id: 'later-reply', text: 'new reply' })
-  const before = w.session.seq
-  const preview = await w.call({ carrierSeq, scope: 'conversation', phase: 'preview' })
-  expect(preview.ok).toBe(true)
-  expect(preview.value.files).toEqual([])
-  expect(preview.value.conversation).toMatchObject({ action: 'rewind', count: 2 })
-  expect(w.session.seq).toBe(before)
-  const followups = w.state.calls.followups
-  const result = await w.call({ carrierSeq, scope: 'conversation', phase: 'execute', planId: preview.value.planId })
-  expect(result.ok).toBe(true)
-  expect(result.value.conversation.action).toBe('rewound')
-  const restored = w.session.surface.nodes.map((seq) => w.session.eventAt(seq).data)
-  expect(restored.map(({ id, ...data }) => data)).toEqual(atPoint.map(({ id, ...data }) => data))
-  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
-  expect(w.state.calls.followups).toBe(followups)
-})
-
-it.each(['artifacts', 'both'])('executes %s independently using the approved scope', async (scope) => {
+it.each([undefined, 'artifacts'])('restores files with scope=%s while preserving all conversation and followups', async (scope) => {
   const w = await workspace()
   await writeFile(path.join(w.cwd, 'file.txt'), 'before')
   await w.write('file.txt', 'agent')
   const carrierSeq = await w.rewind()
-  const later = appendUser(w.session, { id: 'later', text: 'later prompt' })
-  const preview = await w.call({ carrierSeq, scope, phase: 'preview' })
-  const seq = w.session.seq
-  expect(await w.call({ carrierSeq, scope: 'conversation', phase: 'execute', planId: preview.value.planId }))
-    .toEqual({ ok: false, error: { code: 'plan-scope-mismatch' } })
-  expect(w.session.seq).toBe(seq)
-  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
-  const result = await w.call({ carrierSeq, scope, phase: 'execute', planId: preview.value.planId })
+  appendUser(w.session, { id: 'later', text: 'later prompt' })
+  const preview = await w.call({ carrierSeq, ...(scope === undefined ? {} : { scope }), phase: 'preview' })
+  appendReply(w.session, { id: 'later-reply', text: 'reply after preview' })
+  const events = w.session.snapshotEvents()
+  const surface = [...w.session.surface.nodes]
+  const followups = w.state.calls.followups
+  const result = await w.call({ carrierSeq, ...(scope === undefined ? {} : { scope }), phase: 'execute', planId: preview.value.planId })
   expect(result.ok).toBe(true)
+  expect(result.value).not.toHaveProperty('conversation')
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('before')
-  expect(w.session.surface.nodes.includes(later.seq)).toBe(scope === 'artifacts')
-  if (scope === 'artifacts') expect(w.session.seq).toBe(seq)
+  expect(w.session.snapshotEvents()).toEqual(events)
+  expect([...w.session.surface.nodes]).toEqual(surface)
+  expect(w.state.calls.followups).toBe(followups)
 })
 
-it.each(['conversation', 'artifacts', 'both'])('canceling %s writes neither conversation nor files', async (scope) => {
+it.each(['conversation', 'both'])('rejects the removed %s scope at the real gateway without touching files or conversation', async (scope) => {
+  const w = await workspace()
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  appendUser(w.session, { id: 'later', text: 'keep this prompt' })
+  const preview = await w.call({ carrierSeq, scope: 'artifacts', phase: 'preview' })
+  const events = w.session.snapshotEvents()
+  const followups = w.state.calls.followups
+  for (const phase of ['preview', 'execute', 'cancel']) {
+    const wire = await dispatchToHost(w.host, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, scope, phase, planId: preview.value.planId } })
+    expect(wire.ok).toBe(false)
+    expect(w.session.snapshotEvents()).toEqual(events)
+    expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+    expect(w.state.calls.followups).toBe(followups)
+  }
+  expect((await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).ok).toBe(true)
+})
+
+it.each([undefined, 'artifacts'])('canceling a file preview with scope=%s writes nothing and invalidates the plan', async (scope) => {
   const w = await workspace()
   await w.write('file.txt', 'agent')
   const carrierSeq = await w.rewind()
   appendUser(w.session, { id: 'later', text: 'later prompt' })
   const events = w.session.snapshotEvents()
-  const preview = await w.call({ carrierSeq, scope, phase: 'preview' })
-  expect((await w.call({ carrierSeq, scope, phase: 'cancel', planId: preview.value.planId })).ok).toBe(true)
-  expect((await w.call({ carrierSeq, scope, phase: 'execute', planId: preview.value.planId })).error.code).toBe('plan-not-found')
+  const preview = await w.call({ carrierSeq, ...(scope === undefined ? {} : { scope }), phase: 'preview' })
+  expect((await w.call({ carrierSeq, phase: 'cancel', planId: preview.value.planId })).ok).toBe(true)
+  expect((await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).error.code).toBe('plan-not-found')
   expect(w.session.snapshotEvents()).toEqual(events)
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
 })
 
-it('requires a new preview when the conversation grows after a both-scope preview', async () => {
+it('refuses file execution when the agent starts after preview without touching conversation or files', async () => {
   const w = await workspace()
   await w.write('file.txt', 'agent')
   const carrierSeq = await w.rewind()
-  appendUser(w.session, { id: 'later', text: 'later prompt' })
-  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
-  appendUser(w.session, { id: 'newer', text: 'newer prompt' })
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
   const events = w.session.snapshotEvents()
-  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
-  expect(result).toEqual({ ok: false, error: { code: 'conversation-stale', files: [
-    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
-  ] } })
-  expect(w.session.snapshotEvents()).toEqual(events)
-  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
-})
-
-it('refuses both scopes if the agent starts while preparing the conversation rollback', async () => {
-  const w = await workspace()
-  await w.write('file.txt', 'agent')
-  const carrierSeq = await w.rewind()
-  appendUser(w.session, { id: 'later', text: 'later prompt' })
-  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
-  const events = w.session.snapshotEvents()
-  let checks = 0
-  Object.defineProperty(w.state.agent, 'status', { get: () => ++checks < 3 ? 'idle' : 'running' })
-  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
+  w.state.agent.status = 'running'
+  const result = await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })
   expect(result).toEqual({ ok: false, error: { code: 'agent-busy', files: [
     { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
   ] } })
   expect(w.session.snapshotEvents()).toEqual(events)
-  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
-})
-
-it('reports the new conversation point and every refused file if saving the rollback fails', async () => {
-  const w = await workspace()
-  await w.write('file.txt', 'agent')
-  const carrierSeq = await w.rewind()
-  const later = appendUser(w.session, { id: 'later', text: 'later prompt' })
-  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
-  w.host.ctx.sessions.flush = async () => { throw new Error('disk failed') }
-  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
-  expect(result).toMatchObject({ ok: false, error: { code: 'conversation-save-failed', files: [
-    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
-  ], conversation: { action: 'rewound', count: 1 } } })
-  expect(w.session.surface.nodes.includes(result.error.conversation.carrierSeq)).toBe(true)
-  expect(w.session.surface.nodes.includes(later.seq)).toBe(false)
-  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
-})
-
-it('rejects a conversation that grows during a both-scope execution even if the preview had no new messages', async () => {
-  const w = await workspace()
-  await w.write('file.txt', 'agent')
-  const carrierSeq = await w.rewind()
-  const preview = await w.call({ carrierSeq, scope: 'both', phase: 'preview' })
-  expect(preview.value.conversation).toEqual({ action: 'unchanged', count: 0 })
-  let checks = 0
-  Object.defineProperty(w.state.agent, 'status', { get: () => {
-    if (++checks === 2) appendUser(w.session, { id: 'newer', text: 'new concurrent prompt' })
-    return 'idle'
-  } })
-  const result = await w.call({ carrierSeq, scope: 'both', phase: 'execute', planId: preview.value.planId })
-  expect(result).toEqual({ ok: false, error: { code: 'conversation-stale', files: [
-    { path: 'file.txt', action: 'refuse', reason: 'execution-stopped' },
-  ] } })
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
 })
 
@@ -304,7 +309,7 @@ it('retains the private record across plugin restart without publishing contents
   expect(result.value).toEqual(preview.value)
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('before restart 中文')
   expect(JSON.stringify(preview)).not.toContain('before restart')
-  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback', 'conversation'])
+  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback', 'conversation', 'cleanup', 'replay'])
   const forged = await dispatchToHost(restarted, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase: 'preview', recordId: 'secret' } })
   expect(forged.ok).toBe(false)
 })
@@ -340,6 +345,69 @@ it('combines absolute and relative spellings of the same file into one restore',
   expect(preview.value.files).toEqual([{ path: 'alias.txt', action: 'restore' }])
   expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual(preview)
   expect(await readFile(path.join(w.cwd, 'alias.txt'), 'utf8')).toBe('original')
+})
+
+it.runIf(process.platform === 'win32')('combines case aliases into one original restore on Windows', async () => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'File.txt'), 'original')
+  await w.write('File.txt', 'first')
+  await w.write('file.txt', 'second')
+  const carrierSeq = await w.rewind()
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  expect(preview.value.files).toEqual([{ path: 'File.txt', action: 'restore' }])
+  expect((await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).ok).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'File.txt'), 'utf8')).toBe('original')
+})
+
+it.each(['preview', 'execute'])('rejects a hard link introduced before %s without changing its external alias', async phase => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), 'original')
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const preview = phase === 'execute' ? await w.call({ carrierSeq, phase: 'preview' }) : undefined
+  const external = path.join(w.home, 'outside.txt')
+  await link(path.join(w.cwd, 'file.txt'), external)
+  const result = await w.call({ carrierSeq, phase, ...(preview ? { planId: preview.value.planId } : {}) })
+  const files = result.ok ? result.value.files : result.error.files
+  expect(files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'unsafe-path' }])
+  expect(await readFile(external, 'utf8')).toBe('agent')
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('rejects a directory replaced by a junction after preview', async () => {
+  const w = await workspace()
+  await mkdir(path.join(w.cwd, 'nested'))
+  await writeFile(path.join(w.cwd, 'nested', 'file.txt'), 'original')
+  await w.write('nested/file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  const external = path.join(w.home, 'outside')
+  await mkdir(external)
+  await writeFile(path.join(external, 'file.txt'), 'agent')
+  await rm(path.join(w.cwd, 'nested'), { recursive: true })
+  await symlink(external, path.join(w.cwd, 'nested'), process.platform === 'win32' ? 'junction' : 'dir')
+  expect((await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).error.files)
+    .toEqual([{ path: 'nested/file.txt', action: 'refuse', reason: 'unsafe-path' }])
+  expect(await readFile(path.join(external, 'file.txt'), 'utf8')).toBe('agent')
+})
+
+it('refuses a Git snapshot whose valid blob bytes do not match the recorded address', async () => {
+  const w = await workspace(true)
+  await writeFile(path.join(w.cwd, 'file.txt'), 'original')
+  await w.write('file.txt', 'agent')
+  const carrierSeq = await w.rewind()
+  const storage = path.join(w.home, 'data', 'plugins', 'dsh-resend')
+  const [name] = await readdir(path.join(storage, 'records'))
+  const record = JSON.parse(await readFile(path.join(storage, 'records', name), 'utf8'))
+  const oid = record.files[0].before.slice(4)
+  const bytes = Buffer.from('damaged snapshot')
+  const object = path.join(storage, 'objects.git', 'objects', oid.slice(0, 2), oid.slice(2))
+  await chmod(object, 0o600)
+  await writeFile(object,
+    deflateSync(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])))
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'snapshot-unavailable' }])
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent')
 })
 
 it('includes first-party child tool writes whose root result is in the undone span', async () => {
@@ -438,4 +506,53 @@ it('records the pre-tool bytes and previews then restores only the files written
   expect(await readFile(path.join(w.cwd, 'untouched.txt'), 'utf8')).toBe('leave me')
   const recordDir = path.join(w.home, 'data', 'plugins', 'dsh-resend', 'records')
   expect(await readdir(recordDir)).toHaveLength(1)
+})
+
+it('persists completion across restart and never restores the same point again even when files match the old post-state', async () => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), 'original 中文')
+  await w.write('file.txt', 'agent output')
+  const carrierSeq = await w.rewind()
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })
+  await writeFile(path.join(w.cwd, 'file.txt'), 'agent output')
+  const again = await w.call({ carrierSeq, phase: 'preview' })
+  expect(again.value.completed).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent output')
+  expect((await w.call({ carrierSeq, phase: 'execute', planId: 'forged-again' })).value.completed).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent output')
+  await w.host.ctx.fiber.dispose()
+  const restarted = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => restarted.ctx.fiber.dispose())
+  for (const phase of ['status', 'preview', 'execute']) {
+    const result = await dispatchToHost(restarted, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase, planId: 'not-a-new-plan' } })
+    expect(result.ok).toBe(true)
+    expect(result.value.value.completed).toBe(true)
+    expect(result.value.value.files).toEqual(preview.value.files)
+    expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('agent output')
+  }
+})
+
+it('reads completion while the agent is busy and keeps a later rewind point independent', async () => {
+  const w = await workspace()
+  await w.write('first.txt', 'first output')
+  const carrierSeq = await w.rewind()
+  const beforeStatus = w.session.snapshotEvents()
+  w.state.agent.status = 'running'
+  expect((await w.call({ carrierSeq, phase: 'status' })).value.completed).toBe(false)
+  expect(w.session.snapshotEvents()).toEqual(beforeStatus)
+  expect(await readFile(path.join(w.cwd, 'first.txt'), 'utf8')).toBe('first output')
+  w.state.agent.status = 'idle'
+  const preview = await w.call({ carrierSeq, phase: 'preview' })
+  await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })
+  w.state.agent.status = 'running'
+  expect((await w.call({ carrierSeq, phase: 'status' })).value.completed).toBe(true)
+  w.state.agent.status = 'idle'
+  const prompt = appendUser(w.session, { id: 'next-point', text: 'new prompt' })
+  await w.write('second.txt', 'new output')
+  const next = await dispatchToHost(w.host, 'resend/apply', { request: { sessionId: SESSION_ID, targetSeq: prompt.seq, op: 'edit', text: 'next edit' } })
+  const nextSeq = next.value.value.carrierSeq
+  expect((await w.call({ carrierSeq: nextSeq, phase: 'status' })).value.completed).toBe(false)
+  expect((await w.call({ carrierSeq: nextSeq, phase: 'preview' })).value.files).toEqual([{ path: 'second.txt', action: 'restore' }])
+  expect((await w.call({ carrierSeq, phase: 'status' })).value.completed).toBe(true)
 })

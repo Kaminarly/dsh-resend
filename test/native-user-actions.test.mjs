@@ -58,7 +58,8 @@ describe('user actions stay in the original host message', () => {
       await dom.click(buttons[1])
       expect(dom.container.querySelector('textarea').value).toBe('中文原文\n第二行')
       expect(dom.container.querySelectorAll('[data-original-bubble]')).toHaveLength(1)
-      expect(dom.container.querySelectorAll('.dsh-resend-editor-actions button')).toHaveLength(3)
+      expect(dom.container.querySelectorAll('.dsh-resend-editor-surface button')).toHaveLength(3)
+      expect(dom.container.querySelectorAll('.dsh-resend-editor-actions button')).toHaveLength(2)
     } finally { await dom.cleanup() }
   })
 

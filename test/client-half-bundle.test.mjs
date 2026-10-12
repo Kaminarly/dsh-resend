@@ -123,6 +123,8 @@ describe('the Remote mount', () => {
       'resend resend/apply',
       'resend resend/rollback',
       'resend resend/conversation',
+      'resend resend/cleanup',
+      'resend resend/replay',
     ])
     expect(face.remoteMountState().status).toBe('mounted')
   })

@@ -23,8 +23,9 @@
  * a disabled, unclickable chip with the reason on hover, never a post-click
  * dialog.
  */
-import { createElement, useRef, useState } from 'react'
+import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import { useConversationEligibility } from './conversation-eligibility.js'
+import { ReplayPreflight } from './file-rollback-preview.js'
 import { usePreferences } from './preferences.js'
 import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconAction, UIStyles } from './ui.js'
@@ -138,6 +139,7 @@ export function RegenerateControl(props) {
   const reason = regenerateReason(state, conversation, session, plan, prefs.restrictRegenerateToLastReply)
 
   const [pending, setPending] = useState(false)
+  const preflight = useSyncExternalStore(operations.subscribe, () => operations.preflightFor?.(sessionId))
   const [error, setError] = useState(null)
   const inFlight = useRef(false)
   const anchor = useRef(null)
@@ -145,7 +147,7 @@ export function RegenerateControl(props) {
   const regenerate = async () => {
     const saved = preferences.getSnapshot()
     const current = regenerateReason(state, operations.conversationFor(sessionId, revision), session, plan, saved.restrictRegenerateToLastReply)
-    if (!saved.ready || !saved.regenerateLastReply || inFlight.current || current !== null) return
+    if (!saved.ready || !saved.regenerateLastReply || inFlight.current || operations.preflightFor?.(sessionId) || current !== null) return
     inFlight.current = true
     setPending(true)
     setError(null)
@@ -169,10 +171,12 @@ export function RegenerateControl(props) {
   const disabledReason = !prefs.ready ? t(prefs.status === 'loading' ? 'settings.loading' : 'settings.read-error') : reason === null ? undefined : t(REASON_TEXT[reason])
   return createElement('div', { ref: anchor, className: 'dsh-resend-regenerate' }, [
     createElement(UIStyles, { key: 'ui' }),
+    createElement(ReplayPreflight, { key: 'preflight-fallback', operations, sessionId, targetSeq: state?.seq, t,
+      visibleUserSeqs: Array.from(chat?.nodes?.values?.() ?? []).filter(node => node.kind === 'user').map(node => node.data?.seq ?? node.anchorSeq) }),
     createElement(IconAction, {
       key: 'regenerate',
       label: t('row.regenerate'), icon: IconRefreshOutlineRegular,
-      disabled: !prefs.ready || pending || reason !== null,
+      disabled: !prefs.ready || pending || !!preflight || reason !== null,
       reason: disabledReason,
       onClick: () => {
         void regenerate()

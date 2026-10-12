@@ -1,0 +1,300 @@
+2025-12-31T21:02:33Z 99d8a2706e Reorganize workbench/contrib/chat (#285467)
+2025-12-30T05:53:25Z 21e0593485 Fix context handling in ChatWidget while re-editing (#285099)
+2025-12-30T05:32:25Z 382ac20e88 fix: ensure finishedEditing is called in ChatWidget (#281763)
+2025-12-19T02:51:03Z 8fec28c14c fix: memory leak in chat widget (#284288)
+2025-12-17T18:36:14Z 8202cbb14c cancel progress sound for backgrounded sessions (#283942)
+2025-12-17T00:42:43Z 1385867aff Implement onDidBackgroundSession (#283935)
+2025-12-16T14:40:40Z 641f159a79 Screencheese issue in empty chat welcome view (fix #273827) (#283819)
+2025-12-13T03:56:31Z 766bf5ea58 style: Fix the formatting mistake (re)
+2025-12-12T23:20:13Z 0c6329495b style: Fix the formatting mistake
+2025-12-12T01:39:33Z e78bd3344e Merge branch 'main' into fix-282498
+2025-12-12T01:38:22Z 1aa488b10d style: Added some comments and changed `forceStoreToHistory` to `storeToHistory`
+2025-12-11T18:34:17Z aa605f892e Render followups in agent mode (#282832)
+2025-12-11T12:00:33Z 5f875af666 fix flickering in chat on submit (#282703)
+2025-12-11T05:55:55Z 72d39e6ab1 Merge branch 'main' into fix-282498
+2025-12-11T05:50:29Z ebeeeb9697 fix: Chat input history stack position is not reset after starting a new chat (#282498)
+2025-12-10T22:11:34Z 001a028912 chat: store state for empty sessions separately to allow reuse
+2025-12-08T20:41:35Z 170f2dc2aa edits: prompt keep/undo when archiving a chat, handle delegation (#282061)
+2025-12-05T14:42:45Z f04ec6a235 Chat view improvements (#281447)
+2025-12-04T22:28:44Z f345377a5b archive after chatWidget#handleDelegationExit (#281373)
+2025-12-04T18:16:43Z 7c6fffa396 Add progress to load slow chat session (#281282)
+2025-12-03T21:58:16Z fc70040765 handleDelegationExit : do not clear if an error is being displayed (#281066)
+2025-12-03T19:44:45Z 683ba6378f fix assumptions with chat.exitAfterDelegation and chats in the sidebar (#281039)
+2025-12-03T12:21:52Z 0fdfa82e2e Don't show workspace context when editing a prompt (#280575)
+2025-12-02T20:41:59Z 519ac5b7e6 add setting chat.exitAfterDelegation (#280747)
+2025-12-02T20:32:37Z 9cf881445c Context menu of Recent Session list doesn't have show/hide actions (#280727)
+2025-12-02T07:02:28Z 4fadab961f chat - toggle welcome visibility based on recent sessions visibility (#280396)
+2025-12-02T00:39:42Z e7c75be005 Generically exit sidebar chat after delegating (#280384)
+2025-12-02T00:06:17Z c45a02135b feat(chat): add status widget and input part widget controller for en… (#280269)
+2025-12-01T18:22:56Z 79cea7d0b8 Don't rerender chat tree when not visible (#280378)
+2025-12-01T16:29:01Z be1a51f49b fix: memory leak in accessibility signal (#279242)
+2025-12-01T10:49:18Z 8262dbacca chat - rename setting to hide welcome (#280288)
+2025-12-01T05:15:45Z 82d482408f edits: interim nicer play with background sessions (#280224)
+2025-11-30T09:26:54Z a41bb4c479 chat - update view related setting keys (#280129)
+2025-11-29T08:22:10Z 7bbba2b8d1 chat - allow to hide welcome banner (#280045)
+2025-11-28T15:32:54Z 178f09fbbf agent sessions - session card visual updates (#279967)
+2025-11-28T08:47:15Z a5c6c39c1a agent sessions - more layout tweaks in chat view (#279940)
+2025-11-27T20:35:19Z e191637f27 cleanup welcome view rendering logic (#279840)
+2025-11-27T14:18:00Z 93fab78e39 agent sessions - chat view layout fixes (#279774)
+2025-11-26T20:14:17Z b8917d2337 clear parent chat when using handoff continueOn option (#279650)
+2025-11-26T17:44:23Z 2d259f0308 finish any editing scenarios if new chat is made (#279636)
+2025-11-25T11:45:09Z f38467b140 agent sessions - fix exception calling layout in chat widget
+2025-11-25T11:37:06Z da1aae6cde agent sessions - update session control visibility based on chat widget state
+2025-11-24T12:09:27Z 21ca4eb7b3 list agents to be used as subagents (#278624)
+2025-11-24T06:37:01Z 335383fa28 agent sessions - removal of history from chat view (#278958)
+2025-11-24T05:21:12Z 30cfcc9385 Fix ChatService.onDidDispose (#278917)
+2025-11-21T23:34:10Z 1f6cf55fbf Show all 'continue on' targets on handoff actions (#278690)
+2025-11-21T19:14:54Z 44ead28722 chat: unify history in different editors
+2025-11-21T05:24:50Z bbdd097bd3 Manage ChatModels with ref-counting, allow running in bg (#278476)
+2025-11-21T01:03:46Z fd9cf8e3dd chat: refactor input state to be central (#278683)
+2025-11-19T19:11:47Z 9cf56d4ac7 chat: reduce mutability in ichatmodel (#278239)
+2025-11-18T19:05:28Z ea4ccd5f44 chat: add requestNeedsInput on the chat model (#278171)
+2025-11-18T05:17:23Z 93e08afe04 fix input widget appearing before request is fully submitted (#277989)
+2025-11-18T04:43:32Z 845ca7a3ee Implement IChatWidgetService#openSession, adopt for sessions views (#277978)
+2025-11-18T01:34:06Z e9cb9f3de3 chat: implement and migrate to IChatWidgetService.reveal/revealWidget (#277971)
+2025-11-17T22:55:36Z 798ef59100 chat: remove `waitForReady` (#277944)
+2025-11-17T19:17:15Z c74439554c chat: make creation of the edit session sync (#277924)
+2025-11-16T15:38:36Z 0885be76f7 debt - less any in `chat` components (#277703)
+2025-11-16T06:06:39Z 3cdb831778 Skip updateElementHeight when ChatWidget is not visible (#277670)
+2025-11-13T21:21:15Z 66c1f6be52 PromptsService: add caching to listPromptFiles, make it consstent with caching of slash commands and custom agents (#277258)
+2025-11-13T19:17:02Z 69b31362d6 Remove `getWidgetBySessionId`
+2025-11-12T18:12:58Z d50215e656 Fix chat layout issue after signing in (#276840)
+2025-11-12T15:05:45Z 0ec83c5f51 Remove running prompt file without slash command (#276926)
+2025-11-09T02:59:52Z 2fac2d47c7 Reduce some 'in' (#276321)
+2025-11-06T19:44:31Z 376a9ff93e Set welcome render scheduler delay to 0 to render welcome view immediately (#275915)
+2025-11-06T17:48:01Z 3466fc5321 agent files: support tool names from custom agents specification (#275869)
+2025-11-05T23:46:13Z a6c7204c67  fix todo clear/hide behavior in chat editors (#275709)
+2025-11-05T19:53:20Z 59696c199e custom agents: name update not respected in agent picker (#275664)
+2025-11-04T00:13:42Z b901e0baa6 chat: clear todo list when request response is cancelled (#274919)
+2025-11-03T18:24:08Z 944cb2ad74 Improve Katex copy robustness (#274194)
+2025-11-03T06:34:57Z 234b127eff debt - apply more linting fixes (#274677)
+2025-10-31T23:58:47Z 9c6735c876 Remove chat suggest-next RunOnceScheduler and call render directly (#274446)
+2025-10-31T18:25:00Z a1f7be35bf More sessionId -> sessionResource conversation
+2025-10-31T16:41:28Z 49c15a81d1 More sessionId -> sessionResource conversation
+2025-10-31T12:54:32Z 3628ca5516 Inline chat v2 UI work (#274338)
+2025-10-31T11:38:54Z 942fcbaa9f Remove chat.emptyChatState.enabled setting (fix #266074) (#274321)
+2025-10-31T00:38:33Z db5ee1e0f4 Convert ChatService to use uris instead of ids in public apis
+2025-10-31T00:22:11Z 3a12dbca55 Merge pull request #274186 from mjbvz/dev/mjbvz/secondary-stoat
+2025-10-30T22:21:22Z 5b8296c456 do not cancel current session when editing a previous request (#274192)
+2025-10-30T19:37:54Z 3bb2ff6262 More plumbing through of session resources instead of ids
+2025-10-30T17:59:48Z 36c5f8705f Add `IChatDetail.sessionResource`
+2025-10-30T12:58:01Z 319ed600b6 chat - skip updating UI when we shutdown (#274057)
+2025-10-30T12:57:45Z 5343a00777 Chat: "Configure Empty State" is hard to understand (fix #271081) (#274054)
+2025-10-30T05:08:05Z 9fc19bfb99 Merge pull request #274025 from microsoft/connor4312/external-agent-edits
+2025-10-29T23:52:21Z eef25fc6d6 More use of session resource instead of ids
+2025-10-29T22:52:52Z 8f24b33b0d edits: integration point for externally-editing agent clis
+2025-10-29T00:33:00Z 4ef6122075 Rename `ChatService.getHistory` to `getLocalSessionHistory`
+2025-10-27T21:55:05Z f4f6a86655 Merge pull request #272522 from microsoft/digitarald/advanced-yak
+2025-10-27T18:20:43Z c514ae60cf chat - drop special centered layout for out of the box (#273054)
+2025-10-25T19:06:30Z cf18bbb21e Resize agent emtpy view icon and support non codicon icons.
+2025-10-24T20:05:17Z 2ca79c442a add `id` for `TerminalCommand`, add `Add to Chat` action for commands (#272943)
+2025-10-23T08:22:25Z 8fd821a0c7 Remove experimental badge from prompt file support (#272541)
+2025-10-23T00:39:24Z a50072ee2c Todo polishes (#272800)
+2025-10-22T22:34:28Z 8830ab92c0 Fix input height calculation with todos (#272792)
+2025-10-22T02:12:31Z d24017fdd4 fixup todo styling (#271454)
+2025-10-21T21:08:20Z fd397c472a Merge branch 'main' into digitarald/boiling-badger
+2025-10-21T20:16:19Z 04c143a191 extract _switchToAgentByName, use for handoffs (#272544)
+2025-10-21T19:41:21Z b71efe876a Update src/vs/workbench/contrib/chat/browser/chatWidget.ts
+2025-10-21T18:34:56Z d304c575fa Consistent custom agent copy
+2025-10-21T17:30:30Z 7b14a618d0 Handoff telemetry
+2025-10-21T17:10:11Z cf2929e687 chat: always apply prompt file and auto-attach instructions. Fix #271624 (#272020)
+2025-10-21T16:40:09Z 9e9c78adc5 Skip rendering the "Suggest Next" widget when locked to a coding agent (#272377)
+2025-10-21T15:59:38Z f34115fa1b rename newPromptsParser to promptFileParser, move out of service folder (#272499)
+2025-10-20T21:33:24Z 705c8a2977 Never show _getGenerateInstructionsMessage when locked to a coding agent (#272349)
+2025-10-20T19:09:44Z ab73e46a31 rename mode to agent (#272282)
+2025-10-20T17:50:11Z e15e114144 simplify
+2025-10-20T17:33:17Z 87d1fdea7c Find grained control over chat attachment contributions
+2025-10-20T16:30:11Z adcc3fa24b Add context menus to suggested prompts (#271596)
+2025-10-20T15:42:34Z 901240c8d3 Show workspace-level agent instruction files in 'configure instructions' picker (#271952)
+2025-10-20T10:09:48Z cc184d3e32 Preserve agent association when creating a new chat from within a chat (#272234)
+2025-10-20T05:50:38Z 2c8dc1604e Support context widget in chat input box for chat sessions (#272190)
+2025-10-20T01:29:47Z 7a86bdb7c0 Support welcome tips from agents
+2025-10-19T19:56:48Z a676d9651c support welcome title/description in empty editor (when users login)
+2025-10-18T21:37:34Z 8a68ac06c5 don't show suggested prompts for agents
+2025-10-18T21:21:04Z 65b2dcd24a Add support for provider specific messaging in the editor
+2025-10-18T00:32:23Z cdbfba6dbf Mode handoff flow (#269604)
+2025-10-17T18:12:37Z 5593ecd8e2 Add support for copying math source from katex blocks (#271590)
+2025-10-15T04:40:52Z 94e15a9bb9 revised prompt titles and tile width (#271399)
+2025-10-15T03:09:25Z 83e551bc80 Fix todolist widget clearing (#271427)
+2025-10-14T16:17:45Z 5167c14059 chat - properly apply height to last element in list (#271322)
+2025-10-14T01:02:56Z 8882ed69e7 Make agent mode the real default 🚀 (#270592)
+2025-10-13T15:42:07Z bb0294ffca fix: memory leak in chat welcome (#271121)
+2025-10-11T18:00:54Z 8818bb339f chat - fix height compute of tree (#270876)
+2025-10-10T08:16:53Z d8b078709b undo focus input change (#270724)
+2025-10-03T20:49:28Z 6c10697010 Adopt IChatEntitlementService in chatWidget.ts to replace context key logic (#265731)
+2025-10-02T21:47:06Z 99170bb651 Refactor todo list widget configuration to use a structured object and update related references (#269572)
+2025-10-02T20:53:59Z 8f406496b1 Fix newline formatting in PR #265441 changes
+2025-10-02T15:25:56Z 4c390d1b12 Merge branch 'main' into eli/welcome-frog
+2025-10-02T15:25:28Z 50ae9dbc1d revised titles and replaced more frogs
+2025-10-01T23:56:51Z 95bd2af6b6 revised title text
+2025-10-01T23:47:45Z 8169bfece9 replaced frog with chat sparkle
+2025-10-01T20:26:47Z 77e0632289 Hide "Generate instructions" hint when workspace already has instruction files (#265441)
+2025-09-29T08:57:46Z 8854c84dc9 Add option to render todo list near chat input  (#268392)
+2025-09-29T02:19:18Z 0a311727de Enable slash commands in chat session participants (#268792)
+2025-09-27T11:47:14Z 568df02cbd Merge pull request #268080 from microsoft/eli/empty-state-chat-history-2
+2025-09-27T05:06:05Z 3855ebdb77 fix: update clear functionality in ChatTodoListWidget (#268604)
+2025-09-27T00:20:21Z ee2c622368 Merge branch 'main' into eli/empty-state-chat-history-2
+2025-09-26T21:19:31Z 5cc13c65bc Chat: focus does not stay in input box when transitioning from welcome to empty state (#268553)
+2025-09-25T22:24:27Z b2060b7b56 updated suggested prompt styling
+2025-09-25T21:13:25Z f660891754 Merge branch 'main' into eli/empty-state-chat-history-2
+2025-09-25T21:11:02Z 5cb209f624 add command to focus last focused chat item, include important info in a11y help (#268362)
+2025-09-25T19:32:39Z b6768c6a65 Removed hovers
+2025-09-25T19:17:31Z e042216b2a Addressed comments
+2025-09-25T16:10:28Z 67f76872be Merge branch 'main' into eli/empty-state-chat-history-2
+2025-09-24T19:42:00Z eb773667d3 improve notification for chat - make it location agnostic (#268215)
+2025-09-24T18:25:22Z bd5c9b95da add opt-in setting to show OS notification when a chat response is received (#268090)
+2025-09-24T01:15:23Z d47a6cec13 fixed refresh bug
+2025-09-24T01:06:03Z 43a59caa40 added link hover and fixed padding
+2025-09-24T00:11:33Z 150eda5e6b added right click menu to chat empty state
+2025-09-22T19:25:20Z 5472ec07f2 Add tooltip support with position-aware hover delegate for chat history items
+2025-09-23T18:30:07Z 9e4664df9d Removed history toolbar, replaced with chat history link
+2025-09-23T23:51:50Z bd03b32304 Don't support mode picker when chat is not setup (#268069)
+2025-09-23T18:57:43Z 25dbfb9c4a Implement welcome view rendering scheduler to prevent reentrant calls (#268023)
+2025-09-23T16:36:24Z d9711f1a7c Revert "Refactor welcome view rendering to use a scheduler for debouncing and prevent reentrant calls" (#268002)
+2025-09-22T21:52:04Z 3c86c0d0d5 Increase welcome view render scheduler debounce time to 10ms for improved performance
+2025-09-22T21:39:40Z e44c0f1265 Refactor welcome view rendering to use a scheduler for debouncing and prevent reentrant calls
+2025-09-22T07:34:16Z ed28c29af5 fix: memory leak in chat widget (#265002)
+2025-09-21T19:00:41Z 1217722c34 chat - custom rendering for rate limited error when anonymously using (#267698)
+2025-09-19T21:26:52Z ada50f7949 Add some learning prompts and "send to edit session" for inline chat (#267519)
+2025-09-17T21:54:01Z ebf08316e0 feat: add resource-scoped prompt file recommendations (#266123)
+2025-09-15T13:39:24Z fce9ab080b Merge remote-tracking branch 'origin/main' into aeschli/newPromptParser
+2025-09-15T13:16:56Z 640b9e672c chat - support `anonymous` from entitlements service and adopt (#266713)
+2025-09-15T04:10:55Z 59baae6ece chat history cleanup (#266587)
+2025-09-14T20:16:26Z 1065517fdd Merge remote-tracking branch 'origin/main' into aeschli/newPromptParser
+2025-09-12T18:18:40Z 286a971eec chat - mention ToS in welcome for first time anonymous usage (#266202)
+2025-09-12T12:26:19Z a650fa7a14 adopt computeCustomChatModes, IVariableReferences
+2025-09-12T08:43:19Z d9c5f6673d Merge branch 'main' into aeschli/newPromptParser
+2025-09-12T04:19:34Z c80653b37a Don't force chat session widgets into ask mode (#266308)
+2025-09-11T20:40:47Z 8fcd9147be adopt promptFileReference.test
+2025-09-11T16:07:53Z a7bf33c840 update
+2025-09-11T15:59:27Z 9cfa06cf36 adopt parseNew
+2025-09-09T23:57:49Z 061d0ed84b Add configuration for todo list widget position in chat and enable todo tool by default (#265942)
+2025-09-06T14:39:05Z 2c9358044b Chat - move variable declaration into CSS (#265480)
+2025-09-05T18:56:01Z 5938733a10 Chat - switch to using `em` for chat panel font size (#265398)
+2025-09-05T10:45:07Z 88aa4a582e Merge remote-tracking branch 'origin/main' into aeschli/internal-takin
+2025-09-04T23:24:23Z 4781f930fe Merge branch 'main' into eli/history-revised
+2025-09-04T18:41:54Z ffca2f46e6 chat sessions guard against `ChatConfiguration.EmptyStateHistoryEnabled` (#265201)
+2025-09-04T18:28:45Z 915e6f3792 Update labels for suggested prompts in ChatWidget to follow title case (#265199)
+2025-09-04T14:49:17Z 1e270afce2 Chat - fix chat layout in floating window (#265158)
+2025-09-04T09:51:40Z 1caef9ef11 prompt file parsing: handle broken links, unreadabe files (#265105)
+2025-09-04T02:49:43Z befa00e0be fix chat history splice (#265065)
+2025-09-03T18:50:12Z c83c46b778 Merge branch 'main' into eli/history-revised
+2025-09-03T01:49:30Z 2561e7c5c6 don't recreate list every single time we render welcome view (#264819)
+2025-09-02T23:47:03Z 66aa080a1e Scroll lock chat session editors (#264792)
+2025-09-02T21:14:57Z ee2d7fee66 chat history cleanup (#264611)
+2025-09-02T15:56:39Z 78b5e4c4dd Renamed 'chat history' to 'history'
+2025-09-01T21:04:51Z 6de5cd3b24 add tool references to prompt file variables
+2025-09-01T01:53:18Z 602bc14dba fixed multi history display
+2025-09-01T01:52:57Z ec9bb0b345 fixed multi history display
+2025-09-01T01:38:57Z 00141e3718 Merge branch 'main' into eli/history
+2025-08-30T12:40:01Z 7a3249801c chat - reduce use of "Copilot" in human facing strings (#264156)
+2025-08-30T05:50:04Z 9538d95aa2 Add configurable prompt file suggestions with when-clause support (#263369)
+2025-08-30T05:48:03Z 4f6f7a6276 Don't show @ name on chat session requests (#264120)
+2025-08-29T23:51:31Z 3273dd1c76 added setting render listener
+2025-08-29T22:46:33Z d549b485ad Fix whitespace indentation issues in chatWidget.ts
+2025-08-29T21:59:56Z 30237b4907 Send a real ChatRequest to provideNewChatSessionItem (#264089)
+2025-08-29T01:55:56Z 8311ce5436 hide chat footer (https://github.com/microsoft/vscode/issues/263519) (#263933)
+2025-08-28T18:14:22Z 050422ff10 Add chat session capabilities (#263712)
+2025-08-28T14:48:56Z 3484d4cfa0 Chat - extract font configuration into a separate service (#263833)
+2025-08-28T09:57:19Z dbcb136119 add AGENTS.md if present. new setting `chat.useAgentsMdFile` (#263620)
+2025-08-27T06:23:06Z 7947180d11 Update welcome view rendering (#263536)
+2025-08-27T02:12:12Z b185e35604 Hide chat history and plus buttons when empty state history is enabled and chat is empty
+2025-08-26T19:51:05Z cd5050a941 Chat - rerender chat panel when font size is changed (#263464)
+2025-08-26T19:00:48Z 69faf86588 Chat - adopt fontSize setting for UI elements (#263455)
+2025-08-26T18:21:00Z 709b8fabf5 update locked coding agent welcome message (#263432)
+2025-08-25T19:50:23Z 09f91777e4 Chat - add fontSize and fontFamily settings (#263299)
+2025-08-23T19:23:16Z 7570f93dd8 Refactor ChatWidget to use MutableDisposable for input parts management (#263097)
+2025-08-22T06:34:11Z 4a609b5f85 Update welcome view  mode transitions (#262842)
+2025-08-22T06:18:57Z 8d5613a8d4 cancel current request before editing previous request (#262844)
+2025-08-21T17:58:23Z 859fc62dea update icon cloud -> sendToRemoteAgent (#262752)
+2025-08-21T02:43:54Z 986f8e6054 Update todo lists  auto collapse (#262619)
+2025-08-21T01:04:35Z ce44db68d6 Use unattached chat editor for initial prompt (#262608)
+2025-08-21T00:45:12Z 308f8b90d4 Avoid rerendering welcome content unnecessarily (#262611)
+2025-08-20T04:22:44Z 20e61cad8f Merge branch 'main' into eli/chat-history-empty-state
+2025-08-20T02:53:51Z 759b04981d graunlar time view, mins hrs and days
+2025-08-20T02:40:19Z 6431c4c22a added chat history empty state under setting
+2025-08-19T20:21:15Z 2b0e946f49 Clear completed todo list on new requests (#262379)
+2025-08-19T17:56:51Z f745a966f1 update todo list widget with scroll shadow (#262351)
+2025-08-18T10:24:29Z 43452f464f Remove startup experimentation code and setup splitWelcomeChat view as getting started experience (#262068)
+2025-08-15T17:07:19Z a891079fb3 polish types used around tool and toolset selection (#261840)
+2025-08-14T15:14:46Z 5e19f37739 Merge branch 'main' into aeschli/customModesInPrompts
+2025-08-14T15:13:35Z 402a33319e apply mode to chat input
+2025-08-13T19:01:11Z c76b15a743 Merge pull request #260533 from microsoft/isidorn/wicked-carp
+2025-08-13T17:49:57Z d7a192cd54 Wire up the mode (ask, edit, agent or custom) to `reportEditArc` (#261491)
+2025-08-13T17:41:03Z f718b2eb0c Merge branch 'main' into isidorn/wicked-carp
+2025-08-13T14:54:25Z 5ab510252e Merge branch 'main' into aeschli/customModesInPrompts
+2025-08-12T10:14:47Z 792a6c19a7 Remove request pause functionality from chat components
+2025-08-11T09:50:58Z 6d97df36f7 fix overlay when editing previous requests (#260910)
+2025-08-08T10:57:10Z a38d9f9755 chat - enable chat execute toolbar to send telemetry (#260550)
+2025-08-08T09:56:27Z 951d731260 remove pause action from chat view
+2025-08-06T21:36:41Z fc965dd3f6 fixes
+2025-07-31T03:42:19Z f9dca4a57d Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-31T00:06:34Z 29cf86e136 Fix #258586. (#258916)
+2025-07-30T22:06:26Z de84d24421 add rerender and options back (#258905)
+2025-07-30T16:34:34Z ead5a7cdc9 fix #258691 (#258829)
+2025-07-30T16:13:07Z 709aafe015 lockToCodingAgent earlier (#258706)
+2025-07-30T06:07:19Z 33b9772f03 Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-29T23:26:24Z aa33e55e89 chat list options for coding agent and other modes (#258701)
+2025-07-29T07:03:40Z 8948e312b6 Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-28T22:05:51Z 1da4f0cc9a always set locked coding agents to ask mode (#258345)
+2025-07-26T11:57:20Z adb850bc08 Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-26T08:56:18Z 03548f6645 Rename tasks -> todo list (#257951)
+2025-07-26T06:41:24Z 7d9aa7ed87 update task handling in ChatStickyTaskWidget and ChatWidget (#257942)
+2025-07-25T17:59:07Z 7083fc3805 Polish output renderer
+2025-07-25T14:46:16Z 50ac79cbcc Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-25T08:13:31Z 76ef361ae8 Merge pull request #257769 from mjbvz/legislative-mouse
+2025-07-25T07:52:38Z 266ace5c95 Add ChatStickyTaskWidget and integrate it into ChatWidget; remove unused ChatTaskListSubPart (#257772)
+2025-07-25T05:52:43Z 674fabe8bf Merge branch 'main' into legislative-mouse
+2025-07-25T04:50:29Z 5048c16a27 Don't let chat output renderers block mouse wheel
+2025-07-25T04:12:26Z 8923379deb Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-25T00:32:21Z dd980d7d63 locking chat editor to a coding agent
+2025-07-24T22:20:31Z ac0a5227d6 lockToCodingAgent
+2025-07-21T20:52:43Z 6d4a08417d transition from sidebar chat to dedicated session chat
+2025-07-20T05:52:42Z 563bc78e95 chore: resolve conflict
+2025-07-19T00:29:29Z 813021ef00 merge
+2025-07-18T11:54:16Z 4d63b40906 loading instructions on demand needs agent mode (#256669)
+2025-07-18T09:54:08Z 580d122b65 Merge pull request #256670 from microsoft/isidorn/tricky-flamingo
+2025-07-18T09:35:34Z 96afbcd41f add 100px to max width for chat input
+2025-07-18T03:51:43Z 360e15eede fix some papercuts with edits -> checkpoints interaction (#256620)
+2025-07-18T03:06:45Z 7d6c5d2530 chore: use custom chat mode name instead of uri as id
+2025-07-18T02:36:50Z f3da5dd022 Merge branch 'main' into feat/prompt-file-suggestion
+2025-07-18T02:35:37Z 8e438d59ed feat: support prompt file edit suggestions
+2025-07-18T00:59:18Z b74e4abfb6 do not show prompt files in edits (#256608)
+2025-07-17T21:12:21Z 169b494910 chat with... welcome view
+2025-07-17T21:09:57Z 95f1d43641 `copilot-instructions.md` not added when `chat.promptFiles` is disabled (#256573)
+2025-07-17T16:30:31Z 3de35e2ee1 ux prototype
+2025-07-17T07:10:59Z 0f1253596a fix dispose on accident and also margin for first request (#256411)
+2025-07-16T23:10:47Z d86855a647 tools: update tools of a chat request when they change (#256321)
+2025-07-16T22:18:42Z c8aac76f9f remove checkpoint from first request, edit rendering fix (#256340)
+2025-07-16T12:46:48Z 6860bb1e6b Revert "Add chatPanelNeverUsed context key  for new chat welcome view" (#256239)
+2025-07-16T00:22:32Z 816021c0a5 Add chatPanelNeverUsed context key  for new chat welcome view (#256155)
+2025-07-15T05:49:38Z 98405e63a2 checkpoints cleanup (#255942)
+2025-07-15T01:13:16Z 437775d103 first pass checkpoints inline in chat (#254564)
+2025-07-10T16:49:51Z 73fbb0cccd trying new empty state! (#253689)
+2025-07-09T16:59:12Z b84fb5b417 only allow model/mode setting when not in input mode (#254927)
+2025-07-08T18:39:44Z 86d326db8e reset input in welcome view on context change for experimental mode (#254670)
+2025-07-08T14:04:37Z 769275a575 Merge pull request #254114 from microsoft/aeschli/surprised-sparrow-106
+2025-07-05T06:07:20Z f62eaddb5f Move createInput out of welcomeViewContent creation. (#254205)
+2025-07-04T14:28:45Z 449fd6e036 chat models in prompts: qualify name with family
+2025-07-04T14:16:57Z 6c0cbe007a chat - disable custom welcome content for now (workaround endless loop) (#254129)
+2025-07-03T20:44:44Z 219f8f1918 never show prompt file (originally #253691) (#253973)
+2025-07-03T19:51:39Z f663acad33 Add suggested prompts to chat widget welcome view and update experiment configurations (#253975)
+2025-07-03T17:33:36Z 473dbb0859 Merge branch 'main' into justin/stantler
+2025-07-03T17:02:16Z f794941584 Show new welcome exp to existing users (#253696)
+2025-07-03T15:57:30Z 6ac7f77fdf Refactor chat widget welcome view to include additional messages and improve styling (#253720)
+2025-07-03T11:55:58Z c04ecb4a8b Merge branch 'main' into justin/stantler
+2025-07-03T10:03:33Z f075c43779 Use custom mode properly for all requests (#253781)
+2025-07-03T10:02:26Z 791e7ef3db Fix cancelled tool calls missing from history (#253780)
+2025-07-03T09:59:42Z 908f0803ba If a mode has no tools specified, it should include all tools (#253843)
+2025-07-02T18:01:58Z 655eda39fe fix some edits papercuts
+2025-07-02T04:59:22Z 6e855004c7 Adjust chat input mode handling and update max-width for exp welcome view input (#253550)
+2025-07-01T02:39:04Z 5368bb157a Update chat widget welcome view and telemetry logging (#253121)
+2025-07-01T01:33:22Z d62faa36e0 fix chat editing rendering issues (#253133)
+2025-06-30T18:12:49Z 931ec3cc12 Ignore tools when mode is set, improve diagnostic messages (#253031)
+2025-06-30T10:44:39Z 6bd21d4c12 Set specific model for prompts and modes (#252893)
+2025-06-30T04:52:39Z 6ccdb0f156 edit requests onExp and added telemetry (#252922)
+2025-06-29T22:09:26Z d41280b5b4 Chat welcome experiment: Add suggested prompts and input centering (#252891)
+2025-06-29T20:26:02Z 267e6d1922 Custom chat mode improvements (#252884)
+2025-06-27T11:11:37Z 0dbee9e397 PromptParser: set language as input (#252616)
+2025-06-27T06:56:01Z 5d53cbd3b9 add additional entry point to edits (#252380)
+2025-06-25T17:55:29Z f82b740862 Tool picker doesn't show custom mode selections (#252420)

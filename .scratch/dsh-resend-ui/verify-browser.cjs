@@ -1,0 +1,53 @@
+/** Run with playwright-cli -s=dsh-ui run-code --filename=<this file>. */
+async (page) => {
+  const output = 'D:/Code/MJ-Project/dsh-resend-2/output/playwright'
+  const results = []
+  const check = (condition, text) => { if (!condition) throw new Error(text); results.push(text) }
+  await page.goto('http://127.0.0.1:43129/')
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await page.getByRole('button', { name: '编辑', exact: true }).waitFor()
+  const edit = page.getByRole('button', { name: '编辑', exact: true })
+  const copy = page.getByRole('button', { name: '复制', exact: true })
+  const [e, c] = await Promise.all([edit.boundingBox(), copy.boundingBox()])
+  check(Math.abs(e.y - c.y) < 1 && e.x > c.x && e.x - c.x - c.width <= 9, '编辑与原复制按钮同排，相邻排列')
+  check(await edit.textContent() === '', '编辑入口默认不显示功能文字')
+  await edit.hover()
+  await page.getByRole('tooltip', { name: '编辑', exact: true }).waitFor({ state: 'visible' })
+  check(true, '编辑悬停显示中文提示')
+  await edit.click()
+  const input = page.getByRole('textbox', { name: '编辑消息', exact: true })
+  await input.fill('第一行中文\n第二行中文\n' + '较长文本用于检查窄窗口换行。'.repeat(10))
+  check(await input.inputValue() === '第一行中文\n第二行中文\n' + '较长文本用于检查窄窗口换行。'.repeat(10), '多行中文保持完整')
+  for (const name of ['发送', '在输入框中编辑', '取消']) {
+    check(await page.getByRole('button', { name, exact: true }).textContent() === '', name + '按钮只显示图标')
+  }
+  await page.mouse.move(30, 30)
+  await page.screenshot({ path: output + '/dsh-ui-light.png', fullPage: true })
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  check(await input.count() === 0, '取消后编辑框关闭')
+  await copy.focus()
+  await page.keyboard.press('Tab')
+  await page.getByRole('tooltip', { name: '编辑', exact: true }).waitFor({ state: 'visible' })
+  check(true, '键盘聚焦显示中文提示')
+  await page.getByRole('button', { name: '预览文件回滚', exact: true }).click()
+  await page.getByRole('button', { name: '确认还原文件', exact: true }).waitFor({ state: 'visible' })
+  check(await page.locator('.dsh-resend-rollback').textContent().then(text => text.includes('README.md') && text.includes('文件已被其他操作修改')), '回滚预览保留文件名与拒绝原因')
+  await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''))
+  await edit.click()
+  await page.mouse.move(30, 30)
+  await page.screenshot({ path: output + '/dsh-ui-dark.png', fullPage: true })
+  const dark = await page.locator('.dsh-resend-editor').evaluate(el => ({ color: getComputedStyle(el).color, bg: getComputedStyle(el).backgroundColor }))
+  check(dark.bg !== 'rgb(255, 255, 255)' && dark.color !== 'rgb(15, 17, 21)', '深色主题采用宿主主题颜色')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: output + '/dsh-ui-narrow.png', fullPage: true })
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), '390 像素窗口无横向溢出')
+  await page.getByRole('textbox', { name: '编辑消息', exact: true }).press('Escape')
+  check(await input.count() === 0, 'Esc 关闭编辑框')
+  await page.goto('http://127.0.0.1:43129/?busy')
+  await page.getByRole('button', { name: '编辑', exact: true }).waitFor()
+  check(await page.getByRole('button', { name: '编辑', exact: true }).isDisabled(), '回复期间编辑操作禁用')
+  await page.locator('.dsh-resend-user-actions .dsh-resend-disabled-action').hover()
+  await page.getByRole('tooltip', { name: '请先停止回复', exact: true }).waitFor({ state: 'visible' })
+  check(true, '禁用操作的悬停提示解释原因')
+  return { results, dark }
+}

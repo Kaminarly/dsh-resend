@@ -9,7 +9,7 @@ import { rootDir } from './dsh.mjs'
 import vm from 'node:vm'
 
 /** Actual installed SettingsForms, ConfigEditor, Loader and root Include, over disposable Profiles. */
-export async function settingsHost(home, name, state) {
+export async function settingsHost(home, name, state, initialConfig = {}) {
   const app = resolveHostApp()
   if (!app || app.kind !== 'dir') throw new Error('An unpacked DSH host is required for the durable settings test')
   const load = (pkg) => import(pathToFileURL(path.join(app.root, 'node_modules', pkg, 'lib/index.js')).href)
@@ -37,7 +37,7 @@ export async function settingsHost(home, name, state) {
   // root Include for reconciliation; only the base bundle list is minimal.
   const yaml = (await import('js-yaml')).default
   profile.readPatches = (pending) => [
-    { insert: [{ id: 'dsh-resend', name: pathToFileURL(path.join(rootDir, 'lib/index.js')).href }] },
+    { insert: [{ id: 'dsh-resend', name: pathToFileURL(path.join(rootDir, 'lib/index.js')).href, config: initialConfig }] },
     ...(pending ?? (() => { try { return yaml.load(requireRead(profile.patchPath)) ?? [] } catch (e) { if (e.code === 'ENOENT') return []; throw e } })()),
   ]
   await ctx.plugin(class extends Service {

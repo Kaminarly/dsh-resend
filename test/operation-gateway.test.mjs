@@ -14,7 +14,7 @@ describe('message operations consume the real Gateway answer', () => {
     const answers = []
     const client = await clientComposition(async (endpoint, payload, signal) => {
       const answer = await dispatchToHost(host, endpoint, payload.args, signal)
-      if (endpoint === 'resend/apply') answers.push(answer)
+      if (endpoint === 'resend/replay') answers.push(answer)
       return answer
     }, (endpoint) => calls.push(endpoint))
     const { record } = await mountClientServices({ ctx: client })
@@ -49,7 +49,7 @@ describe('message operations consume the real Gateway answer', () => {
       expect(document.body.querySelector('[role="alert"]')?.textContent).toBeUndefined()
       expect(answers).toMatchObject([{ ok: true, value: { ok: true } }])
       if (op === 'edit') expect(dom.container.querySelector('textarea') === null).toBe(true)
-      expect(calls.filter(endpoint => endpoint === 'resend/apply')).toEqual(['resend/apply'])
+      expect(calls.filter(endpoint => endpoint === 'resend/replay')).toEqual(['resend/replay'])
       if (op === 'regenerate') expect(calls[0]).toBe('resend/conversation')
       expect(host.host.calls.followups).toBe(1)
       expect(host.host.calls.followupInputs[0].content).toEqual([{ type: 'text', text: op === 'edit' ? '编辑后的中文提示' : 'second prompt' }])
@@ -69,7 +69,7 @@ describe('message operations consume the real Gateway answer', () => {
     try {
       const operations = face.createResendOperations(client.remote)
       const result = await operations.run({ sessionId: 'session-1', ...request })
-      expect(calls).toEqual(['resend/apply'])
+      expect(calls).toEqual(['resend/replay'])
       expect(result).toMatchObject({ ok: true, value: { carrierSeq: expect.any(Number), shadowedSeqs: [2, 3], resendMessageId: expect.any(String) } })
       expect(operations.outcomeOf({ sessionId: 'session-1', carrierSeq: result.value.carrierSeq })?.status).toBe('queued')
     } finally { await fiber.dispose(); await host.fiber.dispose() }

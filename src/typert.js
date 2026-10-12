@@ -169,27 +169,22 @@ export const descriptors = [
 export function rollbackRequestSchema() {
   return z.strictObject({
     sessionId: z.string(), carrierSeq: z.number(),
-    phase: z.enum(['preview', 'execute', 'cancel']),
-    scope: z.optional(z.enum(['conversation', 'artifacts', 'both'])),
+    phase: z.enum(['status', 'preview', 'execute', 'cancel']),
+    scope: z.optional(z.literal('artifacts')),
     planId: z.optional(z.string()),
   })
 }
-
-const rollbackConversationSchema = () => z.strictObject({
-  action: z.enum(['rewind', 'rewound', 'unchanged']), count: z.number(),
-  carrierSeq: z.optional(z.number()), shadowedSeqs: z.optional(z.array(z.number())),
-})
 
 export function rollbackResultSchema() {
   return z.union([
     z.strictObject({ ok: z.literal(false), error: z.strictObject({ code: z.string(),
       files: z.optional(z.array(z.strictObject({ path: z.string(), action: z.enum(['restored', 'refuse']), reason: z.optional(z.string()) }))),
-      conversation: z.optional(rollbackConversationSchema()),
     }) }),
     z.strictObject({ ok: z.literal(true), value: z.strictObject({
       planId: z.string(),
-      scope: z.optional(z.enum(['conversation', 'artifacts', 'both'])),
-      conversation: z.optional(rollbackConversationSchema()),
+      scope: z.optional(z.literal('artifacts')),
+      completed: z.optional(z.boolean()),
+      empty: z.optional(z.boolean()),
       files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse']), reason: z.optional(z.string()) })),
     }) }),
   ])
@@ -224,4 +219,61 @@ descriptors.push({
     mode: 'strict', typeSymbol: `${PACKAGE}/types#ConversationRequest`, create: conversationRequestSchema,
   } }],
   result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#ConversationResult`, create: conversationResultSchema },
+})
+
+export function cleanupRequestSchema() {
+  return z.strictObject({
+    phase: z.enum(['list', 'preview', 'execute', 'cancel']), mode: z.enum(['residue', 'sessions']),
+    sessionIds: z.optional(z.array(z.string())), planId: z.optional(z.string()),
+  })
+}
+export function cleanupResultSchema() {
+  const session = z.strictObject({ sessionId: z.string(), title: z.string(), projectPath: z.string(),
+    records: z.number(), bytes: z.number(), noSnapshots: z.boolean() })
+  return z.union([
+    z.strictObject({ ok: z.literal(false), error: z.strictObject({ code: z.string() }) }),
+    z.strictObject({ ok: z.literal(true), value: z.union([
+      z.strictObject({ phase: z.literal('list'), sessions: z.array(session), unreadableSessions: z.number() }),
+      z.strictObject({ phase: z.literal('cancel') }),
+      z.strictObject({ phase: z.literal('preview'), planId: z.string(), sessions: z.array(session),
+        categories: z.array(z.strictObject({ kind: z.enum(['records', 'outcomes', 'objects', 'temporary']), count: z.number(), bytes: z.number() })),
+        estimatedBytes: z.number(), itemCount: z.number(), protectedObjects: z.boolean(), unreadableSessions: z.number() }),
+      z.strictObject({ phase: z.literal('execute'), releasedBytes: z.number(),
+        results: z.array(z.strictObject({ sessionId: z.string(), title: z.string(), status: z.enum(['cleaned', 'skipped', 'failed']), reason: z.string(), bytes: z.number() })),
+        failures: z.array(z.strictObject({ item: z.string(), reason: z.string() })), changedCount: z.number(), protectedObjects: z.boolean() }),
+    ]) }),
+  ])
+}
+descriptors.push({
+  id: `${PACKAGE}#${NAMESPACE}/cleanup`, service: SERVICE, namespace: NAMESPACE, method: 'cleanup', invocation: { kind: 'direct' },
+  parameters: [{ name: 'request', wire: 'request', source: 'json', codec: {
+    mode: 'strict', typeSymbol: `${PACKAGE}/types#CleanupRequest`, create: cleanupRequestSchema,
+  } }],
+  result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#CleanupResult`, create: cleanupResultSchema },
+})
+
+export function replayRequestSchema() {
+  return z.union([
+    z.strictObject({ phase: z.literal('start'), request: resendApplyRequestSchema() }),
+    z.strictObject({ phase: z.enum(['preview', 'restore', 'keep', 'cancel']), sessionId: z.string(), preflightId: z.string() }),
+  ])
+}
+
+export function replayResultSchema() {
+  return z.union([
+    resendApplyResultSchema(), rollbackResultSchema(),
+    z.strictObject({ ok: z.literal(true), value: z.strictObject({ canceled: z.literal(true) }) }),
+    z.strictObject({ ok: z.literal(true), value: z.strictObject({
+      preflight: z.literal(true), preflightId: z.string(), userSeq: z.number(), op: z.enum(['edit', 'regenerate']),
+      planId: z.string(), completed: z.optional(z.boolean()), scope: z.optional(z.literal('artifacts')),
+      files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse']), reason: z.optional(z.string()) })),
+    }) }),
+  ])
+}
+descriptors.push({
+  id: `${PACKAGE}#${NAMESPACE}/replay`, service: SERVICE, namespace: NAMESPACE, method: 'replay', invocation: { kind: 'direct' },
+  parameters: [{ name: 'request', wire: 'request', source: 'json', codec: {
+    mode: 'strict', typeSymbol: `${PACKAGE}/types#ReplayRequest`, create: replayRequestSchema,
+  } }],
+  result: { mode: 'strict', typeSymbol: `${PACKAGE}/types#ReplayResult`, create: replayResultSchema },
 })

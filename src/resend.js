@@ -44,6 +44,13 @@ const fileVersions = new WeakMap()
 // Acceptance precedes the agent's inbox append. Keep that observed fact for the
 // live Session so another page cannot mistake the append gap for an owed prompt.
 const acceptedPrompts = new WeakMap()
+const replayPlans = new WeakMap()
+const replayFailure = code => ({ ok: false, error: { code } })
+const replayPreview = saved => ({ ok: true, value: { preflight: true, preflightId: saved.id,
+  userSeq: saved.plan.rangeStartSeq, op: saved.request.op, ...saved.preview.value } })
+const stoppedAfterRestore = (saved, code) => ({ ok: false, error: { code,
+  files: saved.preview.value.files.map(file => file.action === 'restore'
+    ? { path: file.path, action: 'restored' } : file) } })
 
 /**
  * Cordis's fiber states, from its own enum (`src/fiber.ts`: PENDING 0,
@@ -172,8 +179,9 @@ function rewindResult({ carrierSeq, shadowedSeqs, resendMessageId }) {
  *   resolved by the service's own `apply`.
  * @returns a frozen `RemoteResult`.
  */
-async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
+async function rewind(ctx, { session, agent, sessions, sessionId, request, replay }) {
   try {
+    if (replay?.saved && replayPlans.get(ctx).get(replay.saved.id) !== replay.saved) return replayFailure('plan-not-found')
     const { op } = request
 
     const surfaceRead = guarded(() => session.surface.nodes)
@@ -193,6 +201,10 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
       return failure(resolution.error.code)
     }
     const plan = resolution.value
+    const pending = replay?.saved
+    if (pending && (pending.session !== session || pending.generation !== fileVersions.get(ctx).generation(sessionId) ||
+        pending.plan.endSeq !== plan.endSeq || pending.plan.resendText !== plan.resendText ||
+        JSON.stringify(pending.plan.shadowedSeqs) !== JSON.stringify(plan.shadowedSeqs))) return replayFailure('preview-stale')
 
     // §9.4's "Send again": this target's rewind already landed and its prompt
     // never reached the agent, so the re-send is the whole operation. No second
@@ -217,6 +229,19 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
       })
     }
 
+    // A new click after page reload replaces an abandoned preflight. Otherwise
+    // its unknown id could leave the session blocked until the Host restarts.
+    if (replay?.phase === 'start') {
+      for (const [id, saved] of replayPlans.get(ctx)) {
+        if (saved.session.id !== sessionId) continue
+        if (saved.generation === fileVersions.get(ctx).generation(sessionId)) {
+          await saved.versions.rollback({ phase: 'cancel', planId: saved.preview.value.planId })
+        }
+        await saved.versions.discardUnlessWritten()
+        replayPlans.get(ctx).delete(id)
+      }
+    }
+
     // §4.4's defensive precondition, in the one place it can still matter: a
     // turn that opened between the rule-4 check and this write. The plugin never
     // cancels the user's streaming reply (that is rule 4, and §9.2 has the user
@@ -224,6 +249,7 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     // own cause — `{ kind: 'user' }` — so nothing downstream reads it as a
     // plugin-initiated stop.
     if (agent.status !== 'idle') {
+      if (replay) return replayFailure('agent-busy')
       agent.cancel?.({ kind: 'user' })
       await agent.whenIdle?.()
       if (agent.status !== 'idle') {
@@ -238,10 +264,43 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     // answerable from the log alone, which is the question §9.4's re-send rests
     // on. The trace text is chosen here, once, and is immutable in the log from
     // then on (§10).
-    const carrierId = carrierIdFor(op, randomUUID() + (op === 'regenerate'
+    const carrierId = pending?.id ?? carrierIdFor(op, randomUUID() + (op === 'regenerate'
       ? '-target-' + request.targetSeq : '-prompt-sha256-' + editPromptDigest(plan.resendText)))
     const resendMessageId = resendIdFor(carrierId)
-    const versions = await fileVersions.get(ctx).prepare(session, plan, carrierId)
+    const versions = pending?.versions ?? await fileVersions.get(ctx).prepare(session, plan, carrierId)
+    if (replay?.phase === 'start') {
+      const preview = await versions.preview()
+      if (!preview.ok) { await versions.discardUnlessWritten(); return preview }
+      if (preview.value.files.length > 0) {
+        const saved = { id: carrierId, session, request: { ...request }, plan, versions, preview,
+          generation: fileVersions.get(ctx).generation(sessionId) }
+        replayPlans.get(ctx).set(carrierId, saved)
+        return replayPreview(saved)
+      }
+      await versions.rollback({ phase: 'cancel', planId: preview.value.planId })
+    } else if (pending) {
+      if (replay.phase === 'preview') {
+        const preview = await versions.preview()
+        if (!preview.ok) return preview
+        pending.preview = preview
+        return replayPreview(pending)
+      }
+      if (replay.phase === 'restore' && !pending.restored) {
+        const restored = await versions.rollback({ phase: 'execute', planId: pending.preview.value.planId })
+        if (!restored.ok) return restored
+        pending.restored = true
+        pending.preview = { ok: true, value: { ...pending.preview.value, completed: true } }
+      } else if (replay.phase === 'keep' && !pending.restored) {
+        await versions.rollback({ phase: 'cancel', planId: pending.preview.value.planId })
+      }
+      if (agent.status !== 'idle') return pending.restored ? stoppedAfterRestore(pending, 'agent-busy') : replayFailure('agent-busy')
+      // File I/O may have yielded to another window's normal send.
+      const current = await resolveTarget(ctx, request, session.surface.nodes)
+      if (!current.ok || current.value.endSeq !== plan.endSeq ||
+          JSON.stringify(current.value.shadowedSeqs) !== JSON.stringify(plan.shadowedSeqs)) return pending.restored
+        ? stoppedAfterRestore(pending, 'preview-stale') : replayFailure('preview-stale')
+    }
+    if (replay && agent.status !== 'idle') return replayFailure('agent-busy')
     let write
     try { write = await writeRewindPair(ctx, {
       sessions,
@@ -251,9 +310,9 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
       carrierId,
       traceText: traceTextNow(ctx),
       request,
-    }) } catch (error) { await versions.discardUnlessWritten(); throw error }
+    }) } catch (error) { if (!pending) await versions.discardUnlessWritten(); throw error }
     if (!write.ok) {
-      await versions.discardUnlessWritten()
+      if (!pending) await versions.discardUnlessWritten()
       if (write.error.code === 'internal') {
         logWarning(ctx, `resend.apply could not write the rewind pair for ${JSON.stringify(sessionId)}: ${write.error.detail ?? 'no detail'}`)
       }
@@ -266,8 +325,9 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
       // normative text on what that row may say, so the failure is reported as a
       // failure, and the orphan claim is made diagnosable in the host log
       // instead (`./write.js`, §11).
-      return failure(write.error.code)
+      return pending?.restored ? stoppedAfterRestore(pending, 'rewind-failed') : failure(write.error.code)
     }
+    if (pending) replayPlans.get(ctx).delete(pending.id)
 
     // §5.5 — the resend, inside the same lock and after the flush: the carrier
     // renders nothing, so the message queued to the agent is the only new row
@@ -282,7 +342,7 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request }) {
     })
   } catch (error) {
     logWarning(ctx, `resend.apply failed unexpectedly while rewinding ${JSON.stringify(sessionId)}: ${describeError(error)}`)
-    return failure('internal')
+    return replay?.saved?.restored ? stoppedAfterRestore(replay.saved, 'rewind-failed') : failure('internal')
   }
 }
 
@@ -301,6 +361,12 @@ export class ResendService extends Service {
     this.hostCtx = ctx
     this.ownerFiber = ctx.fiber
     fileVersions.set(ctx, createFileVersions(ctx))
+    const pending = new Map()
+    replayPlans.set(ctx, pending)
+    ctx.on('session/disposed', session => {
+      for (const [id, saved] of pending) if (saved.session.id === session.id) pending.delete(id)
+    })
+    ctx.effect(() => () => { pending.clear() })
     this.typertRemote = Object.freeze({ service: this, serviceKey: SERVICE, namespace: NAMESPACE })
   }
 
@@ -317,7 +383,7 @@ export class ResendService extends Service {
    * @returns `RemoteResult<ResendApplyResult>`; never a rejection for a business
    *   outcome (spec §4.5).
    */
-  async apply(request) {
+  async apply(request, replay) {
     const ctx = this.hostCtx
     const fiber = this.ownerFiber
 
@@ -371,12 +437,40 @@ export class ResendService extends Service {
     // because a call that waited behind another rewind has to plan against the
     // surface that rewind left behind — never against what it saw before
     // queueing.
-    return withSessionLock(sessionId, () => rewind(ctx, { session, agent, sessions, sessionId, request }))
+    return fileVersions.get(ctx).withOperation(sessionId, 'editing', () =>
+      withSessionLock(sessionId, () => rewind(ctx, { session, agent, sessions, sessionId, request, replay })))
+  }
+
+  /** Preflight choices are host-owned; clients cannot replace their prompt or range. */
+  async replay(request) {
+    if (this.ownerFiber !== undefined && this.ownerFiber.state !== FIBER_ACTIVE) return replayFailure('internal')
+    if (request?.phase === 'start') return this.apply(request.request, { phase: 'start' })
+    if (!['preview', 'restore', 'keep', 'cancel'].includes(request?.phase)) return replayFailure('bad-request')
+    const ctx = this.hostCtx
+    const saved = replayPlans.get(ctx).get(request.preflightId)
+    if (!saved || saved.session.id !== request.sessionId) return replayFailure('plan-not-found')
+    if (request.phase === 'cancel') return fileVersions.get(ctx).withOperation(request.sessionId, 'editing', () =>
+      withSessionLock(request.sessionId, async () => {
+        if (replayPlans.get(ctx).get(saved.id) !== saved) return replayFailure('plan-not-found')
+        replayPlans.get(ctx).delete(saved.id)
+        if (saved.generation === fileVersions.get(ctx).generation(request.sessionId)) {
+          await saved.versions.rollback({ phase: 'cancel', planId: saved.preview.value.planId })
+        }
+        await saved.versions.discardUnlessWritten()
+        return { ok: true, value: { canceled: true } }
+      }))
+    return this.apply(saved.request, { phase: request.phase, saved })
   }
 
   async rollback(request) {
     if (this.ownerFiber !== undefined && this.ownerFiber.state !== FIBER_ACTIVE) return failure('internal')
-    return withSessionLock(request.sessionId, () => fileVersions.get(this.hostCtx).rollback(request))
+    return fileVersions.get(this.hostCtx).withOperation(request.sessionId, 'rolling-back', () =>
+      withSessionLock(request.sessionId, () => fileVersions.get(this.hostCtx).rollback(request)))
+  }
+
+  async cleanup(request) {
+    if (this.ownerFiber !== undefined && this.ownerFiber.state !== FIBER_ACTIVE) return failure('internal')
+    return fileVersions.get(this.hostCtx).cleanup(request)
   }
 
   /** Read-only eligibility shared by every reply control on the client. */

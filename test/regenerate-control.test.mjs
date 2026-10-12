@@ -45,7 +45,7 @@ it.skipIf(!resolveHostApp())('real host assembly preserves whole-conversation el
   const events = logOf(session)
   const host = await hostComposition({ host: hostState({ session, agent: 'deaf' }), config: { restrictEditToLastUserMessage: false } })
   const client = await gatewayClient((endpoint, payload, signal) => dispatchToHost(host, endpoint, payload.args, signal))
-  const composition = await clientComposition({ ctx: client })
+  const composition = await clientComposition({ ctx: client, configForms: memoryConfigForms({ restrictRegenerateToLastReply: true }) })
   const page = clientHalf().exports
   const fiber = composition.ctx.plugin(page)
   await fiber
@@ -146,7 +146,7 @@ function startAt(events, index) {
 
 it.skipIf(!resolveHostApp())('the installed assembler disables older replies and keeps only the latest reply enabled', async () => {
   let lastReplySeq = 3
-  const composition = await clientComposition({ replyState: () => ({ assistantSeqs: [1, 3, ...(lastReplySeq === 5 ? [5] : [])], lastReplySeq }) })
+  const composition = await clientComposition({ configForms: memoryConfigForms({ restrictRegenerateToLastReply: true }), replyState: () => ({ assistantSeqs: [1, 3, ...(lastReplySeq === 5 ? [5] : [])], lastReplySeq }) })
   const fiber = composition.ctx.plugin(face)
   let dom
   try {
@@ -334,7 +334,7 @@ describe('the client-side refusal predictions (§9.3)', () => {
 
 describe('the registered regenerate control (§9.2, §9.3)', () => {
   it('enables an earlier effective reply only after saving the range off, while keeping the consequence text visible', async () => {
-    const configForms = memoryConfigForms()
+    const configForms = memoryConfigForms({ restrictRegenerateToLastReply: true })
     const composition = await clientComposition({ configForms })
     const page = clientHalf().exports
     const fiber = composition.ctx.plugin(page)
@@ -349,7 +349,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
     const settingsDom = await renderDom(createElement(settings.component))
     try {
       expect(dom.container.querySelector('button').disabled).toBe(true)
-      const text = '关闭后可重新生成较早回复。操作将从该回复对应的问题重新续接，其后的对话将退出当前上下文，原始记录仍保留。'
+      const text = '开启后，仅可重新生成最后一条助手回复；关闭后，则允许重新生成较早的助手回复。操作将从所选回复对应的问题重新续接，其后的对话将退出当前上下文。'
       expect(settingsDom.container.textContent).toContain(text)
       const toggle = settingsDom.container.querySelector('[data-field="restrictRegenerateToLastReply"] button')
       expect(toggle).not.toBeNull()
@@ -586,6 +586,7 @@ describe('the registered regenerate control (§9.2, §9.3)', () => {
  * `prompt` overrides the last reply's prompt facts.
  */
 async function rendered(options) {
+  const face = clientHalf().exports
   const { replySeqs = [6], shadow = [], companion = true, prompt, results, locale = 'en', running = false, messageId } = options
   const composition = await clientComposition({ results, configForms: memoryConfigForms({ restrictRegenerateToLastReply: options.restrict !== false }) })
   await composition.ctx.plugin(face)

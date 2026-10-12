@@ -98,7 +98,8 @@ export async function hostComposition(options = {}) {
   const dataHome = options.dataHome ?? await mkdtemp(path.join(tmpdir(), 'resend-host-'))
   let fiber
   process.env.DSH_HOME = dataHome
-  try { fiber = ctx.plugin(hostHalf, options.config); await fiber }
+  // Refusal/race fixtures explicitly exercise enabled range restrictions.
+  try { fiber = ctx.plugin(hostHalf, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true, ...options.config }); await fiber }
   finally { if (previousHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = previousHome }
   if (options.dataHome === undefined) ctx.effect(() => () => rm(dataHome, { recursive: true, force: true }))
   return { ctx, fiber, host }

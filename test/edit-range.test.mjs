@@ -59,7 +59,7 @@ it('guards old callbacks against current policy and current conversation, includ
   const calls = [], drafts = []
   const operations = face.createResendOperations({ resend: {
     conversation: async () => ({ ok: true, value: { ok: true, value: eligibility } }),
-    apply: async request => { calls.push(request); return { ok: true, value: { ok: false, error: { code: 'agent-busy' } } } },
+    replay: async ({ request }) => { calls.push(request); return { ok: true, value: { ok: false, error: { code: 'agent-busy' } } } },
   } })
   const chat = { nodes: new Map([['u', { key: 'u', kind: 'user', anchorSeq: 0 }]]) }
   const props = { sessionId: 's', node: { data: { seq: 0, text: 'original' } }, preferences, operations,
@@ -145,9 +145,10 @@ it('shows the exact Chinese edit range explanation in both toggle states', async
   const dom = await renderDom(createElement(row.component))
   resources.push(() => dom.cleanup())
   const field = () => dom.container.querySelector('[data-field="restrictEditToLastUserMessage"]')
-  const explanation = '关闭后可编辑重发较早消息。操作将从该消息重新续接，并发送修改后的内容，其后的对话将退出当前上下文，原始记录仍保留。'
+  const explanation = '开启后，仅可编辑重发最后一条用户消息；关闭后，则允许编辑重发较早的用户消息。操作将从所选消息重新续接，并发送修改后的内容，其后的对话将退出当前上下文。'
+  expect(field().querySelector('button').getAttribute('aria-checked')).toBe('false')
   expect(field().querySelector('p').textContent).toBe(explanation)
   await dom.click(field().querySelector('button'))
   expect(field().querySelector('p').textContent).toBe(explanation)
-  expect(field().querySelector('button').getAttribute('aria-checked')).toBe('false')
+  expect(field().querySelector('button').getAttribute('aria-checked')).toBe('true')
 })

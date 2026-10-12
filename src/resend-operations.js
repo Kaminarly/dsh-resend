@@ -57,8 +57,9 @@ export function createResendOperations(remote) {
   const recordsBySession = new Map()
   const emptyRecords = Object.freeze([])
   const listeners = new Set()
-  const rollbackResults = new Map()
   const conversations = new Map()
+  const preflights = new Map()
+  let disposed = false
   const unreadConversation = Object.freeze({ ready: false, status: 'loading' })
 
   const notify = () => {
@@ -78,7 +79,7 @@ export function createResendOperations(remote) {
    * @param result - the `RemoteResult` the host answered.
    */
   function record(request, result) {
-    if (result?.ok !== true) return
+    if (disposed || result?.ok !== true) return
     const { carrierSeq, shadowedSeqs, resendMessageId } = result.value
     const records = bySession.get(request.sessionId) ?? new Map()
     bySession.set(request.sessionId, records)
@@ -103,13 +104,50 @@ export function createResendOperations(remote) {
    * @returns the host's `RemoteResult`.
    */
   async function run(request) {
-    const result = unwrapRemoteResult(await remote.resend.apply(request))
+    if (disposed) return { ok: true, value: { canceled: true } }
+    if (preflights.has(request.sessionId)) return { ok: false, error: { code: 'replay-busy' } }
+    // New actions always enter preflight. Owed prompts use apply in sendAgain.
+    const result = unwrapRemoteResult(await remote.resend.replay({ phase: 'start', request }))
+    if (disposed) return { ok: true, value: { canceled: true } }
+    if (result.ok && result.value.preflight) {
+      return new Promise(resolve => {
+        preflights.set(request.sessionId, { request: { ...request }, result, resolve, pending: null,
+          userSeq: result.value.userSeq, op: result.value.op })
+        notify()
+      })
+    }
     record(request, result)
     return result
   }
 
   return {
     run,
+    preflightFor: sessionId => preflights.get(sessionId),
+    async chooseReplay(sessionId, phase) {
+      const entry = preflights.get(sessionId)
+      if (!entry || entry.pending) return
+      preflights.set(sessionId, { ...entry, pending: phase })
+      notify()
+      let result
+      try {
+        result = unwrapRemoteResult(await remote.resend.replay({ sessionId, phase,
+          preflightId: entry.result.value?.preflightId ?? entry.preflightId }))
+      } catch { result = { ok: false, error: { code: 'internal' } } }
+      if (phase === 'cancel' && result.error?.code === 'plan-not-found') result = { ok: true, value: { canceled: true } }
+      // Plugin teardown retires this promise; late replies cannot recreate UI.
+      if (!preflights.has(sessionId)) return result
+      if (result.ok && !result.value.preflight) {
+        preflights.delete(sessionId)
+        if (!result.value.canceled) record(entry.request, result)
+        notify()
+        entry.resolve(result)
+      } else {
+        preflights.set(sessionId, { ...entry, result, pending: null,
+          preflightId: entry.result.value?.preflightId ?? entry.preflightId })
+        notify()
+      }
+      return result
+    },
     // Reconnection may precede Chat refill. Re-read every observed session and
     // retire in-flight replies so old neighbours cannot reopen an invalid target.
     invalidateConversations() {
@@ -148,15 +186,11 @@ export function createResendOperations(remote) {
       return entry.promise
     },
     async rollback(request) {
-      const result = unwrapRemoteResult(await remote.resend.rollback(request))
-      const conversation = result.ok ? result.value.conversation : result.error.conversation
-      if (request.phase === 'execute' && conversation?.carrierSeq !== undefined) {
-        rollbackResults.set(JSON.stringify([request.sessionId, conversation.carrierSeq]), result)
-        notify()
-      }
-      return result
+      return unwrapRemoteResult(await remote.resend.rollback(request))
     },
-    rollbackOutcomeOf: ({ sessionId, carrierSeq }) => rollbackResults.get(JSON.stringify([sessionId, carrierSeq])),
+    async cleanup(request) {
+      return unwrapRemoteResult(await remote.resend.cleanup(request))
+    },
     outcomeOf,
     recordsFor: (sessionId) => recordsBySession.get(sessionId) ?? emptyRecords,
     /**
@@ -170,7 +204,9 @@ export function createResendOperations(remote) {
     async sendAgain(point) {
       const entry = outcomeOf(point)
       if (entry?.status !== RESEND_FAILED) return undefined
-      return run(entry.request)
+      const result = unwrapRemoteResult(await remote.resend.apply(entry.request))
+      record(entry.request, result)
+      return result
     },
     /**
      * Subscribe to outcome changes.
@@ -185,9 +221,11 @@ export function createResendOperations(remote) {
     },
     /** Drop this page's records and listeners when the plugin unloads. */
     dispose() {
+      disposed = true
+      for (const entry of preflights.values()) entry.resolve({ ok: true, value: { canceled: true } })
+      preflights.clear()
       bySession.clear()
       recordsBySession.clear()
-      rollbackResults.clear()
       conversations.clear()
       listeners.clear()
     },

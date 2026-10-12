@@ -7,13 +7,14 @@ import { installedConversationAssembler, assemblerChatSnapshot, installedChatDef
 import { renderDom } from './helpers/render.mjs'
 import { resolveHostApp } from '../scripts/host-app.mjs'
 import { measuredFixture, hostState, appendUser, logOf } from './helpers/host.mjs'
+import { memoryConfigForms } from './helpers/preferences.mjs'
 
 it.skipIf(!resolveHostApp())('uses the installed assembler and actual Host eligibility for paging, live image-only sends, injections and rewind', async () => {
   const session = measuredFixture()
   const events = logOf(session)
   const h = await hostComposition({ host: hostState({ session, agent: 'deaf' }) })
   const gateway = await gatewayClient((endpoint, payload, signal) => dispatchToHost(h, endpoint, payload.args, signal))
-  const c = await clientComposition({ ctx: gateway })
+  const c = await clientComposition({ ctx: gateway, configForms: memoryConfigForms({ restrictEditToLastUserMessage: true }) })
   const page = clientHalf().exports
   await c.ctx.plugin(page)
   const assembler = installedConversationAssembler([...installedChatDefinitions(), ...c.record.definitions])

@@ -56,6 +56,10 @@ export function recordingRemote({ results = [{ ok: true, value: { carrierSeq: 5,
       return { ok: true, value: results.length === 0 ? { ok: false, error: { code: 'agent-busy' } } : results[Math.min(calls.length - 1, results.length - 1)] }
     }
 
+    async replay({ request }) {
+      return this.apply(request)
+    }
+
     async conversation(request) {
       return { ok: true, value: { ok: true, value: { userSeqs: [0, 2], lastUserSeq: 2, ...replyState(request) } } }
     }

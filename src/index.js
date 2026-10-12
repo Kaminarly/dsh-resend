@@ -22,8 +22,8 @@ import Schema from '@deepseek-ai/schemastery'
 export const Config = Schema.object({
   inlineEditorBeneathMessage: Schema.boolean().default(true).volatile(),
   regenerateLastReply: Schema.boolean().default(true).volatile(),
-  restrictRegenerateToLastReply: Schema.boolean().default(true).volatile(),
-  restrictEditToLastUserMessage: Schema.boolean().default(true).volatile(),
+  restrictRegenerateToLastReply: Schema.boolean().default(false).volatile(),
+  restrictEditToLastUserMessage: Schema.boolean().default(false).volatile(),
 })
 // Repair each legacy field independently before standard validation. Keep the
 // boolean form schema intact for SettingsForms and the Loader's volatile paths.
@@ -33,7 +33,7 @@ Object.defineProperty(Config, '~standard', { value: {
   validate(raw) {
     const values = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? { ...raw } : {}
     for (const field of Object.keys(Config.dict)) {
-      if (typeof values[field] !== 'boolean') values[field] = true
+      if (typeof values[field] !== 'boolean') values[field] = Config.dict[field].meta.default
     }
     return validateConfig(values)
   },

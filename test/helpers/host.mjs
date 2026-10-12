@@ -684,6 +684,10 @@ export function hostDoubles(state) {
       super(ctx, 'sessionQuery')
     }
 
+    async listSessions() {
+      return [{ header: { ...state.session.header }, live: true, persisted: true }]
+    }
+
     async readSession(id) {
       state.calls.coveringReads += 1
       if (id !== state.session.id) throw queryError('SESSION_QUERY_SESSION_NOT_FOUND', `session "${id}" not found`)

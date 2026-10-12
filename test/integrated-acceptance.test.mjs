@@ -40,7 +40,7 @@ it.each(combinations.flatMap(rules => ['edit', 'regenerate'].flatMap(op => [fals
     const state = hostState({ session: measuredFixture(), agent: 'delivering' })
     const { host, face } = await durable(state)
     expect(face.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: true,
-      regenerateLastReply: true, restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
+      regenerateLastReply: true, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     await face.preferences.set('restrictRegenerateToLastReply', restrictRegenerate)
     await face.preferences.set('restrictEditToLastUserMessage', restrictEdit)
     // Hide, modify the independent range, then show again without losing it.

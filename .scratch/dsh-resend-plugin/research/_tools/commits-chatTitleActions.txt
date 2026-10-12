@@ -1,0 +1,107 @@
+2026-08-20T19:34:04Z 023440219a Add experiment driven inline model feedback survey (#331850)
+2026-06-30T19:02:27Z d2f679cb82 Fix bugs related to setting the right Chat model.
+2026-03-27T10:01:26Z 7c89420b96 Remove ChatAgentVoteDownReason and voteDownReason (#304878)
+2026-03-18T20:18:35Z dcc0c2235d Support forking contributed Chat Sessions (#302743)
+2026-02-19T23:03:54Z 10fbccc244 Improve chat feedback animations (#294686)
+2026-02-12T00:00:08Z 438d64aded Improve tips styling and behavior (#294702)
+2026-02-07T10:19:36Z 702d358dc9 Display a confetti animation on chat response thumbs up (#293582)
+2026-01-23T01:03:00Z 623d5d8557 Fix retrying chat requests (#289792)
+2026-01-21T21:06:46Z e0d13f0780 Add progress sound on retry request for accessibility (#289462)
+2025-12-31T21:02:33Z 99d8a2706e Reorganize workbench/contrib/chat (#285467)
+2025-10-31T18:25:00Z a1f7be35bf More sessionId -> sessionResource conversation
+2025-10-31T07:50:36Z 14e845d26c Switch many callers to use `getWidgetBySessionResource` (#274253)
+2025-10-31T00:38:33Z db5ee1e0f4 Convert ChatService to use uris instead of ids in public apis
+2025-10-06T18:30:03Z 11c1e8cd34 Update most `IAction.run` calls to use `unknown` instead of `any` for args
+2025-07-25T21:11:51Z 4279f18b88 hide restore to last checkpoint by default (#257507)
+2025-07-20T06:48:07Z f7152e2ee2 button to 'restore to last checkpoint (#256896)
+2025-07-03T10:03:33Z f075c43779 Use custom mode properly for all requests (#253781)
+2025-06-29T20:26:02Z 267e6d1922 Custom chat mode improvements (#252884)
+2025-06-01T02:36:23Z 93a39728a8 Pick correct tools for more cases (#250210)
+2025-05-21T13:54:14Z 2e59a77991 Add support for tool sets (#249448)
+2025-05-21T02:45:56Z ab3c1d9b78 Clean up old 'toolSelection' (#249411)
+2025-04-14T06:24:19Z 4930ed78df chat - disable voting on core provided messages (#246457)
+2025-04-04T16:46:28Z b51bab99b5 Remove all "unified" chat context keys
+2025-04-04T04:05:47Z 0eaf023295 Delete usages of ChatAgentLocation.EditingSession in actions and UI
+2025-04-01T16:09:38Z 12bf15cc4d debt - remove "Continue in Edits" action (#245250)
+2025-03-25T23:15:26Z f492402e35 change feedack name to feedback.enabled (#244677)
+2025-03-24T20:31:18Z 2e6728cc3b make sure that addFile supports images (#244420)
+2025-03-23T06:05:21Z 1fbb64aee3 Align editing session creation with ChatModel (#244350)
+2025-03-21T22:36:34Z aee64540d1 disable feedback options when setting is enabled (#244285)
+2025-03-20T20:11:59Z 777ca727ac Use the correct mode when retrying (#244160)
+2025-03-20T01:04:27Z 4abd6cd1c2 Fix undo/remove actions in unified view (#244068)
+2025-03-17T18:52:07Z 6e7c144cea Rename chat view back to "Chat", rename "chat" mode to "Ask" (#243788)
+2025-03-17T14:19:32Z 7accf17461 fixes https://github.com/microsoft/vscode-copilot/issues/14297 (#243752)
+2025-03-15T00:54:45Z 580daf039a Increment the request attempt in the chat retry action (#243471)
+2025-03-13T00:24:40Z 8ef2f681ce Chat view unification (#243285)
+2025-03-07T20:03:17Z fbfb939654 refactor: deprecate `IChatEditingSession.addFileToWorkingSet()` (#242918)
+2025-02-24T17:07:54Z b7bdece894 fix: update edits transfer data property (#241723)
+2025-02-13T18:41:48Z fe1ff566e7 chat: add incremental undo stops for edits in a single turn (#240684)
+2025-02-06T11:44:36Z 6057cd5583 debt - more `globalEditingSession` cleanup (#239778)
+2025-02-03T11:11:09Z b3043483c7 debt - more work to move aways from single editing session (#239484)
+2024-12-06T16:37:47Z 0f695e4d81 chore - remove `IChatEditingService#onDidCreateEditingSession` in favor of `currentEditingSessionObs`
+2024-12-04T08:54:50Z d8f18c72e4 move chat to /edit fixes (#235248)
+2024-12-02T10:51:13Z d8b547e2f5 edits: API cleanup around snapshots (#234969)
+2024-11-19T14:54:27Z e7a131a462 Tweak how move to edits works (#234189)
+2024-11-19T11:06:51Z c31aeb546d When move chat to edit, group requests by timestamp (#234176)
+2024-11-17T22:54:38Z 7632fd3714 A couple minor name tweaks/cleanup (#233968)
+2024-11-15T18:14:11Z 38e92531c2 don't move when there is nothing to move (#233935)
+2024-11-15T09:45:44Z a423a66597 fix compile error
+2024-11-13T09:29:53Z dc3acd432a use `sendRequest`-method when transferring turns, fix race-bug when adopting multiple requests
+2024-11-12T14:18:23Z 90e69063b2 wip continue in chat
+2024-11-08T01:47:10Z 4ad5865e8d fix: make accepting pending edits the default when starting editing session (#233377)
+2024-10-30T18:21:31Z c0ee8f2848 refactor: better check for arg type in Retry action (#232645)
+2024-10-29T18:55:16Z 50a2adc65b Cleanup chat context keys (#232515)
+2024-10-26T00:20:45Z d012408e88 fix: set args for Retry action in chat editing widget (#232317)
+2024-10-25T04:13:02Z e47ed20f0e fix: don't unnecessarily prompt when clearing existing editing session (#232219)
+2024-10-24T23:08:17Z 59260b311c fix: automatically undo and show retry action for failed editing requests (#232201)
+2024-10-24T02:38:16Z 39fd376a04 fix: shorten Remove Request action title (#232109)
+2024-10-22T16:00:17Z aabb725c04 fix: disable Edit with Copilot action in chat footer for now (#231952)
+2024-10-21T17:19:07Z 7ab1b3e885 Update codicons and use edit session icon
+2024-10-18T22:52:18Z 05f148d813 fix: prompt for undo and retry edits only if the request did edits (#231710)
+2024-10-18T21:58:25Z 40eeca9ef9 fix: include `#file` variables in chat working set (#231692)
+2024-10-18T01:10:56Z c85acdad6b fix: prompt to take action on pending edits when starting a new chat editing session (#231622)
+2024-10-16T21:36:59Z 7cc1b4329f fix: disable chat editing secondary execute action if there are no file attachments (#231534)
+2024-10-16T05:23:55Z 2b3d6bee7b feat: allow continuing a chat request in chat editing view (#231461)
+2024-10-15T22:22:01Z 920551e07d Fix missing model picker cases (#231443)
+2024-10-15T01:04:42Z e434b0b68a Fix x button in chat (#231362)
+2024-10-14T18:22:46Z a8a7bbdcac fix: allow to bypass confirmation dialogs for undoing and retrying edit requests (#231334)
+2024-10-11T21:28:43Z b38ae213d3 feat: enable retrying and deleting requests in an editing session (#231143)
+2024-10-10T00:17:48Z e0921defa0 feat: first cut of chat editing checkpointing UI (#230978)
+2024-09-23T23:43:19Z 62f3158f91 Remove vote-up context/treatment
+2024-09-20T17:05:48Z c9e11b7328 Polish chat styles
+2024-09-19T23:38:23Z 180d4245b2 Move chat header toolbar to bottom (#229109)
+2024-08-30T08:31:46Z 6b924c5152 ESM merge to main (#227184)
+2024-08-26T23:12:02Z 13d64e98d8 Add extra detail choice under chat response thumbs down (#226678)
+2024-08-26T14:06:26Z eb2f7c1a35 add secondary inline chat menu and render response commands there (#226621)
+2024-08-16T23:17:15Z a08ca8e143 Don't show thumbs on all errored responses (#225828)
+2024-08-14T19:02:51Z c727b5484e Don't show chat voting thumbs on filtered responses (#225636)
+2024-07-31T23:17:59Z b34298a3de Disable chat "thumbs up" button by default (#224443)
+2024-06-29T12:31:50Z 39aba8e0af Tune chat render rate (#219241)
+2024-06-28T21:25:19Z c8a4a25577 Add 'command' to chat telemetry (#219218)
+2024-05-15T07:31:04Z 7680db2a11 Move rerun request back to prime spot, return with intent detection back as link (#212775)
+2024-05-14T23:07:51Z 6ffbf8bff2 Fix missing implicit variables for inline chat participant (#212748)
+2024-05-12T23:55:23Z 29aeab1cbb Include chat agent ID in telemetry (#212516)
+2024-04-11T13:26:16Z d510e84808 fix rerun commands (#210162)
+2024-04-08T13:31:41Z f756ebfbcd add missing when-condition (#209834)
+2024-04-08T12:08:22Z ef6345ae05 Support for `attempt` and `enableCommandDetection` in chat model/service (#209826)
+2024-04-08T04:06:43Z ed6c6d3f28 Kill "interactive session provider" DEAD (#209700)
+2024-02-10T13:40:01Z b49c1c1170 Add ChatAgentResult2#metadata (#204851)
+2024-01-31T01:16:25Z 777ea450a1 Adopt localize2 in more places (#203842)
+2023-11-14T16:20:11Z 293db236d4 Update sidebar action names to align
+2023-11-14T16:14:32Z 29b0e44ed7 Resolve comments
+2023-11-13T20:12:22Z 6dd6275d2a move off menu
+2023-11-12T05:44:14Z 7cbff1919e Chat code cleanup (#198022)
+2023-10-18T04:02:04Z 5cbc3f8a1d Add missing requestIDs (#195857)
+2023-10-13T10:46:43Z 717f3e3f6c Joh/tart-lamprey (#195554)
+2023-08-30T00:46:46Z 20f0091347 Don't allow taking action on codeblocks in filtered responses (#191732)
+2023-08-28T22:54:00Z 4a6352a816 Remove toolbar button to @-mention a response (#191534)
+2023-08-26T06:29:17Z fea45bae62 Add response variables (#191349)
+2023-08-04T17:53:18Z d3adf9ce12 Render filetrees in panel chat responses (#188710)
+2023-06-18T20:14:00Z c0347d035b Fix cmd+backspace not working in chat input (#185500)
+2023-06-05T23:44:40Z 707854a76f Add keybinding for chat delete command (#184373)
+2023-06-02T19:09:58Z a82af228e6 Change "Vote" terminology in chat (#184204)
+2023-05-25T00:25:40Z 1c6825fe89 Implement "remove request/response" for Chat (#183380)
+2023-05-16T01:16:18Z 61208afc58 Fix "interactive session"
+2023-05-15T23:23:05Z d1132eb4b9 Rename more variables/props
+2023-05-15T23:03:10Z bb3607cb87 Rename actions, config, and some properties/variables
+2023-05-15T22:54:11Z 2156969dcf Rename files

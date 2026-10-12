@@ -19,7 +19,7 @@ if (!asset) throw new Error('The installed frontend entry was not found')
 const boot = app.read(frontend + asset)
 const cut = boot.lastIndexOf('const fo=globalThis.dshDesktopBoot')
 if (cut < 0 || !boot.includes('function rM()')) throw new Error('The installed frontend seed table changed; update this fixture')
-const html = index.replace('<title>DeepSeek Harness</title>', '<title>DSH Resend 界面验证</title>')
+const html = index.replace(/<link[^>]+rel="manifest"[^>]*>/g, '').replace('<title>DeepSeek Harness</title>', '<title>DSH Resend 界面验证</title>')
   .replace('<div id="root"></div>', '<main id="root" style="max-width:900px;margin:40px auto;padding:0 24px"></main>')
 const chat = app.read('node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js')
   .replace('return module.exports;', 'exports.preview = { UserMessageNodeView, MessageIconActions, zh, en }; return module.exports;')
@@ -70,7 +70,34 @@ const translate = (ns) => (key, args = {}) => {
 };
 const listeners = new Set();
 const registrations = [{ options: { key:'user' }, locale:'chat', component:host.UserMessageNodeView }];
-const remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), rollback: async (request) => ({ok:true,value:{ok:true,value:{planId:'preview-plan',scope:request.scope,files:[{path:'src/example.js',action:'restore'},{path:'README.md',action:'refuse',reason:'content-diverged'}],conversation:request.scope==='artifacts'?undefined:{action:'rewind',count:3}}}}) } };
+// Browser storage belongs only to this simulated fixture. The real plugin
+// persists completion through the Host's private outcome files.
+const rollbackDemoKey = 'dsh-resend-ui.file-rollback-result';
+const demoRollback = async (request) => {
+  const saved = localStorage.getItem(rollbackDemoKey);
+  if (saved) return {ok:true,value:JSON.parse(saved)};
+  if (request.phase === 'status') return {ok:true,value:{ok:true,value:{planId:'',completed:false,files:[]}}};
+  const result = {ok:true,value:{planId:'preview-plan',scope:request.scope,files:[{path:'src/example.js',action:'restore'},{path:'README.md',action:'refuse',reason:'content-diverged'}]}};
+  if (request.phase === 'execute') { result.value.completed = true; localStorage.setItem(rollbackDemoKey,JSON.stringify(result)); }
+  return {ok:true,value:result};
+};
+const cleanupSessions = [
+  {sessionId:'cleanup-a',title:'文件回滚界面调整',projectPath:'D:/Code/MJ-Project/dsh-resend-2',records:4,bytes:245760,noSnapshots:false},
+  {sessionId:'cleanup-b',title:'历史空清单会话',projectPath:'D:/Code/示例项目',records:1,bytes:128,noSnapshots:true}
+];
+const demoCleanup = async (request) => {
+  const delay = Number(new URLSearchParams(location.search).get('cleanupDelay') ?? 150);
+  await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Math.max(0,delay))));
+  const sessions = cleanupSessions.filter(session=>(request.sessionIds??[]).includes(session.sessionId));
+  const value = request.phase === 'list' ? {phase:'list',sessions:cleanupSessions,unreadableSessions:0}
+    : request.phase === 'cancel' ? {phase:'cancel'} : request.phase === 'execute' ? {phase:'execute',releasedBytes:131072,
+      results:request.mode==='sessions'?[{sessionId:'cleanup-a',title:'文件回滚界面调整',status:'cleaned',reason:'',bytes:0},
+        {sessionId:'cleanup-b',title:'历史空清单会话',status:'skipped',reason:'generating',bytes:0}]:[],failures:[],changedCount:0,protectedObjects:false}
+      : {phase:'preview',planId:'cleanup-demo',sessions,estimatedBytes:131072,itemCount:8,protectedObjects:false,unreadableSessions:0,
+        categories:[{kind:'records',count:2,bytes:1024},{kind:'outcomes',count:1,bytes:256},{kind:'objects',count:5,bytes:129792}]};
+  return {ok:true,value:{ok:true,value}};
+};
+const remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), replay: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), rollback:demoRollback,cleanup:demoCleanup } };
 // This visual fixture simulates the saved document. Durable Profile behavior
 // is exercised separately against the installed SettingsForms/ConfigEditor.
 let settingsView = {status:'ready',error:null,view:{writable:true,namespaces:[{ns:'dsh-resend',value:{inlineEditorBeneathMessage:true,regenerateLastReply:true}}]}};
@@ -115,13 +142,14 @@ function SettingsFixture() {
     activeId:active,onSelect:setActive,onClose:()=>setOpen(false),renderSlot:(slot,_props,options)=>slot==='settings.section'?(options.only==='general'?h('p',null,'通用设置内容'):h(settings.component,{})):slot==='settings.action'?registrations.filter(entry=>entry.options.name==='settings.action').map(entry=>h(entry.component,{key:entry.options.id})):slot==='settings.close'?'关闭':'设置'
   }));
 }
-seeds['react-dom/client'].createRoot(document.getElementById('root')).render(h(React.Fragment,null,
+seeds['react-dom/client'].createRoot(document.getElementById('root')).render(new URLSearchParams(location.search).has('settingsOnly') ? h(settings.component,{}) : h(React.Fragment,null,
   heading('用户消息'),h('div',{'data-chat-flow-kind':'user'},h(native.component,{...base,node:user,...native.options.inject('fixture')})),
   heading('较早用户消息'),h('div',{'data-chat-flow-kind':'user','data-earlier-user':true},h(native.component,{...base,node:oldUser,...native.options.inject('fixture')})),
   heading('助手回复'),h('p',null,'编辑入口与复制图标相邻；操作名称在悬停时显示。'),h('div',{style:{height:40,overflow:'hidden'},'data-clipped-actions':true},h(host.MessageIconActions,{text:'示例回复',t:translate('chat'),extraActions:h(regen.component,{...base,messageId:'reply-3'})})),
   heading('较早回复'),h(host.MessageIconActions,{text:'较早回复示例',t:translate('chat'),extraActions:h(regen.component,{...base,messageId:'reply-1'})}),
   heading('重试提示'),h(face.RewindRow,{t,outcome:{status:'resend-failed'},onSendAgain:()=>{}}),
-  h(SettingsFixture),heading('文件回滚'),h(face.FileRollbackPreview,{t,operations,point:{sessionId:'fixture',carrierSeq:5}})
+  h(SettingsFixture),heading('文件回滚'),h(face.FileRollbackPreview,{t,operations,point:{sessionId:'fixture',carrierSeq:5}}),
+  h('button',{onClick:()=>{localStorage.removeItem(rollbackDemoKey);location.reload()}},'重置回滚演示')
 ));
 window.uiFixture = {face,host,seeds,registrations,snapshot,remote,
   reconnect:()=>{for(const callback of contextEvents.get('connection/reset')??[])callback()}};

@@ -1,0 +1,78 @@
+[
+  {
+    "n": 230978,
+    "title": "feat: first cut of chat editing checkpointing UI",
+    "url": "https://github.com/microsoft/vscode/pull/230978",
+    "state": "closed",
+    "created": "2024-10-09T22:03:18Z",
+    "closed": "2024-10-10T00:17:48Z",
+    "isPR": true,
+    "labels": [],
+    "user": "joyceerhl",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\n* Read our Pull Request guidelines:\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\n* Associate an issue with the Pull Request.\n* Ensure that the code is up-to-date with the `main` branch.\n* Include a description of the proposed changes and how to test them.\n-->\ncc @roblourens"
+  },
+  {
+    "n": 289786,
+    "title": "Retrying chat requests is broken",
+    "url": "https://github.com/microsoft/vscode/issues/289786",
+    "state": "closed",
+    "created": "2026-01-22T23:35:52Z",
+    "closed": "2026-01-23T01:03:03Z",
+    "isPR": false,
+    "labels": [
+      "bug",
+      "important",
+      "verified",
+      "insiders-released",
+      "chat"
+    ],
+    "user": "roblourens",
+    "body": "- Send chat message\n- Click retry\n  - nothing happen"
+  },
+  {
+    "n": 281766,
+    "title": "Editing submitted GitHub Copilot prompt removes file references",
+    "url": "https://github.com/microsoft/vscode/issues/281766",
+    "state": "closed",
+    "created": "2025-12-06T20:09:39Z",
+    "closed": "2026-02-24T02:46:40Z",
+    "isPR": false,
+    "labels": [
+      "bug",
+      "verified",
+      "ux",
+      "insiders-released"
+    ],
+    "user": "garretwilson",
+    "body": "I wrote out a very long planning prompt for the Plan agent, including multiple `#file:` references. I submitted the prompt, and the LLM wanted to fetch https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/CharSequence.html . I of course wanted it retrieve the latest Java version, so I canceled the request and edited the prompt, adding an explicit `#fetch` with https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/CharSequence.html .\n\n(I note that GitHub changed the agent to \"Agent\" instead of \"Plan\", but that's not the point of this ticket.)\n\nSuddenly all my `#file:` references are no longer real references; they are just normal text! For example:\n\n> Would this allow us to refactor `#file:Hash.java` to be …\n\nwas changed to:\n\n> Would this allow us to refactor #file:Hash.java to be …\n\nI know the references have been removed, because when I submitted it again, the only reference shown was `#fetch`.\n\nNow I have to edit the prompt yet again (again it changed the agent to \"Agent\", and I had to change it back to \"Plan\") and go find all the file references and retype them so that they show up as real references. Not only is this tedious and error-prone, it chews up a lot of the time the LLM was supposed to save me!\n\nThe LLM is supposed to be reducing the amount of repetitive, tedious, replacement work I have to do—not adding to it!\n\n```\nVersion: 1.106.3 (user setup)\nCommit: bf9252a2fb45be6893dd8870c0bf37e2e1766d61\nDate: 2025-11-25T22:28:18.024Z\nElectron: 37.7.0\nElectronBuildId: 12781156\nChromium: 138.0.7204.251\nNode.js: 22.20.0\nV8: 13.8.258.32-electron.0\nOS: Windows_NT x64 10.0.26200\n```"
+  },
+  {
+    "n": 243470,
+    "title": "Retry chat action doesn't increment request attempt",
+    "url": "https://github.com/microsoft/vscode/issues/243470",
+    "state": "closed",
+    "created": "2025-03-13T16:31:10Z",
+    "closed": "2025-03-15T00:54:47Z",
+    "isPR": false,
+    "labels": [
+      "bug",
+      "verified",
+      "insiders-released",
+      "chat"
+    ],
+    "user": "c-claeys",
+    "body": "<!-- ⚠️⚠️ Do Not Delete This! bug_report_template ⚠️⚠️ -->\n<!-- Please read our Rules of Conduct: https://opensource.microsoft.com/codeofconduct/ -->\n<!-- 🕮 Read our guide about submitting issues: https://github.com/microsoft/vscode/wiki/Submitting-Bugs-and-Suggestions -->\n<!-- 🔎 Search existing issues to avoid creating duplicates. -->\n<!-- 🧪 Test using the latest Insiders build to see if your issue has already been fixed: https://code.visualstudio.com/insiders/ -->\n<!-- 💡 Instead of creating your report here, use 'Report Issue' from the 'Help' menu in VS Code to pre-fill useful information. -->\n<!-- 🔧 Launch with `code --disable-extensions` to check. -->\nDoes this issue occur when all extensions are disabled?: Yes\n\n<!-- 🪓 If you answered No above, use 'Help: Start Extension Bisect' from Command Palette to try to identify the cause. -->\n<!-- 📣 Issues caused by an extension need to be reported directly to the extension publisher. The 'Help > Report Issue' dialog can assist with this. -->\n- VS Code Version: \n- OS Version: \n\nSteps to Reproduce:\n\n1. Use the retry chat action e.g. via the \"Retry\" button at the end of a message in the chat panel.\n2. Expect the request attempt to increment\n3. It's always 0\n"
+  },
+  {
+    "n": 230978,
+    "title": "feat: first cut of chat editing checkpointing UI",
+    "url": "https://github.com/microsoft/vscode/pull/230978",
+    "state": "closed",
+    "created": "2024-10-09T22:03:18Z",
+    "closed": "2024-10-10T00:17:48Z",
+    "isPR": true,
+    "labels": [],
+    "user": "joyceerhl",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\n* Read our Pull Request guidelines:\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\n* Associate an issue with the Pull Request.\n* Ensure that the code is up-to-date with the `main` branch.\n* Include a description of the proposed changes and how to test them.\n-->\ncc @roblourens"
+  }
+]

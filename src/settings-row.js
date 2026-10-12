@@ -18,6 +18,7 @@ import { createElement } from 'react'
 import { Button, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { UIStyles } from './ui.js'
 import { PREFERENCE_FIELDS, usePreferences } from './preferences.js'
+import { StorageCleanup } from './storage-cleanup-ui.js'
 
 /** One row per preference field, keyed by the field's i18n label. */
 const SETTING_KEYS = Object.freeze({
@@ -35,7 +36,7 @@ const DESCRIPTIONS = Object.freeze({
 export const SETTINGS_ROW_ID = 'dsh-resend-preferences'
 
 /** The row, as a component: store plus translator in, one DOM tree out. */
-export function SettingsRow({ preferences, t }) {
+export function SettingsRow({ preferences, t, operations }) {
   const snapshot = usePreferences(preferences)
   return createElement('div', { className: 'dsh-resend-settings' }, [
     createElement(UIStyles, { key: 'ui' }),
@@ -61,6 +62,7 @@ export function SettingsRow({ preferences, t }) {
           onChange: (next) => { void preferences.set(field, next) },
         }),
       ])),
+    operations ? createElement(StorageCleanup, { key: 'cleanup', operations, t }) : null,
   ])
 }
 
@@ -73,8 +75,8 @@ export function SettingsRow({ preferences, t }) {
  * @param translate - the live translator, re-read from the locale on every render.
  * @returns the component the registration wraps and passes.
  */
-export function settingsSurface(preferences, translate) {
+export function settingsSurface(preferences, translate, operations) {
   return function BoundSettings(props) {
-    return createElement(SettingsRow, { preferences, t: props.t ?? translate })
+    return createElement(SettingsRow, { preferences, t: props.t ?? translate, operations })
   }
 }

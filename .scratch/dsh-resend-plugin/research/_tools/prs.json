@@ -1,0 +1,150 @@
+[
+  {
+    "n": 251732,
+    "title": "feature: edit previous requests",
+    "url": "https://github.com/microsoft/vscode/pull/251732",
+    "state": "closed",
+    "created": "2025-06-17T17:45:08Z",
+    "closed": "2025-06-24T02:05:21Z",
+    "isPR": true,
+    "labels": [],
+    "user": "justschen",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n\r\nref https://github.com/microsoft/vscode-copilot/issues/18304\r\n\r\nre-adding all of https://github.com/microsoft/vscode/pull/230978/files"
+  },
+  {
+    "n": 252352,
+    "title": "fix edits in inline/quick chat and better overlay and no more `x` in request edits",
+    "url": "https://github.com/microsoft/vscode/pull/252352",
+    "state": "closed",
+    "created": "2025-06-24T22:13:04Z",
+    "closed": "2025-06-24T22:47:15Z",
+    "isPR": true,
+    "labels": [],
+    "user": "justschen",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n"
+  },
+  {
+    "n": 252922,
+    "title": "edit requests onExp and added telemetry",
+    "url": "https://github.com/microsoft/vscode/pull/252922",
+    "state": "closed",
+    "created": "2025-06-30T04:35:28Z",
+    "closed": "2025-06-30T04:52:39Z",
+    "isPR": true,
+    "labels": [],
+    "user": "justschen",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n"
+  },
+  {
+    "n": 209826,
+    "title": "Support for `attempt` and `enableCommandDetection` in chat model/service",
+    "url": "https://github.com/microsoft/vscode/pull/209826",
+    "state": "closed",
+    "created": "2024-04-08T10:52:14Z",
+    "closed": "2024-04-08T12:08:22Z",
+    "isPR": true,
+    "labels": [],
+    "user": "jrieken",
+    "body": ""
+  },
+  {
+    "n": 212775,
+    "title": "Move rerun request back to prime spot, return with intent detection back as link",
+    "url": "https://github.com/microsoft/vscode/pull/212775",
+    "state": "closed",
+    "created": "2024-05-15T07:14:28Z",
+    "closed": "2024-05-15T07:31:04Z",
+    "isPR": true,
+    "labels": [],
+    "user": "jrieken",
+    "body": "fixes https://github.com/microsoft/vscode-copilot/issues/5275"
+  },
+  {
+    "n": 231143,
+    "title": "feat: enable retrying and deleting requests in an editing session",
+    "url": "https://github.com/microsoft/vscode/pull/231143",
+    "state": "closed",
+    "created": "2024-10-11T19:23:31Z",
+    "closed": "2024-10-11T21:28:43Z",
+    "isPR": true,
+    "labels": [],
+    "user": "joyceerhl",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n"
+  },
+  {
+    "n": 243471,
+    "title": "Increment the request attempt in the chat retry action",
+    "url": "https://github.com/microsoft/vscode/pull/243471",
+    "state": "closed",
+    "created": "2025-03-13T16:40:48Z",
+    "closed": "2025-03-15T00:54:46Z",
+    "isPR": true,
+    "labels": [
+      "triage-needed"
+    ],
+    "user": "c-claeys",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n\r\nFixes https://github.com/microsoft/vscode/issues/243470\r\n\r\nUse the retry action and see that the request attempt is now incremented"
+  },
+  {
+    "n": 244160,
+    "title": "Use the correct mode when retrying",
+    "url": "https://github.com/microsoft/vscode/pull/244160",
+    "state": "closed",
+    "created": "2025-03-20T19:59:48Z",
+    "closed": "2025-03-20T20:11:59Z",
+    "isPR": true,
+    "labels": [],
+    "user": "roblourens",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\n* Read our Pull Request guidelines:\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\n* Associate an issue with the Pull Request.\n* Ensure that the code is up-to-date with the `main` branch.\n* Include a description of the proposed changes and how to test them.\n-->\n"
+  },
+  {
+    "n": 289792,
+    "title": "Fix retrying chat requests",
+    "url": "https://github.com/microsoft/vscode/pull/289792",
+    "state": "closed",
+    "created": "2026-01-23T00:10:23Z",
+    "closed": "2026-01-23T01:03:01Z",
+    "isPR": true,
+    "labels": [],
+    "user": "roblourens",
+    "body": "Fix #289786 \r\nFrom #289462 fyi @meganrogge, ServiceAccessor can't be used after an await\r\n\r\n<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n"
+  },
+  {
+    "n": 325509,
+    "title": "chat: preserve model config when editing requests",
+    "url": "https://github.com/microsoft/vscode/pull/325509",
+    "state": "closed",
+    "created": "2026-07-12T22:06:21Z",
+    "closed": "2026-07-12T22:57:57Z",
+    "isPR": true,
+    "labels": [],
+    "user": "justschen",
+    "body": "- Captures the editor-scoped model configuration before inline edit teardown so a changed thinking effort reaches the replacement request.\n- Allows later prompt metadata to select a different model without reusing configuration captured for the previous model.\n\n(Commit message generated by Copilot)"
+  },
+  {
+    "n": 297181,
+    "title": "fix issue where dynamic variables are checked properly when editing",
+    "url": "https://github.com/microsoft/vscode/pull/297181",
+    "state": "closed",
+    "created": "2026-02-24T01:54:17Z",
+    "closed": "2026-02-24T02:46:39Z",
+    "isPR": true,
+    "labels": [],
+    "user": "justschen",
+    "body": "<!-- Thank you for submitting a Pull Request. Please:\r\n* Read our Pull Request guidelines:\r\n  https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests\r\n* Associate an issue with the Pull Request.\r\n* Ensure that the code is up-to-date with the `main` branch.\r\n* Include a description of the proposed changes and how to test them.\r\n-->\r\n\r\nfixes issue where dynamic variables are not properly checked and preserved. \r\n\r\nfix https://github.com/microsoft/vscode/issues/281766"
+  },
+  {
+    "n": 253081,
+    "title": "Test: Edit Previous Requests",
+    "url": "https://github.com/microsoft/vscode/issues/253081",
+    "state": "closed",
+    "created": "2025-06-30T20:15:38Z",
+    "closed": "2025-07-01T19:57:34Z",
+    "isPR": false,
+    "labels": [
+      "testplan-item"
+    ],
+    "user": "justschen",
+    "body": "Refs: https://github.com/microsoft/vscode-copilot/issues/18304\n\n- [x] anyOS @isidorn\n- [x] anyOS @nguyenchristy\n- [x] anyOS @pierceboggan \n\nComplexity: 4\n\nAuthors: @justschen\n\n\n[Create Issue](https://github.com/microsoft/vscode/issues/new?template=blank&body=Testing+%23253081%0A%0A&assignees=justschen)\n\n---\n\nThis iteration, we're experimenting with ways for users to edit previous requests that have been sent in chat. While editing, you can modify the request text content, attachments, model, and mode.\n\nThere are 3 main editing entry points. Finalized setting names to be determined! All versions support keyboard access (`enter`)\n- Inline: Hover over the chat request bubble and click on the text to edit the request. \n- Hover: Hover over the chat request to show a toolbar. Clicking on the `edit` codicon will open the editing experience inline with the request.\n- Input: Hover over the chat request to show a toolbar. Clicking on the `edit` codicon will open the editing experience in the original input box at the bottom of the chat panel.\n- None: This is just the original behavior where an undo button is shown on hover. Clicking it will put the request text into the input box. \n\n## Test Steps\n1. Make sure that `chat.editRequests` is enabled and set to `inline` (default). \n2. Try submitting new requests via edits, attaching context, closing out of the edits view, creating new chats, scrolling and tryping, or any other behaviour you think might be common!\n3. Try a few scenarios like resizing, large requests, or scrolling the edit out of view. \n4. Via keyboard, try entering the edits flow by navigating to a request with `shift + tab` or with `cmd + up` and `up`. Press `enter` to begin editing. \n6. Repeat this for `input` and `hover. \n7. In all these scenarios, the toolbar should be accesible via `shift + tab`. You can completely undo a request by hitting the `undo` button in the toolbar, or by navigating to the request and hitting `cmd + backspace`\n\n## Notes:\n- This had some significant UI changes, so please let me know if anything breaks, and do your best to find any wonky edge cases or weird ui that you might experience"
+  }
+]

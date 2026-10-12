@@ -1,5 +1,5 @@
 /** The host user-message actions, plain-text editor and eligibility metadata. */
-import { cloneElement, createElement, Fragment, isValidElement, useRef, useState } from 'react'
+import { cloneElement, createElement, Fragment, isValidElement, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { IconCloseOutlineRegular, IconEditOutlineRegular, IconPaperPlaneOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconAction, UIStyles } from './ui.js'
 import { usePreferences } from './preferences.js'
@@ -8,6 +8,7 @@ import { withPanelBoundary } from './panel-boundary.js'
 import { useHiding } from './use-hiding.js'
 import { operationErrorText } from './operation-error.js'
 import { useConversationEligibility } from './conversation-eligibility.js'
+import { ReplayPreflight } from './file-rollback-preview.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
 const identity = (value) => value
@@ -74,13 +75,48 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * own panel, preserving the host message and its copy action.
  */
 function InlineEditor({ t, value, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
-  return createElement('div', { className: 'dsh-resend-editor' }, [
-    createElement('textarea', { key: 'textarea', value, rows: 3, autoFocus: true,
-      disabled, 'aria-label': t('row.editInput'), onChange: onText, onKeyDown }),
-    createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
-      control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
-      control('composer', t('row.editInComposer'), IconEditOutlineRegular, onComposer, composerReason, disabled),
+  const textarea = useRef(null)
+  const fitText = () => {
+    const input = textarea.current
+    if (!input) return
+    // Reset before measuring so deleting text also shrinks back to three lines.
+    input.style.height = '0px'
+    input.style.height = input.scrollHeight + 'px'
+  }
+  useLayoutEffect(fitText, [value])
+  useLayoutEffect(() => {
+    const input = textarea.current
+    input.focus()
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [])
+  useLayoutEffect(() => {
+    const input = textarea.current
+    const Observer = input.ownerDocument.defaultView.ResizeObserver
+    if (!Observer) return
+    let width
+    const observer = new Observer(([entry]) => {
+      // Only width changes affect wrapping; height changes must not loop.
+      if (entry.contentRect.width === width) return
+      width = entry.contentRect.width
+      fitText()
+    })
+    observer.observe(input)
+    return () => observer.disconnect()
+  }, [])
+  return createElement('div', { className: 'dsh-resend-editor-surface' }, [
+    createElement('div', { key: 'header', className: 'dsh-resend-editor-header' }, [
+      createElement('span', { key: 'label', className: 'dsh-resend-editor-label' }, t('row.temporaryInput')),
       control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
+    ]),
+    createElement('div', { key: 'editor', className: 'dsh-resend-editor' }, [
+      createElement('textarea', { key: 'textarea', ref: textarea, value, rows: 3,
+        disabled, 'aria-label': t('row.editInput'), onChange: onText, onKeyDown }),
+      createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
+        createElement('span', { key: 'composer', className: 'dsh-resend-editor-composer' },
+          createElement(IconAction, { label: t('row.editInComposer'), icon: IconEditOutlineRegular,
+            tooltip: t('row.editInComposerHint'), onClick: onComposer, reason: composerReason, disabled, showLabel: true })),
+        control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
+      ]),
     ]),
   ])
 }
@@ -90,6 +126,7 @@ export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.
 export function UserActionsRow(props) {
   const { node, sessionId, inputActions, useInput, useSession, readInput, operations, preferences, t } = props
   const prefs = usePreferences(preferences)
+  const preflight = useSyncExternalStore(operations.subscribe, () => operations.preflightFor?.(sessionId))
   const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
   const data = { seq: node.data.seq ?? node.anchorSeq, text: node.data.text ?? userMessageText(node.data) }
   const [editing, setEditing] = useState(false)
@@ -118,7 +155,7 @@ export function UserActionsRow(props) {
     : typeof inputActions?.setDraft !== 'function' || typeof readInput !== 'function' ? t('row.composerUnavailable') : undefined)
 
   const open = () => {
-    if (currentReason() !== undefined || inFlight.current) return
+    if (currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
     setText(live.current.data.text)
     setError(undefined)
     setEditing(true)
@@ -129,14 +166,15 @@ export function UserActionsRow(props) {
     setError(undefined)
   }
   const send = async () => {
-    if (inFlight.current || currentReason() !== undefined || live.current.text.trim() === '') return
+    if (inFlight.current || operations.preflightFor?.(sessionId) || currentReason() !== undefined || live.current.text.trim() === '') return
     inFlight.current = true
     setPending(true)
     setError(undefined)
     try {
       const result = await operations.run({ sessionId, targetSeq: live.current.data.seq, op: 'edit', text: live.current.text })
-      if (result.ok) setEditing(false)
-      else setError(t('row.operationFailed') + '：' + operationErrorText(result.error, t))
+      if (result.ok) {
+        if (!result.value?.canceled) setEditing(false)
+      } else setError(t('row.operationFailed') + '：' + operationErrorText(result.error, t))
     } catch (cause) {
       setError(t('row.operationFailed') + '：' + operationErrorText(cause, t))
       console.warn('[dsh-resend] edit at seq ' + data.seq + ' in session ' + sessionId + ': ' + (cause?.message ?? cause))
@@ -180,19 +218,21 @@ export function UserActionsRow(props) {
     return createElement('div', { role: 'alert', className: 'dsh-resend-row-error' }, [
       props.renderMessage ? createElement(Fragment, { key: 'message' }, props.renderMessage(null)) : null,
       createElement(UIStyles, { key: 'ui' }),
+      createElement(ReplayPreflight, { key: 'preflight', operations, sessionId, userSeq: data.seq, portal: true, t }),
       createElement(HideRulesSurface, { key: 'rules', t, css }),
       createElement('span', { key: 'error' }, t('row.hideFailed')),
       createElement('pre', { key: 'detail' }, localDiagnostics),
     ])
   }
   const eligible = !hidden && plan?.userSeqs.has(data.seq)
-  if (!eligible) return createElement(Fragment, null, rules, props.renderMessage?.(null))
+  if (!eligible) return createElement(Fragment, null, rules, props.renderMessage?.(null),
+    createElement(ReplayPreflight, { operations, sessionId, userSeq: data.seq, portal: true, t }))
 
   const idle = !inlineOn
-    ? [control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, stopReason ?? composerReason, pending)]
-    : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending)]
+    ? [control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, stopReason ?? composerReason, pending || !!preflight)]
+    : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
   const editor = editing && createElement(InlineEditorSurface, {
-      key: 'inline', t, value: text, disabled: pending, stopReason, composerReason,
+      key: 'inline', t, value: text, disabled: pending || !!preflight, stopReason, composerReason,
       onText: (event) => setText(event.target.value),
       onSend: () => { void send() }, onComposer: editInComposer, onCancel: cancel, onKeyDown,
     })
@@ -200,6 +240,7 @@ export function UserActionsRow(props) {
   return createElement('div', { className: props.renderMessage ? 'dsh-resend-user-message' : undefined }, [
     rules,
     createElement(UIStyles, { key: 'ui' }),
+    createElement(ReplayPreflight, { key: 'preflight', operations, sessionId, userSeq: data.seq, t }),
     props.renderMessage ? createElement(Fragment, { key: 'message' }, props.renderMessage(actions)) : createElement(Fragment, { key: 'actions' }, actions),
     editor,
     error === undefined ? null : createElement('span', { key: 'error', role: 'alert', className: 'dsh-resend-operation-error' }, error),

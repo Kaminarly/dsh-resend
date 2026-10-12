@@ -341,7 +341,8 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // gap a hand-supplied `operations` would hide.
     const failedRecords = Object.freeze([FAILED])
     const queuedRecords = Object.freeze([QUEUED])
-    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED, recordsFor: () => failedRecords }, createPreferences()), 'panel.error.rewindRow')
+    const rollback = async () => ({ ok: true, value: { planId: '', completed: false, files: [] } })
+    const row = withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => FAILED, recordsFor: () => failedRecords, rollback }, createPreferences()), 'panel.error.rewindRow')
     const slotProps = POINT_PROPS
 
     const failed = await mount(createElement(row, slotProps))
@@ -353,7 +354,7 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
     // …and the same wiring at a QUEUED point shows no error row at all — the
     // exclusion is what the user sees, not only what a function returns.
     const queued = await mount(
-      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED, recordsFor: () => queuedRecords }, createPreferences()), 'panel.error.rewindRow'), slotProps),
+      createElement(withPanelBoundary(rewindRowSurface({ subscribe: () => () => {}, outcomeOf: () => QUEUED, recordsFor: () => queuedRecords, rollback }, createPreferences()), 'panel.error.rewindRow'), slotProps),
     )
     expect(queued.thrown).toBeUndefined()
     expect(queued.html).toContain('row.hiddenCount')

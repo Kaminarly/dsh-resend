@@ -1,0 +1,2 @@
+src/vs/workbench/contrib/chat/common/editing/chatEditingService.ts
+src/vs/workbench/contrib/chat/browser/chatEditing/chatEditingCheckpointTimelineImpl.ts

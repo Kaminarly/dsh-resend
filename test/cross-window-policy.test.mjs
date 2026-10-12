@@ -18,7 +18,7 @@ afterEach(async () => { for (const resource of resources.splice(0).reverse()) aw
 async function durable(state = hostState({ session: measuredFixture(), agent: 'deaf' })) {
   await mkdir(tmpDir, { recursive: true })
   const home = await mkdtemp(path.join(tmpDir, 'cross-window-policy-'))
-  const h = await settingsHost(home, 'shared', state)
+  const h = await settingsHost(home, 'shared', state, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
   resources.push(h)
   await h.ctx.plugin(TypertGatewayService)
   return { h, state }
@@ -30,7 +30,7 @@ async function pageFor(h, faults, settle = (_endpoint, result) => result) {
   const answers = []
   const ctx = await gatewayClient(async (endpoint, payload, signal) => {
     const result = await dispatchToHost(h, endpoint, payload.args, signal)
-    if (endpoint === 'resend/apply') answers.push(result.value)
+    if (endpoint === 'resend/apply' || endpoint === 'resend/replay') answers.push(result.value)
     return settle(endpoint, result)
   })
   resources.push({ close: () => ctx.fiber.dispose() })
@@ -154,7 +154,7 @@ it('synchronizes all four switches and open controls between two durable Profile
   const other = await settingsHost(h.profile.home, 'other')
   resources.push(other)
   expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true,
-    restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
+    restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
 })
 
 it.each(['edit', 'regenerate'])('rejects a stale second-window %s button under the newly saved rule without side effects', async op => {

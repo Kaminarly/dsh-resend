@@ -5,6 +5,12 @@
 with no access to any other conversation or file.
 **Language:** English. Platform identifiers are quoted verbatim and must not be translated or renamed.
 
+**Action-policy update (2026-10-10):** [Message action policy](../dsh-resend-action-policy/spec.md)
+supersedes the former unrestricted edit targets, last-reply-only regenerate, optional hiding and
+three page-local preferences. Use its four durable Profile settings, complete effective-conversation
+eligibility, execution-time checks, preserved drafts and owed-prompt exception. Other log, replay,
+serialization and file rollback requirements below continue to apply.
+
 ## How to read this document
 
 - **`MUST` / `MUST NOT` / `SHOULD`** are normative. Everything else is context.
@@ -40,8 +46,8 @@ A DSH Desktop plugin, `dsh-resend`, that adds two operations to a conversation:
 
 | Operation | Target | What the user gets |
 |---|---|---|
-| **edit-and-resend** | any user message that is still on the model surface | the message is rewound — it and everything after it leave the model context and disappear from the view — and the edited text is sent as the new prompt |
-| **regenerate** | the **last** assistant reply | that reply and everything after it are rewound, and the original prompt is sent again |
+| **edit-and-resend** | the last effective user message by default; earlier effective user messages when the saved edit restriction is off | the message is rewound — it and everything after it leave the model context and disappear from the view — and the edited text is sent as the new prompt |
+| **regenerate** | the last effective assistant reply by default; earlier effective assistant replies when the saved regenerate restriction is off | replay starts from the corresponding user question; it, the reply and subsequent effective content are replaced, and the original prompt is sent again |
 
 Three properties make this harder than it looks, and they shape everything below.
 
@@ -319,9 +325,14 @@ resolveTarget(sessionId, targetSeq):
      surface nodes)                                   → target-shadowed      (§4.5)
   3. target is in the log but not yet on the surface
      (the file has caught up, the surface has not)    → message-pending      (§4.5)
-  4. op === 'edit' and target.type ≠ 'user/message'   → not-user-message
-  5. op === 'regenerate' and target is not the last
-     assistant reply on the surface                   → not-last-reply
+  4. op === 'edit' and target is not a real user
+     message (exclude Carrier and host injection)      → not-user-message
+  5. op === 'regenerate' and target is not an
+     effective assistant message                      → not-assistant-message
+  6. op === 'edit', saved edit restriction is on,
+     and target is not the last effective user message → not-last-user-message
+  7. op === 'regenerate', saved regenerate restriction
+     is on, and target is not the last effective reply → not-last-reply
 ```
 
 Then compute the range:
@@ -387,7 +398,9 @@ The error code vocabulary is **closed**. These are the codes, with the user-faci
 | `message-pending` | the target exists but is not yet on the surface — a turn is closing, or the file and surface disagree | **yes** |
 | `target-shadowed` | the target was already rewound, or is otherwise off the active surface | no |
 | `not-user-message` | edit was aimed at a non-user message | no |
-| `not-last-reply` | regenerate was aimed at anything but the last reply | no |
+| `not-last-reply` | saved regenerate restriction is on and the target is an earlier effective reply | no |
+| `not-last-user-message` | saved edit restriction is on and the target is an earlier effective user message | no |
+| `not-assistant-message` | regenerate was aimed at a non-assistant target | no |
 | `blank-text` | the edited text is empty or whitespace-only | no |
 | `no-text` | the prompt to re-send has no text block (image-only) | no |
 | `internal` | an unexpected fault | maybe |
@@ -721,6 +734,12 @@ not only when someone forgets to re-run a generator.
   no-op: a half-mounted namespace is worse than a loud failure. Wrap the mount so a second attempt
   logs and disables the feature rather than corrupting the first.
 
+**Result handling (2026-10-10 correction):** Gateway unary calls return a transport result around
+the plugin's business result. At the operations boundary, preserve transport failures and unwrap
+exactly one successful transport layer before reading `carrierSeq`, `shadowedSeqs`, or rollback
+fields. Do not treat transport `ok: true` as business success. Regression checks must combine the
+actual Gateway client with the operations object; testing each separately missed this defect.
+
 ### 6.6 No `./typert` export, no loader
 
 Deliberately **not** taking the loader route:
@@ -750,10 +769,10 @@ unavailable, the corresponding feature is **absent**; nothing else is affected.
 
 | # | Slot | Key / id | What it renders | If the slot is absent |
 |---|---|---|---|---|
-| 1 | `conversation.chat.node` | `dsh-resend-user-actions` | the action row beneath a user message, and the inline editor when open | no edit affordance; regenerate still works |
+| 1 | `conversation.chat.node` | `user`, delegating the shipped renderer | an edit icon adjacent to the original copy icon, plus the inline editor when open | no edit affordance; regenerate still works |
 | 2 | `conversation.chat.node` | `dsh-resend-error` | the partial-failure row at a rewind point (§9.4) | failures are reported in the host log only |
-| 3 | `conversation.chat.assistant-actions` | id `dsh-resend-regenerate`, `order` chosen to sit beside the shipped entries | the regenerate control on the last reply | no regenerate affordance |
-| 4 | `settings.general.item` | — | the plugin's preferences (§10) | defaults apply; no settings UI |
+| 3 | `conversation.chat.assistant-actions` | id `dsh-resend-regenerate`, `order` chosen to sit beside the shipped entries | visible regenerate controls on effective replies, governed by saved display and range settings | no regenerate affordance |
+| 4 | `settings.section` | `dsh-resend-preferences` | a dedicated Message editing page with an edit nav glyph (§10) | defaults apply; no settings UI |
 | 5 | *(inside 1)* | — | a React-owned `<style>` element carrying the hide rules (§8) | **hard failure** — see §8.5 |
 
 Registration facts you will need, quoted from the slot catalogue
@@ -763,8 +782,10 @@ Registration facts you will need, quoted from the slot catalogue
   is the occupant registered under that kind. Registering an already-occupied key **replaces that
   occupant**. The shipped key table already contains: `assistant-step, command, command-input,
   compaction, context, manual-compaction, model-retry, steering, system-prompt, tool-call, turn-error,
-  turn-max-tokens, turn-process, turn-tail, turn-trigger, unknown, user, workflow-run`. **Choose keys
-  outside that set** — this plugin never contends for the `user` key.
+  turn-max-tokens, turn-process, turn-tail, turn-trigger, unknown, user, workflow-run`. The user-message
+  registration deliberately decorates `user` under the confirmed UI revision below. Other custom
+  nodes still use fresh keys. Raw `entries(name)` exposes the original component and its locale;
+  `subscribe(name, listener)` tracks its lifecycle. Lower numeric priority wins.
 - Both slots deliver, as standard props: `useChat: UseChat`, `useInput: SnapshotSelectorHook<InputState>`,
   `inputActions: InputActions`, `sessionId: SessionId`, `useConversation`, `useProjection`.
 - `conversation.chat.assistant-actions` is a **list** slot: each entry receives `{ messageId }`. A
@@ -775,18 +796,34 @@ Registration facts you will need, quoted from the slot catalogue
 
 ### 7.1 The user-message action row (registration 1)
 
-There is **no user-message actions slot** in DSH, and the full slot catalogue confirms it. The
-supported way to attach an affordance to a user message is to register a **new chat node kind** whose
-definition targets the user message and whose renderer is this row. The reference implementation does
-exactly this and it works in production.
+**Confirmed UI revision, 2026-10-10:** the user requires the edit icon immediately beside copy,
+under the corresponding user message. This supersedes the former separate visible action node and
+visible text labels. See [UI requirement 01](../dsh-resend-ui/01-native-ui-and-user-actions-placement.md).
 
-The node's renderer receives a `seq` for the user message. It renders, in a row **beneath** the
-message:
+There is **no user-message actions slot** in DSH. On the verified DSH Desktop 2.0.17 host, decorate
+the original `user` renderer: retain its original bubble and actions callback, and append the edit
+control through the actions element's `extraActions` prop. Subscribe to slot entries so a late,
+replaced, or removed original renderer is handled without a leaked registration. Preserve the host's
+translation namespace and all original content, attachments, image callbacks, file and skill
+references, timestamp, and copy action. Derive the operation target from the original node's seq.
 
-- an edit control: `IconEditOutlineRegular` + the localized "Edit" label;
-- when open, the inline editor: a textarea seeded with the message's text, plus a **Send** button
-  (`IconPaperPlaneOutlineRegular`) and a **Cancel** button (`IconCloseOutlineRegular`);
-- an "Edit in the composer" button, which hands the text to the real composer (below).
+This integration depends on **internal React element structure**, not a promised public extension
+API. Verify it against the installed host. If the expected element or actions callback is absent,
+retain the original message and explain that editing is unavailable; the shared boundary also retains
+the original message after an extension failure. Do not reconstruct the bubble or move DOM nodes.
+Legacy companion metadata may remain hidden, but no separate visible action node may enter an
+assistant process group. A half-seq anchor alone does not establish the required placement.
+
+- Edit uses `IconEditOutlineRegular`, immediately to the right of the original copy icon.
+- When open, the editor sits beneath that user message, seeded with its multiline text, with Send
+  (`IconPaperPlaneOutlineRegular`), Edit in the composer, and Cancel (`IconCloseOutlineRegular`).
+- These actions and Regenerate are **icon-only**. Localized names appear in the host Tooltip on
+  pointer hover or keyboard focus and remain accessible names. Disabled controls explain the reason.
+- Use the host Button, Tooltip, and Switch primitives. There is no shipped multiline Textarea;
+  style that input and other plugin surfaces with host theme tokens for colors, spacing, corners,
+  and focus. Cover settings, retry notices, and file rollback controls too. Rollback scope names,
+  preview contents, and confirmation instructions remain visible. Verify light/dark themes, narrow
+  windows, and multiline Chinese text in the actual host controls.
 
 Keyboard: **`Enter` submits, `Esc` cancels**, in addition to the buttons. `Shift+Enter` inserts a
 newline. Do not submit on `Enter` while an IME composition is active — check
@@ -838,17 +875,24 @@ the host-side `agent.followup` (§5.5).
 
 ### 7.3 The regenerate control (registration 3)
 
-- It appears on the **last assistant reply only**, and it is **permanently visible**, not
-  hover-revealed.
-- Icon `IconRefreshOutlineRegular` + the localized "Regenerate" label.
-- Determining "the last reply" is a client-side question. Give your definition the neighbouring
-  context it needs by registering for its kind; the reader's only lookup is `previous(kind)` — **there
-  is no "event at seq" on the client**. Keep the definition's `start` pure, because the assembler
-  replays it after a window fill.
+- When the saved display switch is on, the icon remains visible on effective assistant replies.
+  Earlier replies are disabled under the default regenerate restriction and enabled when it is off.
+  Turning the display switch off hides every regenerate icon without clearing the range setting.
+- Icon `IconRefreshOutlineRegular` only; the localized "Regenerate" name is its accessible name
+  and appears in the host hover/focus Tooltip.
+- Determine the last effective reply through the Host's complete conversation eligibility,
+  independently of the loaded window. Neighbouring context may help locate its prompt but cannot
+  establish last-reply eligibility. Keep the definition's `start` pure for window replay, and
+  recheck the saved rule and target under the session lock before writing.
 - Disabled with a hover reason when: the agent is streaming (§9.2); the prompt carried attachments
   (`no-text`); the target is off the surface.
 - The action row it sits in is the shipped assistant-actions strip, so the plugin adds one entry
   beside the shipped ones rather than re-authoring the strip.
+
+Post-click errors state the localized cause and recovery step, preserving a stable code for
+diagnostics. Keep raw exception messages out of user-facing copy. The regenerate error notice uses
+a React body portal, follows its action, fits the viewport, and offers dismissal; it must remain
+readable inside a clipped action strip. Editing errors stay below the editor and preserve its text.
 
 ### 7.4 Every registered surface gets an error boundary
 
@@ -873,8 +917,9 @@ is the mechanism being defended against.
 
 ### 7.5 No DOM writes
 
-The plugin MUST NOT write to the DOM directly. The one place it needs styled output — the hide rules —
-is achieved by rendering a `<style>` element from React (§8.4).
+The plugin MUST NOT write to the DOM directly. Render both the hide rules (§8.4) and the
+plugin-scoped theme styles through React-owned `<style>` elements. Extend the host user message
+through React elements (§7.1), without DOM relocation or mutation.
 
 ---
 
@@ -971,6 +1016,8 @@ a long session hides nearly the whole transcript. The plugin MUST disclose, not 
   count, e.g. `en: N messages hidden` / `zh: 已隐藏 N 条消息`. The count is taken from the hide plan,
   so it is what actually happened, not what was requested.
 - The notice is dismissible, and dismissing it MUST NOT restore the rows (§8.4).
+- Hiding is fixed, including reopened history. A legacy false hiding preference is ignored; no
+  preference or setting API can turn hiding off. A settings read failure does not suspend hiding.
 - The README MUST record the declined valve and its consequence in the user's own terms: a large
   rewind is visually destructive by design, and the count is the only thing standing between the user
   and a blank page.
@@ -981,7 +1028,8 @@ a long session hides nearly the whole transcript. The plugin MUST disclose, not 
 
 ### 9.1 Edit and resend
 
-1. The action row sits beneath every user message that is on the model surface, with the edit control.
+1. The action row sits beneath each effective real user message. Earlier messages retain a disabled
+   edit control under the default saved edit restriction; turning it off enables earlier targets.
 2. Activating it opens the inline editor seeded with the message's text.
 3. `Enter` or Send performs **one** operation: rewind + resend, one Remote call.
 4. The edited message and everything after it disappear; the new prompt appears as the resent message
@@ -993,7 +1041,8 @@ anywhere in the UI.
 
 ### 9.2 Regenerate
 
-1. The control appears on the last assistant reply, permanently visible.
+1. With the display setting on, the control remains visible on effective assistant replies. The
+   saved regenerate restriction determines whether earlier replies can be activated.
 2. Activating it rewinds from that reply's round and re-sends the original prompt's text.
 3. The old reply and everything after it disappear; the new reply streams in.
 
@@ -1044,13 +1093,33 @@ the error row describes the *resend*, never the rewind.
 
 ## 10. Settings and localization
 
-`settings.general.item` (registration 4) carries the plugin's preferences:
+`settings.section` (registration 4) carries the plugin's preferences in a dedicated **Message editing**
+page (Chinese nav text: 消息编辑). The General section must contain none of these controls.
+
+The verified Desktop shell has no custom nav-icon option but renders a resolved label as React
+children. The plugin supplies its localized label and edit glyph through that label and renders
+plugin-scoped styles through an additive `settings.action` entry. Hide only the shell's default gear
+for this label. Do not replace the settings shell, redeclare its children, or relocate DOM elements.
+This label shape depends on current host rendering and must be verified against the installed shell.
+
+The four independent preferences are saved by the current Profile:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Hide replaced messages | on | Off leaves rows visible with the notice only (§8.6) |
-| Inline editor beneath the message | on | Off removes the row's inline editor, keeping "Edit in the composer" |
-| Regenerate on the last reply | on | Off hides the control entirely |
+| Inline editor beneath the message | on | Off uses "Edit in the composer" for new entries; an already-open editor keeps its text |
+| Show regenerate button | on | Off hides all regenerate controls without clearing the range setting |
+| Only regenerate the last assistant reply | on | Off allows earlier effective assistant replies |
+| Only edit and resend the last user message | on | Off allows earlier effective user messages and their Composer edit entries |
+
+Both range settings always show the exact consequence explanations from the action-policy spec in
+the active language. Loading and failed reads block the affected new operations, while saves retain
+the previous authoritative rules until confirmed. Save failures re-read the saved document.
+Refresh, isolated-host restart and new conversations retain settings; other Profiles are independent.
+Same-Profile pages subscribe to changes, and stale requests still obey execution-time saved rules.
+Configuration updates must preserve open editor text and ordinary Composer drafts. An open editor
+that loses eligibility keeps modification/copy/cancel available and disables send/handoff until
+eligible again. A verified prompt owed after a successful rewind remains retryable without a second
+rewind even after the restrictions turn on.
 
 **Localization.** Chinese and English, **never both at once** — the active host locale selects one.
 Register through `ctx.locale`, and use a **thunk** for any label a slot's `label` option projects, so
@@ -1203,6 +1272,12 @@ regresses. Criteria are grouped by what they observe.
 24. **The count is honest** — it equals the number of keys in the emitted plan, not the number of
     shadowed seqs.
 
+**UI revision acceptance (2026-10-10, §7.1):** verify edit/copy adjacency in the actual host bubble,
+icon-only actions with localized hover and keyboard-focus hints, disabled reasons, original message
+content and copy preservation, and shared host controls in light/dark and narrow views. Check
+multiline Chinese, cancel/Esc, and incompatible-host fallback. Record which checks exercise real host
+controls and which full resend/rollback flows remain for the user's follow-up testing.
+
 ### 13.4 Descriptor and packaging
 
 25. **The seven rules** (§6.3) are asserted against both contributions by `scripts/check-typert.mjs`,
@@ -1261,16 +1336,14 @@ consistent with the seam in §3.
 **Nothing in this appendix is for you to implement, and nothing else in this document depends on it.**
 It is background on why §7.1 takes the shape it does.
 
-DSH has no user-message actions slot, and this feature is the second implementation to work around
-that by manufacturing a chat node kind. `@dsh-session/README.zh.md:192` names "a consumer that needs
-capability beyond boundary-based forking" as the trigger for revisiting that design, which is what
-this plugin is.
+DSH has no user-message actions slot. The former standalone custom-node workaround could enter
+an assistant process group and could not satisfy copy-adjacent placement. The current §7.1 decorator
+meets that placement on the verified host but relies on internal React structure.
 
 Proposal: add a **`conversation.chat.user-actions`** list slot, parallel to
 `conversation.chat.assistant-actions` and declared by the same `conversation.view` entry, delivering
-`{ messageId, seq }` as owner props. Its absence is why this plugin must register a node kind (§7.1);
-its presence would remove one registration point and one manufactured node kind from every plugin in
-this space. Until it exists, §7.1 is the supported route.
+`{ messageId, seq }` as owner props. Such a public slot would replace the internal renderer
+decoration. It remains an upstream proposal, not part of this task.
 
 ---
 

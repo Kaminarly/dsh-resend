@@ -1,0 +1,132 @@
+2025-12-31T21:02:33Z 99d8a2706e Reorganize workbench/contrib/chat (#285467)
+2025-12-15T21:31:25Z 5769cef79a chat: fix ChatCheckpointFileChangesSummaryContentPart showing 0/0 (#283674)
+2025-11-24T04:29:37Z 29ea21caf8 Rework chat stream rate estimation (#278990)
+2025-11-18T19:05:28Z ea4ccd5f44 chat: add requestNeedsInput on the chat model (#278171)
+2025-11-13T21:00:45Z 0823903b22 Merge pull request #277254 from mjbvz/dev/mjbvz/early-kangaroo
+2025-11-13T20:10:20Z 13b1a4e793 Remove requester info from API (#277233)
+2025-11-13T19:58:43Z a7d6df0bb2 Remove a few more sessionId usages
+2025-10-31T17:36:13Z 59e61b2ec3 Merge pull request #274385 from mjbvz/dev/mjbvz/outer-piranha
+2025-10-31T16:41:28Z 49c15a81d1 More sessionId -> sessionResource conversation
+2025-10-31T04:44:58Z f5652ea958 Use session resources for code block collection
+2025-10-31T00:38:33Z db5ee1e0f4 Convert ChatService to use uris instead of ids in public apis
+2025-10-30T19:37:54Z 3bb2ff6262 More plumbing through of session resources instead of ids
+2025-10-08T17:00:54Z d83502b5b1 chat: improve mcp autostart experience (#270392)
+2025-09-12T20:23:45Z a4ab5a0bd2 mcp: be graceful about autostarting servers that require interaction
+2025-08-13T17:39:33Z eceab56174 bring back some things that were too aggresively removed
+2025-08-12T10:14:47Z 792a6c19a7 Remove request pause functionality from chat components
+2025-07-24T15:12:08Z 269dc08213 Rendering file changes at checkpoints (#256231)
+2025-06-28T00:45:01Z 2f6b1d56c9 Chat copy polish (#252720)
+2025-06-24T19:52:05Z 37b46afab0 Add more info to codeblock copy/insert/apply actions (#252319)
+2025-06-24T02:05:21Z c6e8ac1778 feature: edit previous requests (#251732)
+2025-06-21T05:31:41Z 95f2ccd3ec Don't count codeblocks as words in chat rendering calculation (#251963)
+2025-06-09T16:47:11Z 1ab154c866 break variable entries into their own file for model/parserTypes cycle
+2025-05-23T20:06:37Z f1255605f5 Implement "try again" button on errors (#249662)
+2025-05-18T21:04:58Z 18ed64835e Avoid errorDetails being rendered multiple times while scrolling (#249219)
+2025-05-12T02:07:11Z 372c0765b1 Simplify chat response rendering (#248672)
+2025-05-11T23:51:06Z c6baa8f4ad Simplify ChatModel initialization (#248655)
+2025-04-16T18:06:19Z d153669413 chat: make paused indication stronger and clickable (#246751)
+2025-03-24T00:10:31Z 48d1b0c47d Fix issues with CollapsedCodeBlock rendering (#244398)
+2025-02-21T19:15:45Z 72329c8c57 Tweak chat stream rate computation again (#241513)
+2025-02-19T22:45:30Z a3d87bbb04 fix: consolidate working set and chat attachments (#241116)
+2025-02-19T20:10:27Z 8b8d761800 Show "working" progress message at bottom of Edits (#241248)
+2025-02-16T22:34:59Z 46fddb4138 Improve agent codeblock pill updating (#240962)
+2025-02-13T18:41:48Z fe1ff566e7 chat: add incremental undo stops for edits in a single turn (#240684)
+2025-02-11T01:30:29Z d10feb6708 chat: polish agentic play/pause (#240319)
+2025-02-08T00:44:38Z 8c54ad7dbc Collapse "used references" by default in edits view (#239981)
+2025-01-27T04:31:26Z 2246a5fddf chat: add a pause button for agent mode (#238735)
+2025-01-24T23:44:20Z 08564649c2 Fix counting chat word loading rate during tool calls (#238731)
+2025-01-09T11:29:01Z c65a0aba76 Remove some chat widget debt (#237556)
+2025-01-07T04:22:42Z 70866d5287 Enable "tools agent" (#237369)
+2024-12-05T03:47:09Z 6567c244f9 Collapse 'used references' when response completes with an error (#235360)
+2024-11-28T16:31:08Z c0699e2945 Joh/sweet-crawdad (#234851)
+2024-11-12T23:13:49Z ba2edb7a7a feat: render percentage progress in chat code block pills (#233723)
+2024-11-12T18:02:22Z 55f2f6993b feat: rerender chat markdown code block pills when going from generating to applying edits (#233710)
+2024-11-06T00:17:05Z c0d93f1e55 Only sync chat code blocks with extensions once complete (#232536)
+2024-11-01T09:01:56Z 08dbf783fc allow to resize inline chat zone (#232795)
+2024-10-27T01:33:11Z 4edbcca401 refactor: deprecate `chat.editing.experimental.enableRestoreFile` (#232346)
+2024-10-21T20:15:55Z 0698de0185 feat: hide undone requests in the chat UI (#231877)
+2024-10-17T22:16:33Z 3b1b283baa fix: don't render request attachments which are also in the working set (#231614)
+2024-10-16T05:23:55Z 2b3d6bee7b feat: allow continuing a chat request in chat editing view (#231461)
+2024-10-15T04:04:35Z 8d8f0cd9d4 Improve chat scrolling (#231370)
+2024-10-10T00:17:48Z e0921defa0 feat: first cut of chat editing checkpointing UI (#230978)
+2024-10-08T23:49:51Z ef869b6958 Fix issues around tool check not rendering (#230841)
+2024-09-21T21:22:08Z 4beaf9dcd8 Refresh welcome view (#229284)
+2024-08-30T08:31:46Z 6b924c5152 ESM merge to main (#227184)
+2024-08-26T23:12:02Z 13d64e98d8 Add extra detail choice under chat response thumbs down (#226678)
+2024-08-08T23:58:02Z f06516b1ab Avoid using marked renderer just to find tokens
+2024-08-08T23:31:53Z 77c020bab8 Add numCodeBlocks chat telemetry (#225189)
+2024-08-08T02:45:37Z 8245d426e0 Update marked (#225096)
+2024-08-02T18:40:04Z 5fa7792040 Fix code block terminating for lists (#224615)
+2024-07-29T23:00:45Z f9d9c79cb0 feat: render confirmation actions nicely in chat history (#224238)
+2024-07-20T20:39:05Z 1c7fa5ef1e feat: render warnings for partial or omitted references (#222292)
+2024-07-18T01:24:27Z 65a6a2f783 Support "code citations" in chat API (#221996)
+2024-07-11T16:19:51Z 067c430016 make sure to rerender requests after attaching variable data (#221482)
+2024-07-09T21:33:39Z 1a49e917b6 feat: render explicit attachments in submitted chat request (#221295)
+2024-06-29T12:31:50Z 39aba8e0af Tune chat render rate (#219241)
+2024-06-23T06:07:10Z 111a6f7238 Rework ChatListRenderer (#216897)
+2024-05-16T05:03:17Z 652c948b85 Check for allowed names in the participant fullName (#212849)
+2024-05-13T19:13:40Z d1b5d42012 Fix <?php tag (#212631)
+2024-05-13T08:50:12Z c6ca1ffaf9 voice - support synthesize pending chat responses (#212505)
+2024-05-12T23:55:23Z 29aeab1cbb Include chat agent ID in telemetry (#212516)
+2024-05-11T01:02:08Z bbc0159f43 feat: associate chat references and warnings with chat progress (#212391)
+2024-05-09T23:05:08Z d1555a7b21 Get rid of "GitHub Copilot" header and add a participant "fullName"
+2024-05-09T17:50:34Z 514b478235 fix: rerender progress task when it settles
+2024-05-09T16:41:29Z 6f4fe62a51 fix: don't progressively render chat warnings
+2024-05-08T22:50:57Z 9cb0df2a02 feat: support concurrent chat progress messages (#212300)
+2024-05-08T01:14:33Z 60468916e4 Implement chat confirmations (#212140)
+2024-04-27T20:45:26Z 3012ebac4e Preserve original markdown string options when doing progressive render (#211539)
+2024-04-22T22:28:59Z ba65916262 improve `CodeCompareBlockPart` (#210964)
+2024-04-08T12:08:22Z ef6345ae05 Support for `attempt` and `enableCommandDetection` in chat model/service (#209826)
+2024-04-08T04:06:43Z ed6c6d3f28 Kill "interactive session provider" DEAD (#209700)
+2024-04-04T06:22:26Z c71d1c0706 Merge branch 'main' into joh/overseas-cougar
+2024-04-04T06:06:16Z 1e765ade0e Fix injected services becoming public by mistake (#209513)
+2024-04-03T16:19:22Z cf0038479e support `vscode.ChatResponseTextEditPart` and support rendering of text edits in chat widget (using the diff editor)
+2024-03-27T21:23:22Z d948d379b2 Fix codeblock streaming (#208952)
+2024-03-25T22:55:20Z 81d996c90e Fix vuln logging in code blocks (#208716)
+2024-03-20T15:06:03Z 15441f4251 Merge branch 'main' into joh/chatWidget
+2024-03-20T11:38:04Z 6931665097 - fix re-run and re-run with intent detection commands
+2024-03-19T21:54:08Z 050dbc12c3 Centralize updates to chat code block text models (#208130)
+2024-03-12T22:15:42Z a0847754c5 get it to work
+2024-03-12T07:08:50Z 30f1a7103b Pass references on code block document as metadata (#207382)
+2024-03-05T19:42:06Z 957ccc6050 Set session id as chat code block authority (#206912)
+2024-03-04T22:01:13Z 663376e32d Move more stuff from interactive to participants (#206647)
+2024-02-26T19:29:37Z de7da9f4af Improve creation of text models for chat code blocks (#205943)
+2024-02-21T19:28:21Z 0cae183880 Include conversation history context to `provideCommands` (#205867)
+2024-02-12T20:34:53Z 7177041709 Fix title in chat history picker (#205029)
+2024-02-10T13:40:01Z b49c1c1170 Add ChatAgentResult2#metadata (#204851)
+2024-02-09T13:32:27Z 808582dad0 Bring back command buttons, remove command followups (#204548)
+2024-02-06T23:54:17Z 780192a30b Revert "Replace chat "command followups" with command button content (#204512)" (#204546)
+2024-02-06T17:37:22Z cda51f6ab4 Replace chat "command followups" with command button content (#204512)
+2024-01-30T23:43:09Z 31fbc3dc94 Remove extra not null assertions (#202201)
+2024-01-14T19:20:16Z 56846b7595 Allow chat progress messages in the middle of the rendered content.
+2023-11-20T20:19:54Z 6e91b53c06 progressive rendering: use the previous word count for the word rate (#198560)
+2023-11-20T17:50:15Z dd2a645bcf Show detected vulnerabilities in chat codeblocks (#198595)
+2023-11-17T15:15:41Z 5dc80111a2 Add chat progress message api (#198528)
+2023-11-14T19:54:57Z 39d7357aba Move usedContext/contentReferences out of Response (#198240)
+2023-11-12T05:44:14Z 7cbff1919e Chat code cleanup (#198022)
+2023-10-30T22:42:35Z 602125c14a Port candidate fixes to main (#197027)
+2023-10-26T03:36:55Z 5ba99f9539 Add chat agent header animation
+2023-10-25T23:59:50Z 1941240420 Fix used references expand state
+2023-10-22T02:59:01Z f030465eb3 Support showing agent + slash command dynamically, when detected for a request
+2023-10-22T01:05:07Z e00496ed4e Fix persisting chat agents for responses
+2023-10-21T20:28:53Z d8102f8e6d Add agent avatar icon and "using @workspace" text
+2023-10-18T00:33:28Z 7a9b57fd52 Look up correct result for chat user action (#195849)
+2023-10-16T06:21:15Z 0424b2fd95 voice - show in-progress placeholder
+2023-10-13T19:29:48Z 72bc78dd6a Merge remote-tracking branch 'origin/main' into roblou/ambitious-earthworm
+2023-10-13T18:22:43Z 13fc2026fa Clean up
+2023-10-13T17:37:31Z c488899ee3 Show "used references" at the top of the response
+2023-10-13T10:46:43Z 717f3e3f6c Joh/tart-lamprey (#195554)
+2023-10-11T19:31:59Z 7479c69172 feat: render welcome message questions near input (#195405)
+2023-10-09T02:54:02Z 55d1cfea45 Fix timing issue in ChatModel initialize/reinitialize flow (#195033)
+2023-10-04T18:42:01Z f95a56336e Implement "used references" list (#194825)
+2023-09-22T06:19:41Z b1ecf6f7bc Add decorations for variables in rendered chat requests (#193745)
+2023-09-15T08:32:30Z bc6b75eb2c Basic 'chat agent' API (#193152)
+2023-08-18T21:15:12Z 1d9febc37e Render file tree during progressive rendering (#190697)
+2023-08-08T04:15:11Z c557c0fc4d Fix 'Thinking...' not appearing in chat response (#189893)
+2023-08-04T17:53:18Z d3adf9ce12 Render filetrees in panel chat responses (#188710)
+2023-07-19T20:04:32Z b0689b4d88 Try a dynamic height rendering approach (#188126)
+2023-05-26T16:23:12Z f104f9bd62 Always scroll down and focus the input (#183557)
+2023-05-25T00:25:40Z 1c6825fe89 Implement "remove request/response" for Chat (#183380)
+2023-05-19T23:14:43Z d052d3190f More "chat" renames (#182990)
+2023-05-18T23:24:05Z 748cd8ea52 Ensure the welcome message avatar icon rerenders when the chat session loads (#182923)
+2023-05-15T22:54:11Z 2156969dcf Rename files

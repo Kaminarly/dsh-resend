@@ -70,6 +70,9 @@ export const MODULE_TABLE = Object.freeze({
     IconPaperPlaneOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'paper-plane-outline', ...props }),
     IconRefreshOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'refresh-outline', ...props }),
     IconWarningOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'warning-outline', ...props }),
+    IconCheckOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'check-outline', ...props }),
+    IconShieldOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'shield-outline', ...props }),
+    FileTypeIcon: ({ path, size }) => require_('react').createElement('svg', { 'data-file-icon': path, width: size, height: size }),
   }),
 })
 

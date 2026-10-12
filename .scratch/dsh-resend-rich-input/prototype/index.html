@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>独立引用编辑器 · 隔离原型</title>
+<style>
+  * { box-sizing: border-box } body { max-width: 1000px; margin: 32px auto; padding: 0 24px; font: 16px/1.7 system-ui; color: #222; background: #f7f8fa }
+  h1 { font-size: 24px } h2 { font-size: 18px } button, textarea { font: inherit } button { cursor: pointer; padding: 5px 10px; border: 1px solid #b4bbc5; border-radius: 5px; background: white }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 } .ProseMirror { padding: 14px; min-height: 160px; border: 1px solid #9ca3af; border-radius: 8px; background: white; white-space: pre-wrap; overflow-wrap: anywhere }
+  .ProseMirror p { margin: 0 } .ProseMirror:focus { outline: 2px solid #2e67cc } .file-reference { display: inline-flex; gap: 6px; align-items: center; background: #e6efff; border: 1px solid #91b6ef; border-radius: 5px; margin: 1px 2px; padding-left: 5px; vertical-align: baseline }
+  .file-reference button { border: 0; background: transparent; padding: 0 5px } .ProseMirror-selectednode { outline: 2px solid #2e67cc }
+  textarea, pre { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; background: white; border: 1px solid #ccc; border-radius: 6px; padding: 10px } textarea { min-height: 100px } .note { color: #4b5563 } output { display: block }
+</style>
+<h1>独立引用编辑器 · 隔离原型</h1>
+<p class="note">只使用代表性历史文本和本页接收替身。文件候选是固定样例；所有状态只保存在内存中。</p>
+<h2>普通草稿替身</h2>
+<textarea aria-label="普通草稿替身">普通草稿：保留这些文字与附件。</textarea>
+<p>附件替身：普通附件.png</p>
+<h2>临时编辑</h2>
+<div class="toolbar">
+  <button id="restore">恢复样例历史</button><button id="blank">新建空白</button>
+  <button id="undo">撤销</button><button id="redo">重做</button><button id="receive">导出到接收替身</button>
+</div>
+<div id="editor"></div>
+<p class="note">标签可删除；skill 直接编辑文字。Ctrl+C/V/X 复制、粘贴、剪切；Ctrl+Z 撤销；Enter 交给接收替身；Shift+Enter 换行。</p>
+<div class="toolbar" id="candidates"></div>
+<output id="status" aria-live="polite"></output>
+<h2>当前导出文本</h2><pre id="text"></pre>
+<h2>接收替身</h2><pre id="received">尚未接收</pre>
+<details><summary>当前编辑器状态</summary><pre id="state"></pre></details>
+<script>
+  window.__prototypeRegistrations = new Map();
+  window.__ModuleLoader__ = {load: entry => window.__prototypeRegistrations.set(entry.id, entry)};
+</script>
+<script src="/dist/editor.bundle.js"></script>
+<script type="module" src="/demo.js"></script>
+</html>

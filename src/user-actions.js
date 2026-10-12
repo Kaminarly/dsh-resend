@@ -124,7 +124,7 @@ function InlineEditor({ t, value, disabled, stopReason, composerReason, onText, 
 export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.inlineEditor')
 
 export function UserActionsRow(props) {
-  const { node, sessionId, inputActions, useInput, useSession, readInput, operations, preferences, t } = props
+  const { node, sessionId, useSession, operations, preferences, t } = props
   const prefs = usePreferences(preferences)
   const preflight = useSyncExternalStore(operations.subscribe, () => operations.preflightFor?.(sessionId))
   const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
@@ -134,7 +134,6 @@ export function UserActionsRow(props) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState()
   const inFlight = useRef(false)
-  const input = typeof useInput === 'function' ? useInput(identity) : undefined
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
   const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
@@ -151,8 +150,7 @@ export function UserActionsRow(props) {
   const currentReason = () => reasonFor(preferences.getSnapshot(),
     operations.conversationFor(sessionId, live.current.revision), live.current)
   const stopReason = reasonFor(prefs, conversation, live.current)
-  const composerReason = stopReason ?? (input?.phase !== 'plain' ? t('row.composerBusy')
-    : typeof inputActions?.setDraft !== 'function' || typeof readInput !== 'function' ? t('row.composerUnavailable') : undefined)
+  const composerReason = stopReason ?? t('row.composerResendUnavailable')
 
   const open = () => {
     if (currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
@@ -184,18 +182,9 @@ export function UserActionsRow(props) {
     }
   }
   const editInComposer = () => {
-    if (inFlight.current || currentReason() !== undefined) return
-    // useInput is a React hook and cannot be invoked here. readInput resolves
-    // the same session's public input facade and reads its live snapshot.
-    try {
-      if (readInput()?.phase !== 'plain') return
-      if (typeof inputActions?.setDraft !== 'function') return
-      inputActions.setDraft((editing ? live.current.text : live.current.data.text).replace(/[\uE100-\uE11D\uFFFC]/gu, ''))
-      setEditing(false)
-    } catch (cause) {
-      setError(t('row.composerUnavailable'))
-      console.warn('[dsh-resend] composer handoff for session ' + sessionId + ': ' + (cause?.message ?? cause))
-    }
+    // The host has no public submission interceptor after reference serialization.
+    // Even a retained callback must never seed an ordinary append draft as an edit.
+    return
   }
   const onKeyDown = (event) => {
     if (event.key === 'Escape') {
@@ -206,7 +195,6 @@ export function UserActionsRow(props) {
       void send()
     }
   }
-  const inlineOn = prefs.inlineEditorBeneathMessage
   // Surface 6: the hide-rules element, now a boundary-wrapped surface, is the
   // one DOM node the transcript hides with. It is created here and reused at
   // every site that used to carry the raw <style>.
@@ -228,9 +216,9 @@ export function UserActionsRow(props) {
   if (!eligible) return createElement(Fragment, null, rules, props.renderMessage?.(null),
     createElement(ReplayPreflight, { operations, sessionId, userSeq: data.seq, portal: true, t }))
 
-  const idle = !inlineOn
-    ? [control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, stopReason ?? composerReason, pending || !!preflight)]
-    : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
+  // Keep editing usable for Profiles that previously selected composer-only mode.
+  const idle = [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
+  if (prefs.inlineEditorBeneathMessage === false) idle.push(control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, composerReason, pending || !!preflight))
   const editor = editing && createElement(InlineEditorSurface, {
       key: 'inline', t, value: text, disabled: pending || !!preflight, stopReason, composerReason,
       onText: (event) => setText(event.target.value),

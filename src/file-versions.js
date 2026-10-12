@@ -39,6 +39,13 @@ function mutationPath(name, args) {
   if (name === 'str_replace_editor' && ['create', 'str_replace', 'insert'].includes(args?.command)) return args.path
 }
 
+// Native results carry toolCallId/source.callId. callId is legacy-only.
+function resultCallIds(event) {
+  const message = event.data?.message
+  return [...new Set([message?.toolCallId, message?.source?.callId, message?.callId]
+    .filter(id => typeof id === 'string' && id !== ''))]
+}
+
 export function createFileVersions(ctx) {
   const storage = createPrivateStorage(ctx)
   const { home } = storage
@@ -106,23 +113,51 @@ export function createFileVersions(ctx) {
     if (covering.status !== 'ok') throw new Error(covering.detail)
     const files = new Map()
     const shadowed = new Set(plan.shadowedSeqs)
-    const results = new Map(covering.log.filter((event) => event.type === 'tool/result').map((event) => [event.data.message.callId, event]))
-    for (const seq of shadowed) if (eventAtSeq(covering.log, seq) === undefined) throw new Error(`file version read does not cover seq ${seq}`)
+    const results = new Map()
+    const referencedResults = new Map()
+    const rootCalls = new Map()
     for (const event of covering.log) {
+      if (event.type === 'tool/call') rootCalls.set(event.data.callId, event.seq)
+      if (event.type !== 'tool/result') continue
+      for (const id of resultCallIds(event)) results.set(id, [...(results.get(id) ?? []), event])
+      for (const seq of event.sourceEventSeqs ?? []) referencedResults.set(seq, [...(referencedResults.get(seq) ?? []), event])
+    }
+    for (const seq of shadowed) if (eventAtSeq(covering.log, seq) === undefined) throw new Error(`file version read does not cover seq ${seq}`)
+    let userSeq
+    for (const event of covering.log) {
+      if (event.type === 'user/message' && event.surfaceOp === 'append' && event.data.source?.kind === 'user') userSeq = event.seq
       if (event.type !== 'tool/call' && event.type !== 'tool/ptc-dispatch') continue
       const callId = event.type === 'tool/call' ? event.data.callId : event.data.subCallId
       const rootCallId = event.type === 'tool/call' ? callId : event.data.rootCallId
+      const candidates = [...new Set([...(results.get(rootCallId) ?? []), ...(referencedResults.get(rootCalls.get(rootCallId)) ?? [])])]
+      // Result membership is authoritative, even for numerically descending rewinds.
+      // When it is absent, the owning user message keeps incomplete work visible.
+      if (candidates.length ? !candidates.some(result => shadowed.has(result.seq)) : !shadowed.has(userSeq)) continue
       let args
-      try { args = event.type === 'tool/call' ? JSON.parse(event.data.arguments) : event.data.arguments } catch { continue }
+      try { args = event.type === 'tool/call' ? JSON.parse(event.data.arguments) : event.data.arguments }
+      catch {
+        if (['write', 'edit', 'str_replace_editor'].includes(event.data.name)) throw new Error('file mutation arguments unavailable')
+        continue
+      }
       const name = mutationPath(event.data.name, args)
-      if (name === undefined) continue
-      const result = results.get(rootCallId)
-      // A call is log-only; its surface result identifies the live work being undone.
-      if (result === undefined || !shadowed.has(result.seq)) continue
+      if (name === undefined) {
+        if (['write', 'edit'].includes(event.data.name) ||
+            event.data.name === 'str_replace_editor' && ['create', 'str_replace', 'insert'].includes(args?.command)) throw new Error('file mutation path unavailable')
+        continue
+      }
+      const associationReason = candidates.length === 0 ? 'tool-result-unavailable'
+        : candidates.length !== 1 || resultCallIds(candidates[0]).some(id => id !== rootCallId) ? 'tool-result-ambiguous' : undefined
       const observed = observations.get(observationKey(session.id, callId))
-      const change = observed ?? { path: name, reason: 'prior-state-unavailable' }
+      let normalized = observed?.path ?? name
+      let pathReason
+      if (!observed) {
+        try { normalized = path.relative(session.header.cwd, await fileTarget(session.header.cwd, name)).split(path.sep).join('/') }
+        catch { pathReason = 'unsafe-path' }
+      }
+      const change = { ...(observed ?? { path: normalized, reason: pathReason ?? 'prior-state-unavailable' }),
+        ...(associationReason ? { reason: associationReason } : {}) }
       // Failed calls with no mutations are not part of the file set.
-      if (observed !== undefined && observed.reason === undefined && equal(observed.before, observed.after)) continue
+      if (change.reason === undefined && equal(change.before, change.after)) continue
       // Windows names with different casing still refer to the same file.
       const key = process.platform === 'win32' ? change.path.toLowerCase() : change.path
       const previous = files.get(key)

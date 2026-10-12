@@ -4,7 +4,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { Session } from '@deepseek-ai/dsh-session'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
-import { agentDoubles, appendUser, auditCount, hostState, logOf, SESSION_ID, sessionFixture } from './helpers/host.mjs'
+import { agentDoubles, appendReply, appendUser, auditCount, hostState, logOf, SESSION_ID, sessionFixture } from './helpers/host.mjs'
 
 const faults = vi.hoisted(() => ({ beforeCommit: undefined, afterCommit: undefined, failResultSave: false }))
 vi.mock('node:fs/promises', async original => {
@@ -28,14 +28,14 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-async function workspace({ agent = 'accepting', files = true } = {}) {
+async function workspace({ agent = 'accepting', files = true, resultFormat = 'native', config } = {}) {
   const home = await mkdtemp(path.join(tmpdir(), 'resend-preflight-'))
   cleanups.push(() => rm(home, { recursive: true, force: true }))
   const cwd = path.join(home, 'workspace')
   await mkdir(cwd)
   const session = Session.create(SESSION_ID, sessionFixture().snapshotEvents(), { version: 4, id: SESSION_ID, createdAt: 0, isSeeded: false, cwd })
   const state = hostState({ session, agent })
-  const host = await hostComposition({ host: state, dataHome: path.join(home, 'data') })
+  const host = await hostComposition({ host: state, dataHome: path.join(home, 'data'), config })
   cleanups.push(() => host.ctx.fiber.dispose())
   let count = 0
   async function write(name, content) {
@@ -47,7 +47,11 @@ async function workspace({ agent = 'accepting', files = true } = {}) {
       await writeFile(path.join(cwd, name), content)
       return { isError: false, value: { before, after: content } }
     })
-    session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: `result-${count}`, callId,
+    session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: `result-${count}`,
+      ...(resultFormat === 'native' ? { toolCallId: callId, source: { kind: 'tool', callId } }
+        : resultFormat === 'legacy' ? { callId }
+        : resultFormat === 'source' ? { source: { kind: 'tool', callId } }
+        : resultFormat === 'conflicting' ? { toolCallId: callId, source: { kind: 'tool', callId: 'wrong-id' } } : {}),
       content: [{ type: 'text', text: 'written' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
   }
   if (files) { await writeFile(path.join(cwd, 'file.txt'), '中文 A'); await write('file.txt', '中文 B'); await write('file.txt', '中文 C') }
@@ -61,6 +65,101 @@ async function workspace({ agent = 'accepting', files = true } = {}) {
   const choose = (result, phase) => call({ phase, sessionId: SESSION_ID, preflightId: result.value.preflightId })
   return { home, cwd, session, state, host, write, call, start, choose }
 }
+
+it('keeps an unassociated mutation in preflight instead of treating it as no changes', async () => {
+  const w = await workspace({ resultFormat: 'missing' })
+  const preview = await w.start('regenerate')
+  expect(preview.value).toMatchObject({ preflight: true, files: [{ path: 'file.txt' }] })
+  expect(w.state.calls.followups).toBe(0)
+  expect(auditCount(w.session)).toBe(0)
+})
+
+it('supports the historical callId result shape explicitly', async () => {
+  const w = await workspace({ resultFormat: 'legacy' })
+  expect((await w.start()).value).toMatchObject({ preflight: true, files: [{ path: 'file.txt', action: 'restore' }] })
+})
+
+it('supports source.callId alone and explicit sourceEventSeqs linkage', async () => {
+  for (const resultFormat of ['source', 'missing']) {
+    const w = await workspace({ resultFormat })
+    expect((await w.start()).value.files).toEqual([{ path: 'file.txt', action: 'restore' }])
+    expect(w.state.calls.followups).toBe(0)
+  }
+})
+
+it('refuses conflicting result identities and waits for an explicit choice', async () => {
+  const w = await workspace({ resultFormat: 'conflicting' })
+  const preview = await w.start()
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'tool-result-ambiguous' }])
+  expect(w.state.calls.followups).toBe(0)
+  expect((await w.choose(preview, 'cancel')).value.canceled).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('中文 C')
+})
+
+it('does not silently discard writes with no usable result linkage', async () => {
+  const w = await workspace({ files: false })
+  w.session.append('tool/call', { turn: 2, step: 1, callId: 'unlinked', name: 'write', arguments: JSON.stringify({ file_path: 'unlinked.txt' }) })
+  w.session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: 'unlinked-result', content: [{ type: 'text', text: 'written' }], isError: false } }, { surfaceOp: 'append' })
+  const preview = await w.start()
+  expect(preview.value.files).toEqual([{ path: 'unlinked.txt', action: 'refuse', reason: 'tool-result-unavailable' }])
+  expect(w.state.calls.followups).toBe(0)
+})
+
+it('refuses duplicated tool results instead of choosing one arbitrarily', async () => {
+  const w = await workspace()
+  const original = logOf(w.session).find(event => event.type === 'tool/result')
+  w.session.append('tool/result', { ...original.data, message: { ...original.data.message, id: 'duplicate-result' } }, { surfaceOp: 'append', sourceEventSeqs: original.sourceEventSeqs })
+  const preview = await w.start()
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'tool-result-ambiguous' }])
+  expect(w.state.calls.followups).toBe(0)
+})
+
+it('keeps mutations with missing results visible but excludes missing results from an earlier user message', async () => {
+  const w = await workspace({ files: false })
+  w.session.append('tool/call', { turn: 2, step: 1, callId: 'missing', name: 'edit', arguments: JSON.stringify({ file_path: 'file.txt' }) })
+  const preview = await w.start('regenerate')
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'tool-result-unavailable' }])
+  expect(w.state.calls.followups).toBe(0)
+  await w.choose(preview, 'cancel')
+  const user = appendUser(w.session, { id: 'later', text: '后续消息没有修改文件' })
+  const sent = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: user.seq, op: 'edit', text: '后续消息编辑' } })
+  expect(sent.ok).toBe(true)
+  expect(sent.value.preflight).toBeUndefined()
+  expect(w.state.calls.followups).toBe(1)
+})
+
+it('blocks malformed mutation arguments instead of sending without a file inventory', async () => {
+  const w = await workspace({ files: false })
+  w.session.append('tool/call', { turn: 2, step: 1, callId: 'malformed', name: 'write', arguments: '{' })
+  const result = await w.start()
+  expect(result).toEqual({ ok: false, error: { code: 'internal' } })
+  expect(w.state.calls.followups).toBe(0)
+  expect(auditCount(w.session)).toBe(0)
+})
+
+it.each(['edit', 'regenerate'])('%s at round two removes all three later writes to EXAMPLE.md after confirmation', async op => {
+  const w = await workspace({ files: false, config: { restrictEditToLastUserMessage: false, restrictRegenerateToLastReply: false } })
+  const before = '# dsh-resend\n'
+  const version = before + '\nVersion: 0.1.0\n'
+  const upstream = version + '\nUpstream (DSH Desktop): 2.0.17\n'
+  await writeFile(path.join(w.cwd, 'EXAMPLE.md'), before)
+  await w.write('EXAMPLE.md', version)
+  appendUser(w.session, { id: 'third', text: '@EXAMPLE.md 追加适配的上游版本' })
+  await w.write('./EXAMPLE.md', upstream)
+  appendReply(w.session, { id: 'third-reply', text: '已追加上游版本', turn: 3 })
+  appendUser(w.session, { id: 'fourth', text: '@EXAMPLE.md 追加插件作用' })
+  const after = upstream + '\nDescription: 插件作用\n'
+  await w.write('EXAMPLE.md', after)
+  appendReply(w.session, { id: 'fourth-reply', text: '已追加插件作用', turn: 4 })
+  const preview = await w.start(op)
+  expect(preview.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore' }])
+  expect(w.state.calls.followups).toBe(0)
+  expect(await readFile(path.join(w.cwd, 'EXAMPLE.md'), 'utf8')).toBe(after)
+  expect((await w.choose(preview, 'restore')).ok).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'EXAMPLE.md'), 'utf8')).toBe(before)
+  expect(w.state.calls.followups).toBe(1)
+  expect(auditCount(w.session)).toBe(1)
+})
 
 it.each(['edit', 'regenerate'])('%s waits for a choice, restores C to A, then rewinds and sends the exact prompt', async op => {
   const w = await workspace()

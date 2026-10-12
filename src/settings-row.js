@@ -28,6 +28,7 @@ const SETTING_KEYS = Object.freeze({
   restrictEditToLastUserMessage: 'settings.restrictEditToLastUserMessage',
 })
 const DESCRIPTIONS = Object.freeze({
+  inlineEditorBeneathMessage: 'settings.inlineEditorFallbackDescription',
   restrictRegenerateToLastReply: 'settings.regenerateRangeDescription',
   restrictEditToLastUserMessage: 'settings.editRangeDescription',
 })

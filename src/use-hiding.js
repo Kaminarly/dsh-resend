@@ -19,7 +19,7 @@ export function useHiding({ useChat, useConversation, sessionId, operations, nod
   try {
     const grouped = conversation?.views?.grouped?.('chat')
     plan = hidePlanFor(snapshot, records, grouped)
-    css = hideRulesFor(plan.keys)
+    css = hideRulesFor([...plan.keys, ...plan.groupKeys])
   } catch (cause) {
     const range = records.length > 0 ? records.map((record) => record.shadowedSeqs)
       : node?.data?.range ?? node?.data?.shadowedSeqs ?? [node?.data?.seq ?? node?.data?.carrierSeq]

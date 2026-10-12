@@ -145,7 +145,8 @@ it('synchronizes all four switches and open controls between two durable Profile
     expect(textarea.value).toBe('跨窗口同步仍保留的文字')
   }
   expect(b.button(3, 'Regenerate', 'reply')).toBeNull()
-  expect(b.button(0, 'Edit in the composer').disabled).toBe(false)
+  expect(b.button(0, 'Edit in the composer').disabled).toBe(true)
+  expect(b.button(0, 'Edit').disabled).toBe(false)
   await a.dom.act(async () => { await a.face.preferences.set('regenerateLastReply', true) })
   expect(b.button(3, 'Regenerate', 'reply').disabled).toBe(false)
   await a.dom.act(async () => { await a.face.preferences.set('restrictRegenerateToLastReply', true) })

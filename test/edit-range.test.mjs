@@ -122,12 +122,18 @@ it('retains editable text across policy changes and newly appended users; restor
   expect(dom.calls).toEqual([{ sessionId: 'session-1', targetSeq: 0, op: 'edit', text: '还可以修改和复制' }])
 })
 
-it('keeps a permitted Composer draft as ordinary text after restricting the earlier message', async () => {
+it('keeps editing available in composer-only Profiles without overwriting an ordinary draft', async () => {
   const dom = await editor({ restrict: false, inline: false })
+  expect(dom.button('Edit in the composer').disabled).toBe(true)
   await dom.click(dom.button('Edit in the composer'))
-  expect(dom.record.draftWrites).toEqual(['原文 0'])
+  expect(dom.record.draftWrites).toEqual([])
+  await dom.click(dom.button('Edit'))
+  expect(dom.container.querySelector('textarea').value).toBe('原文 0')
+  await dom.change(dom.container.querySelector('textarea'), '编辑草稿保留')
   await dom.act(async () => { await dom.page.preferences.set('restrictEditToLastUserMessage', true) })
-  expect(dom.record.draftWrites).toEqual(['原文 0'])
+  expect(dom.record.draftWrites).toEqual([])
+  expect(dom.container.querySelector('textarea').value).toBe('编辑草稿保留')
+  expect(dom.button('Send').disabled).toBe(true)
   expect(dom.button('Edit in the composer').disabled).toBe(true)
   const copy = dom.container.querySelector('button[aria-label="Copy"]')
   if (copy) expect(copy.disabled).toBe(false)

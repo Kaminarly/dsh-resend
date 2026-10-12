@@ -99,7 +99,7 @@ async function workspace(git = false) {
       await writeFile(path.resolve(cwd, name), content)
       return { isError: false, value: { path: name, before: before?.replace(/^\ufeff/, '').replaceAll('\r\n', '\n') ?? null, after: content } }
     })
-    session.append('tool/result', { turn: 1, step: 1, message: { role: 'tool', id: `result-${number}`, callId, content: [{ type: 'text', text: 'written' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [event.seq] })
+    session.append('tool/result', { turn: 1, step: 1, message: { role: 'tool', id: `result-${number}`, toolCallId: callId, source: { kind: 'tool', callId }, content: [{ type: 'text', text: 'written' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [event.seq] })
   }
   async function rewind() {
     const wire = await dispatchToHost(host, 'resend/apply', { request: { sessionId: SESSION_ID, targetSeq: 2, op: 'edit', text: 'new prompt' } })
@@ -420,7 +420,7 @@ it('includes first-party child tool writes whose root result is in the undone sp
     return { isError: false, value: { before: null, after: 'child output' } }
   })
   w.session.append('tool/ptc-dispatch', { rootCallId: 'root', parentCallId: 'root', subCallId: 'child', name: 'write', arguments: args, isError: false, content: [{ type: 'text', text: 'done' }] })
-  w.session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: 'root-result', callId: 'root', content: [{ type: 'text', text: 'done' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [root.seq] })
+  w.session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: 'root-result', toolCallId: 'root', source: { kind: 'tool', callId: 'root' }, content: [{ type: 'text', text: 'done' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [root.seq] })
   const carrierSeq = await w.rewind()
   const preview = await w.call({ carrierSeq, phase: 'preview' })
   expect(preview.value.files).toEqual([{ path: 'child.txt', action: 'restore' }])

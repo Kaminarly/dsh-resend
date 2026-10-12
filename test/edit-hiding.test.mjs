@@ -81,7 +81,7 @@ describe('edit and resend at the registered action row', () => {
     try {
       await dom.click(dom.button('Edit'))
       const composer = dom.button('Edit in the composer')
-      expect(composer.disabled).toBe(false)
+      expect(composer.disabled).toBe(true)
       dom.record.input = { phase }
       // Do not render: exercise the gap between the old button and live store.
       await dom.click(composer)
@@ -93,15 +93,16 @@ describe('edit and resend at the registered action row', () => {
     } finally { await dom.cleanup() }
   })
 
-  it('composer handoff carries literal references and strips chip placeholders, without submitting', async () => {
+  it('unsupported composer handoff preserves the inline edit and leaves the ordinary draft alone', async () => {
     const dom = await editor()
     try {
       await dom.click(dom.button('Edit'))
       await dom.change(dom.container.querySelector('textarea'), '@file /skill \uFFFC\uE100正文')
       await dom.click(dom.button('Edit in the composer'))
-      expect(dom.record.draftWrites).toEqual(['@file /skill 正文'])
+      expect(dom.button('Edit in the composer').disabled).toBe(true)
+      expect(dom.record.draftWrites).toEqual([])
       expect(dom.calls).toHaveLength(0)
-      expect(dom.container.querySelector('textarea')).toBeNull()
+      expect(dom.container.querySelector('textarea').value).toBe('@file /skill \uFFFC\uE100正文')
     } finally { await dom.cleanup() }
   })
 })

@@ -212,7 +212,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     expect(() => preferences.set('hideReplacedMessages', true)).toThrow('unknown preference')
   })
 
-  it('inline editor off removes the editor from the row and keeps the composer handoff', async () => {
+  it('composer-only preference retains a working inline fallback and explains the disabled handoff', async () => {
     const composition = await activated()
     const settingsDom = await renderDom(createElement(settingsOf(composition).component))
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
@@ -222,14 +222,16 @@ describe('registration 4: editable preferences and fixed hiding', () => {
       expect(chatDom.container.querySelector('textarea')).not.toBeNull()
       await chatDom.click(buttonIn(chatDom.container, 'Cancel'))
 
-      // Off: the editor is gone and the handoff remains.
+      // Off: the old preference cannot turn edits into ordinary appended drafts.
       await settingsDom.click(toggleIn(settingsDom.container, 'inlineEditorBeneathMessage'))
       await chatDom.act(async () => {})
       expect(chatDom.container.querySelector('textarea')).toBeNull()
       const composer = buttonIn(chatDom.container, 'Edit in the composer')
       expect(composer).not.toBeNull()
-      expect(composer.disabled).toBe(false)
-      expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
+      expect(composer.disabled).toBe(true)
+      expect(buttonIn(chatDom.container, 'Edit').disabled).toBe(false)
+      await chatDom.click(buttonIn(chatDom.container, 'Edit'))
+      expect(chatDom.container.querySelector('textarea')).not.toBeNull()
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()

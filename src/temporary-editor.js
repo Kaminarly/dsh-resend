@@ -1,5 +1,5 @@
 import { Slice } from 'prosemirror-model'
-import { EditorState, TextSelection } from 'prosemirror-state'
+import { EditorState, TextSelection, NodeSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { history, undo, redo, closeHistory } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
@@ -125,11 +125,22 @@ export function createTemporaryEditor(element, options) {
           view.focus()
         })
         dom.append(label, remove)
+        let pointerStart
+        dom.addEventListener('mousedown', event => {
+          pointerStart = event.button === 0 ? { x: event.clientX, y: event.clientY } : undefined
+        })
         dom.addEventListener('click', event => {
+          const start = pointerStart
+          pointerStart = undefined
           if (frozen || destroyed || event.detail > 1 || event.target === remove || remove.contains(event.target)) return
           const selection = element.ownerDocument.getSelection()
           const selectedInsideChip = selection && !selection.isCollapsed && dom.contains(selection.anchorNode) && dom.contains(selection.focusNode)
-          if (selection && !selection.isCollapsed && !selectedInsideChip) return
+          // ProseMirror selects the atom on mousedown, with DOM endpoints outside
+          // the chip. Accept that single click while keeping real drag selections.
+          const clickedAtom = start && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4 &&
+            view.state.selection instanceof NodeSelection && view.state.selection.from === getPos()
+          if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) >= 4) return
+          if (selection && !selection.isCollapsed && !selectedInsideChip && !clickedAtom) return
           void preview('file', node.attrs.path)
         })
         return { dom, stopEvent: event => remove.contains(event.target), ignoreMutation: mutation => mutation.type !== 'selection' }

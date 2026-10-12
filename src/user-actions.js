@@ -75,18 +75,22 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * editing — the one place this surface reads live data — fails as the editor's
  * own panel, preserving the host message and its copy action.
  */
-function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryContext, subscribeQueryInvalidation, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryContext, subscribeQueryInvalidation, openFile, openSkill, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
   const root = useRef(null)
   const callbacks = useRef()
-  callbacks.current = { onText, onKeyDown }
+  callbacks.current = { onText, onKeyDown, openFile, openSkill }
   const [notice, setNotice] = useState(false)
+  const [previewNotice, setPreviewNotice] = useState()
   const [skillNotice, setSkillNotice] = useState()
   const lastQueryContext = useRef(queryContext)
   useLayoutEffect(() => {
     const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup, lookupSkills,
+      openFile: path => callbacks.current.openFile ? callbacks.current.openFile(path) : false,
+      openSkill: name => callbacks.current.openSkill ? callbacks.current.openSkill(name) : false,
       label: t('row.editInput'), removeLabel: t('row.removeReference'),
       translate: t,
       onChange: next => callbacks.current.onText(next), onNotice: setNotice,
+      onPreviewNotice: setPreviewNotice,
       onSkillNotice: setSkillNotice,
       onKeyDown: event => callbacks.current.onKeyDown(event) })
     editorRef.current = editor
@@ -108,6 +112,8 @@ function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryC
     createElement('div', { key: 'editor', className: 'dsh-resend-editor' }, [
       createElement('div', { key: 'input', ref: root, className: 'dsh-resend-rich-input' }),
       notice && createElement('span', { key: 'notice', role: 'status' }, t('row.referenceLookupUnavailable')),
+      previewNotice && createElement('span', { key: 'preview-notice', role: 'status', 'data-preview-notice': true },
+        t('row.referencePreview' + previewNotice.status)),
       skillNotice && createElement('span', { key: 'skills', role: 'status', 'data-skill-notice': true },
         (Array.isArray(skillNotice) ? skillNotice : [skillNotice]).map((entry, index) =>
           createElement('span', { key: index }, t('row.skill' + entry.status) +
@@ -239,6 +245,12 @@ export function UserActionsRow(props) {
       key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
       lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),
       lookupSkills: signal => operations.skillCandidates(sessionId, signal),
+      // Chat node owner props are already session-bound by the host. Keeping
+      // these callbacks from the same row preserves the target Session and its
+      // cwd while the temporary editor is open; the editor passes only the
+      // complete path or exact skill name required by the host API.
+      openFile: props.openFile,
+      openSkill: props.openSkill,
       queryContext, subscribeQueryInvalidation: listener => operations.subscribeReferenceInvalidation(changedSessionId => {
         if (changedSessionId === undefined || changedSessionId === sessionId) listener()
       }),

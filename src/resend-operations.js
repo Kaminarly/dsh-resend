@@ -60,6 +60,7 @@ export function createResendOperations(remote) {
   const referenceInvalidationListeners = new Set()
   const conversations = new Map()
   const preflights = new Map()
+  const retrying = new Set()
   const drafts = new Map()
   let disposed = false
   const unreadConversation = Object.freeze({ ready: false, status: 'loading' })
@@ -239,9 +240,16 @@ export function createResendOperations(remote) {
     async sendAgain(point) {
       const entry = outcomeOf(point)
       if (entry?.status !== RESEND_FAILED) return undefined
-      const result = unwrapRemoteResult(await remote.resend.apply(entry.request))
-      record(entry.request, result)
-      return result
+      const key = `${point.sessionId}:${String(point.carrierSeq)}`
+      if (retrying.has(key)) return undefined
+      retrying.add(key)
+      try {
+        const result = unwrapRemoteResult(await remote.resend.apply(entry.request))
+        record(entry.request, result)
+        return result
+      } finally {
+        retrying.delete(key)
+      }
     },
     /**
      * Subscribe to outcome changes.
@@ -265,6 +273,7 @@ export function createResendOperations(remote) {
       recordsBySession.clear()
       conversations.clear()
       drafts.clear()
+      retrying.clear()
       listeners.clear()
     },
   }

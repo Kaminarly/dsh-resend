@@ -12,8 +12,29 @@ import { skillTokens, skillName, skillCatalog } from './skill-text.js'
 export function createTemporaryEditor(element, options) {
   let view, menu, destroyed = false, frozen = options.disabled === true, request, skillRequest
   let candidates = options.draft?.candidates ?? []
+  let availableSkills = new Map()
   let label = options.label, removeLabel = options.removeLabel
   const changed = () => options.onChange({ state: view.state, text: exportText(view.state.doc), candidates })
+  function previewSkillAt(position, event) {
+    if (frozen || destroyed || event.detail > 1 || event.button !== 0) return false
+    const selection = element.ownerDocument.getSelection()
+    if (selection && !selection.isCollapsed) return false
+    const resolved = view.state.doc.resolve(position ?? view.state.selection.head)
+    if (!resolved.parent.isTextblock) return false
+    const before = resolved.parent.textBetween(0, resolved.parentOffset, '', () => '\ufffc')
+    const after = resolved.parent.textBetween(resolved.parentOffset, resolved.parent.content.size, '', () => '\ufffc')
+    const text = before + after
+    for (const match of text.matchAll(/(?:^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/gu)) {
+      const start = match.index + match[0].length - match[1].length - 1
+      const end = start + match[1].length + 1
+      if (resolved.parentOffset < start || resolved.parentOffset > end) continue
+      const name = match[1]
+      if (!availableSkills.has(name)) return false
+      void preview('skill', name)
+      return true
+    }
+    return false
+  }
   const lineBreak = (state, dispatch) => {
     if (!frozen) dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView())
     return true
@@ -39,6 +60,11 @@ export function createTemporaryEditor(element, options) {
     attributes: { role: 'textbox', 'aria-label': options.label, 'aria-multiline': 'true', 'aria-disabled': String(frozen) },
     handleDOMEvents: {
       copy: syncClipboardSelection, cut: syncClipboardSelection,
+      click: (_view, event) => {
+        const reference = event.target?.closest?.('[data-path]')
+        if (reference) return false
+        return previewSkillAt(view.state.selection.head, event)
+      },
       // Skip editor keymaps during IME confirmation without preventing browser composition.
       keydown: (_view, event) => event.isComposing || event.keyCode === 229 || view.composing,
       compositionstart: () => { menu?.composing(); return false },
@@ -99,10 +125,33 @@ export function createTemporaryEditor(element, options) {
           view.focus()
         })
         dom.append(label, remove)
+        dom.addEventListener('click', event => {
+          if (frozen || destroyed || event.detail > 1 || event.target === remove || remove.contains(event.target)) return
+          const selection = element.ownerDocument.getSelection()
+          const selectedInsideChip = selection && !selection.isCollapsed && dom.contains(selection.anchorNode) && dom.contains(selection.focusNode)
+          if (selection && !selection.isCollapsed && !selectedInsideChip) return
+          void preview('file', node.attrs.path)
+        })
         return { dom, stopEvent: event => remove.contains(event.target), ignoreMutation: mutation => mutation.type !== 'selection' }
       },
     },
   })
+
+  async function preview(kind, value) {
+    if (frozen || destroyed) return
+    const callback = kind === 'file' ? options.openFile : options.openSkill
+    if (typeof callback !== 'function') {
+      options.onPreviewNotice?.({ status: 'Unavailable', kind, value })
+      return
+    }
+    try {
+      const result = await callback(value)
+      if (result === false) options.onPreviewNotice?.({ status: 'Unavailable', kind, value })
+      else options.onPreviewNotice?.(undefined)
+    } catch {
+      options.onPreviewNotice?.({ status: 'Failed', kind, value })
+    }
+  }
 
   menu = createReferenceMenu(element, { getView: () => view, lookup: options.lookup, lookupSkills: options.lookupSkills,
     disabled: () => frozen, translate: options.translate,
@@ -113,6 +162,7 @@ export function createTemporaryEditor(element, options) {
   async function checkSkills() {
     skillRequest?.abort()
     if (destroyed || frozen) return
+    availableSkills = new Map()
     const tokens = skillTokens(exportText(view.state.doc))
     const invalid = tokens.filter(name => !skillName.test(name))
     const names = tokens.filter(name => skillName.test(name))
@@ -125,9 +175,11 @@ export function createTemporaryEditor(element, options) {
     if (destroyed || frozen || controller.signal.aborted || skillRequest !== controller) return
     const catalog = skillCatalog(result)
     if (!catalog) {
+      availableSkills = new Map()
       options.onSkillNotice?.({ status: result?.unavailable ? 'Unavailable' : 'Failed', names: [] })
       return
     }
+    availableSkills = new Map(catalog.map(skill => [skill.name, skill]))
     const missing = names.filter(name => !catalog.some(skill => skill.name === name))
     const notices = []
     if (missing.length) notices.push({ status: 'Missing', names: missing })
@@ -193,7 +245,7 @@ export function createTemporaryEditor(element, options) {
   void checkSkills()
   return {
     getText: () => exportText(view.state.doc),
-    invalidateQueries() { request?.abort(); skillRequest?.abort(); menu.invalidate(); void checkSkills() },
+    invalidateQueries() { request?.abort(); skillRequest?.abort(); availableSkills = new Map(); menu.invalidate(); void checkSkills() },
     setLabels(nextLabel, nextRemoveLabel, translate) {
       label = nextLabel
       removeLabel = nextRemoveLabel

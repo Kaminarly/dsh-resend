@@ -9,7 +9,7 @@ const resources = []
 const skillHost = await createSkillHost()
 afterEach(async () => { for (const close of resources.splice(0).reverse()) await close() })
 
-async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay, sessionId = 's', seq = 0 } = {}) {
+async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay, openFile, openSkill, sessionId = 's', seq = 0 } = {}) {
   const face = clientHalf().exports
   const calls = []
   const operations = face.createResendOperations({ fileReferences: lookup && { list: lookup }, skills: skills && { list: skills }, resend: {
@@ -20,7 +20,7 @@ async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay,
     } } } },
   } })
   const node = { key: 'u', kind: 'user', anchorSeq: seq, data: { seq, text } }
-  const props = { node, sessionId, operations, preferences: readyPreferences(face), t: key => key,
+  const props = { node, sessionId, operations, openFile, openSkill, preferences: readyPreferences(face), t: key => key,
     useChat: select => select({ nodes: new Map([['u', node]]) }), useSession: select => select({ running: false }) }
   const dom = await renderDom(createElement(face.UserActionsRow, props))
   resources.push(() => dom.cleanup(), () => operations.dispose())
@@ -30,6 +30,79 @@ async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay,
     button: key => dom.container.querySelector(`[aria-label="row.${key}"]`),
   }
 }
+
+it('previews a confirmed file path without sending or changing the draft', async () => {
+  const opened = []
+  const dom = await editor({
+    openFile: path => opened.push(path),
+    lookup: async () => ({ ok: true, value: [{ path: 'a/same.md', kind: 'file' }] }),
+  })
+  await dom.click(dom.button('edit'))
+  const input = dom.input()
+  const before = editorText(input)
+  await dom.click(dom.container.querySelector('[data-path="a/same.md"]'))
+  expect(opened).toEqual(['a/same.md'])
+  expect(editorText(input)).toBe(before)
+  expect(dom.calls).toHaveLength(0)
+  await dom.key(input, 'Enter')
+  expect(dom.calls[0].request.text).toBe(before)
+})
+
+it('previews only an exact current-session skill and reports unsupported preview capability', async () => {
+  const opened = []
+  const dom = await editor({
+    openSkill: name => opened.push(name),
+    skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } }),
+  })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /tdd')
+  await dom.click(dom.input())
+  expect(opened).toEqual(['tdd'])
+  await dom.change(dom.input(), '使用 /missing')
+  await dom.click(dom.input())
+  expect(opened).toEqual(['tdd'])
+  expect(dom.container.querySelector('[data-preview-notice]')).toBeNull()
+  const unavailable = await editor({
+    skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } }),
+  })
+  await unavailable.click(unavailable.button('edit'))
+  await unavailable.change(unavailable.input(), '使用 /tdd')
+  await unavailable.click(unavailable.input())
+  expect(unavailable.container.querySelector('[data-preview-notice]').textContent).toContain('row.referencePreviewUnavailable')
+})
+
+it('retains the draft and shows a recoverable notice when preview opening fails', async () => {
+  const dom = await editor({
+    openFile: async () => { throw new Error('preview failed') },
+    lookup: async () => ({ ok: true, value: [{ path: 'a/same.md', kind: 'file' }] }),
+  })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '修改后 @a/same.md')
+  await dom.click(dom.container.querySelector('[data-path="a/same.md"]'))
+  expect(dom.container.querySelector('[data-preview-notice]').textContent).toContain('row.referencePreviewFailed')
+  expect(editorText(dom.input())).toBe('修改后 @a/same.md')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('修改后 @a/same.md')
+})
+
+it('freezes reference previews during preflight and resumes the same target after cancel', async () => {
+  const opened = []
+  const dom = await editor({
+    openFile: path => opened.push(path),
+    lookup: async () => ({ ok: true, value: [{ path: 'a/same.md', kind: 'file' }] }),
+    replay: input => input.phase === 'cancel'
+      ? { ok: true, value: { canceled: true } }
+      : { ok: true, value: { preflight: true, preflightId: 'preview', userSeq: 0, op: 'edit', files: [] } },
+  })
+  await dom.click(dom.button('edit'))
+  await dom.key(dom.input(), 'Enter')
+  const chip = dom.container.querySelector('[data-path="a/same.md"]')
+  await dom.click(chip)
+  expect(opened).toEqual([])
+  await dom.act(async () => dom.operations.chooseReplay('s', 'cancel'))
+  await dom.click(chip)
+  expect(opened).toEqual(['a/same.md'])
+})
 
 it('selects only target-session skills as editable text before resending', async () => {
   const dom = await editor({ text: '请使用', sessionId: 'target', skills: async (request, signal) => {

@@ -33,7 +33,7 @@ const paths = ['a/same.md', 'b/same.md', '资料/中文 说明.md', '有 空格'
 window.__ModuleLoader__ = { load({ factory }) {
   const table = { react: React, 'react-dom': ReactDOM, '@deepseek-ai/dsh-client-ui-primitives': primitives }
   const face = factory(name => { if (!(name in table)) throw new Error('模块表缺失 ' + name); return table[name] })
-  const calls = [], received = [], lookups = [], delayed = [], skillLookups = [], skillDelayed = [], loaded = []
+  const calls = [], received = [], openedFiles = [], openedSkills = [], lookups = [], delayed = [], skillLookups = [], skillDelayed = [], loaded = []
   let mode = 'refuse', lookupMode = 'ready', current = { sessionId: 's', seq: 0 }, running = false, valid = true, carrier = 20
   let preset = 'original'
   let skillMode = 'ready', skillCatalog = [
@@ -99,13 +99,14 @@ window.__ModuleLoader__ = { load({ factory }) {
     const node = { key: 'u' + current.seq, kind: 'user', anchorSeq: current.seq, data: { seq: current.seq, text } }
     const nodes = new Map([[node.key, node]])
     root.render(h(face.UserActionsRow, { node, ...current, operations, preferences, t: key => dictionary[key] ?? key,
+      openFile: path => openedFiles.push(path), openSkill: name => openedSkills.push(name),
       useChat: select => select({ nodes }), useSession: select => select({ running }),
       useSessions: select => select({ byId: { [current.sessionId]: { cwd: 'D:/Project', projectionValues: { agentPreset: preset } } } }),
       inputActions: { setDraft: () => { throw new Error('禁止改动正式 Composer') } },
     }))
   }
   window.richInputFixture = {
-    text, calls, received, lookups, skillLookups, loaded,
+    text, calls, received, openedFiles, openedSkills, lookups, skillLookups, loaded,
     skillMode(value) { skillMode = value },
     skills(value) { skillCatalog = value },
     releaseSkills(index, skills) { const entry = skillDelayed[index]; if (entry) entry.resolve(skills) },

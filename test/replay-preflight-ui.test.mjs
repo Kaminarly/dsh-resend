@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { memoryConfigForms } from './helpers/preferences.mjs'
 
 async function panel({ files = [{ path: '中文.txt', action: 'restore' }], decision } = {}) {
@@ -110,11 +110,11 @@ it('cancel from the actual editor preserves the draft and shows no failure notic
     useChat: select => select(snapshot), useSession: select => select({ running: false }), useInput: select => select({ phase: 'plain' }) }))
   try {
     await dom.click(dom.container.querySelector('button[aria-label="row.edit"]'))
-    await dom.change(dom.container.querySelector('textarea'), '取消后仍应保留的中文草稿')
+    await dom.change(dom.container.querySelector('[role="textbox"]'), '取消后仍应保留的中文草稿')
     await dom.click(dom.container.querySelector('button[aria-label="row.send"]'))
     await dom.click([...dom.container.querySelectorAll('button')].find(button => button.textContent === 'replay.cancel'))
-    expect(dom.container.querySelector('textarea').value).toBe('取消后仍应保留的中文草稿')
-    expect(dom.container.querySelector('textarea').disabled).toBe(false)
+    expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('取消后仍应保留的中文草稿')
+    expect((dom.container.querySelector('[role="textbox"]').getAttribute('aria-disabled') === 'true')).toBe(false)
     expect(dom.container.querySelector('[role="alert"]')).toBeNull()
     expect(operations.recordsFor('s')).toEqual([])
   } finally { await dom.cleanup(); operations.dispose(); disconnect() }

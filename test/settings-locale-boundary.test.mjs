@@ -181,8 +181,8 @@ describe('registration 4: editable preferences and fixed hiding', () => {
 
       // Send one edit so this page has a record: seqs 2 and 3 are shadowed.
       await chatDom.click(buttonIn(chatDom.container, 'Edit'))
-      await chatDom.change(chatDom.container.querySelector('textarea'), 'edited')
-      await chatDom.key(chatDom.container.querySelector('textarea'), 'Enter')
+      await chatDom.change(chatDom.container.querySelector('[role="textbox"]'), 'edited')
+      await chatDom.key(chatDom.container.querySelector('[role="textbox"]'), 'Enter')
       expect(composition.calls).toHaveLength(1)
 
       // Replaced rows are always hidden.
@@ -219,19 +219,19 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     try {
       // On: the row opens an inline editor.
       await chatDom.click(buttonIn(chatDom.container, 'Edit'))
-      expect(chatDom.container.querySelector('textarea')).not.toBeNull()
+      expect(chatDom.container.querySelector('[role="textbox"]')).not.toBeNull()
       await chatDom.click(buttonIn(chatDom.container, 'Cancel'))
 
       // Off: the old preference cannot turn edits into ordinary appended drafts.
       await settingsDom.click(toggleIn(settingsDom.container, 'inlineEditorBeneathMessage'))
       await chatDom.act(async () => {})
-      expect(chatDom.container.querySelector('textarea')).toBeNull()
+      expect(chatDom.container.querySelector('[role="textbox"]')).toBeNull()
       const composer = buttonIn(chatDom.container, 'Edit in the composer')
       expect(composer).not.toBeNull()
       expect(composer.disabled).toBe(true)
       expect(buttonIn(chatDom.container, 'Edit').disabled).toBe(false)
       await chatDom.click(buttonIn(chatDom.container, 'Edit'))
-      expect(chatDom.container.querySelector('textarea')).not.toBeNull()
+      expect(chatDom.container.querySelector('[role="textbox"]')).not.toBeNull()
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()
@@ -557,8 +557,8 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     // One edit lands so the sibling has a record to count: seqs 2 and 3 shadowed.
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     await chatDom.click(buttonIn(chatDom.container, 'Edit'))
-    await chatDom.change(chatDom.container.querySelector('textarea'), 'edited')
-    await chatDom.key(chatDom.container.querySelector('textarea'), 'Enter')
+    await chatDom.change(chatDom.container.querySelector('[role="textbox"]'), 'edited')
+    await chatDom.key(chatDom.container.querySelector('[role="textbox"]'), 'Enter')
     expect(composition.calls).toHaveLength(1)
 
     // (a) wrapped, beside a working sibling surface: only the thrower fails.

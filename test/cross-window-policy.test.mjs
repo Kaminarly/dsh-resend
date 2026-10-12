@@ -9,7 +9,7 @@ import { clientComposition } from './helpers/client.mjs'
 import { clientComposition as gatewayClient, dispatchToHost } from './helpers/gateway.mjs'
 import { installedConversationAssembler, installedChatDefinitions, assemblerChatSnapshot } from './helpers/conversation-assembler.mjs'
 import { measuredFixture, hostState, appendUser, appendReply, agentDoubles, logOf, auditCount } from './helpers/host.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { tmpDir } from './helpers/dsh.mjs'
 
 const resources = []
@@ -77,7 +77,7 @@ it('re-reads Host eligibility after reconnect even before the old Chat window is
   const b = await pageFor(h)
   expect(b.button(6, 'Edit').disabled).toBe(false)
   await b.dom.click(b.button(6, 'Edit'))
-  const textarea = b.dom.container.querySelector('textarea')
+  const textarea = b.dom.container.querySelector('[role="textbox"]')
   await b.dom.change(textarea, '断线期间保留的编辑草稿')
   appendUser(state.session, { id: 'missed-user', text: 'newest question while disconnected' })
   appendReply(state.session, { id: 'missed-reply', text: 'newest reply while disconnected', turn: 3 })
@@ -87,8 +87,8 @@ it('re-reads Host eligibility after reconnect even before the old Chat window is
   })
   expect(b.button(6, 'Send').disabled).toBe(true)
   expect(b.button(9, 'Regenerate', 'reply').disabled).toBe(true)
-  expect(b.dom.container.querySelector('textarea')).toBe(textarea)
-  expect(textarea.value).toBe('断线期间保留的编辑草稿')
+  expect(b.dom.container.querySelector('[role="textbox"]')).toBe(textarea)
+  expect(editorText(textarea)).toBe('断线期间保留的编辑草稿')
   await b.dom.key(textarea, 'Enter')
   await b.dom.click(b.button(6, 'Edit in the composer'))
   expect(b.answers).toEqual([])
@@ -130,7 +130,7 @@ it('synchronizes all four switches and open controls between two durable Profile
   const b = await pageFor(h)
   const textareaBefore = async () => {
     await b.dom.click(b.button(6, 'Edit'))
-    const textarea = b.dom.container.querySelector('textarea')
+    const textarea = b.dom.container.querySelector('[role="textbox"]')
     await b.dom.change(textarea, '跨窗口同步仍保留的文字')
     return textarea
   }
@@ -141,8 +141,8 @@ it('synchronizes all four switches and open controls between two durable Profile
       await vi.waitFor(() => expect(b.face.preferences.getSnapshot()[field]).toBe(false))
     })
     expect(b.dom.container.querySelector(`[data-field="${field}"] [role="switch"]`).getAttribute('aria-checked')).toBe('false')
-    expect(b.dom.container.querySelector('textarea')).toBe(textarea)
-    expect(textarea.value).toBe('跨窗口同步仍保留的文字')
+    expect(b.dom.container.querySelector('[role="textbox"]')).toBe(textarea)
+    expect(editorText(textarea)).toBe('跨窗口同步仍保留的文字')
   }
   expect(b.button(3, 'Regenerate', 'reply')).toBeNull()
   expect(b.button(0, 'Edit in the composer').disabled).toBe(true)
@@ -168,7 +168,7 @@ it.each(['edit', 'regenerate'])('rejects a stale second-window %s button under t
   const b = await pageFor(h, { receiveEvent: () => false })
   if (op === 'edit') {
     await b.dom.click(b.button(0, 'Edit'))
-    await b.dom.change(b.dom.container.querySelector('textarea'), '旧窗口的修改')
+    await b.dom.change(b.dom.container.querySelector('[role="textbox"]'), '旧窗口的修改')
   }
   await a.dom.act(async () => {
     await a.face.preferences.set('restrictEditToLastUserMessage', true)
@@ -185,7 +185,7 @@ it.each(['edit', 'regenerate'])('rejects a stale second-window %s button under t
   expect(state.calls.followups).toBe(0)
   await b.dom.act(async () => { await b.settings.forms.describe().load() })
   expect(button.disabled).toBe(true)
-  if (op === 'edit') expect(b.dom.container.querySelector('textarea').value).toBe('旧窗口的修改')
+  if (op === 'edit') expect(editorText(b.dom.container.querySelector('[role="textbox"]'))).toBe('旧窗口的修改')
 })
 
 it.each(['edit', 'regenerate'])('does not resend an accepted %s prompt even if the agent has not appended its inbox yet', async op => {
@@ -231,7 +231,7 @@ it.each(['edit', 'regenerate'])('keeps the actual %s Send again usable after bot
   const b = await pageFor(h, { failRead: () => disconnected })
   if (op === 'edit') {
     await b.dom.click(b.button(0, 'Edit'))
-    await b.dom.change(b.dom.container.querySelector('textarea'), '补发必须保留的准确中文\n第二行')
+    await b.dom.change(b.dom.container.querySelector('[role="textbox"]'), '补发必须保留的准确中文\n第二行')
     await b.dom.click(b.button(0, 'Send'))
   } else await b.dom.click(b.button(3, 'Regenerate', 'reply'))
   await b.dom.act(async () => { await vi.waitFor(() => expect(b.answers).toHaveLength(1)) })
@@ -288,7 +288,7 @@ it.each(['refused', 'committed-no-answer'])('re-reads the true saved restriction
   await a.dom.act(async () => { await a.face.preferences.set('restrictEditToLastUserMessage', false) })
   const b = await pageFor(h)
   await b.dom.click(b.button(0, 'Edit'))
-  const textarea = b.dom.container.querySelector('textarea')
+  const textarea = b.dom.container.querySelector('[role="textbox"]')
   await b.dom.change(textarea, '保存异常期间继续保留的草稿')
   failed = true
   await a.dom.act(async () => {
@@ -297,14 +297,14 @@ it.each(['refused', 'committed-no-answer'])('re-reads the true saved restriction
   })
   expect(a.face.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'save-error', restrictEditToLastUserMessage: failure === 'committed-no-answer' })
   expect(b.button(0, 'Send').disabled).toBe(failure === 'committed-no-answer')
-  expect(b.dom.container.querySelector('textarea')).toBe(textarea)
-  expect(textarea.value).toBe('保存异常期间继续保留的草稿')
+  expect(b.dom.container.querySelector('[role="textbox"]')).toBe(textarea)
+  expect(editorText(textarea)).toBe('保存异常期间继续保留的草稿')
   await b.dom.change(textarea, '保存异常后仍可继续修改')
   failed = false
   await a.dom.act(async () => { expect(await a.face.preferences.retry()).toBe(true) })
   expect(a.face.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'ready', restrictEditToLastUserMessage: true })
   expect(b.button(0, 'Send').disabled).toBe(true)
-  expect(textarea.value).toBe('保存异常后仍可继续修改')
+  expect(editorText(textarea)).toBe('保存异常后仍可继续修改')
   expect(h.settings.describe()[0].value.restrictEditToLastUserMessage).toBe(true)
 })
 

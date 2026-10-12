@@ -10,7 +10,7 @@
  * Usage: node scripts/build.mjs [outDir]   (default: lib)
  */
 import { build } from 'esbuild'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -121,11 +121,12 @@ await mkdir(outDir, { recursive: true })
  * module-table entry the host does not have is exactly the drift
  * `scripts/client-bundle.mjs` refuses.
  */
-await build({
+const clientBuild = await build({
   entryPoints: [path.join(rootDir, 'src/client.js')],
   outfile: path.join(outDir, 'client.bundle.js'),
   absWorkingDir: rootDir,
   bundle: true,
+  metafile: true,
   format: 'cjs',
   platform: 'browser',
   target: 'es2022',
@@ -134,6 +135,20 @@ await build({
   banner: { js: clientBanner },
   footer: { js: clientFooter },
 })
+
+const bundledPackages = [...new Set(Object.keys(clientBuild.metafile.inputs)
+  .map(file => /^node_modules\/((?:@[^/]+\/)?[^/]+)/u.exec(file)?.[1]).filter(Boolean))].sort()
+// Dependency documentation can leave whitespace-only lines in esbuild output.
+const clientPath = path.join(outDir, 'client.bundle.js')
+await writeFile(clientPath, (await readFile(clientPath, 'utf8')).replace(/[\t ]+$/gmu, ''), 'utf8')
+const notices = []
+for (const name of bundledPackages) {
+  const directory = path.join(rootDir, 'node_modules', name)
+  const dependency = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'))
+  const license = await readFile(path.join(directory, 'LICENSE'), 'utf8')
+  notices.push(`${name}@${dependency.version}\n${license}`)
+}
+await writeFile(path.join(outDir, 'THIRD-PARTY-LICENSES.txt'), notices.join('\n\n'), 'utf8')
 
 for (const { entry, out, external } of ESM_ENTRIES) {
   await build({

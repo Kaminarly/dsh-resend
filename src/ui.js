@@ -85,8 +85,15 @@ const CSS = `
 .dsh-resend-editor-label{margin-left:8px;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:20px}
 .dsh-resend-editor{box-sizing:border-box;display:flex;flex-direction:column;width:100%;min-width:0;padding:12px;gap:10px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-xl,20px);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .dsh-resend-editor:focus-within{border-color:var(--dsw-alias-state-business-primary)}
-.dsh-resend-editor textarea{box-sizing:border-box;display:block;width:100%;min-height:calc(66px + var(--dsh-content-font-delta,0px) + var(--dsh-content-font-delta,0px) + var(--dsh-content-font-delta,0px));resize:none;overflow:hidden;border:0;outline:none;padding:0;background:transparent;color:inherit;font:inherit;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
-.dsh-resend-editor textarea:disabled{opacity:.5}
+.dsh-resend-rich-input .ProseMirror{box-sizing:border-box;display:block;width:100%;min-height:calc(66px + var(--dsh-content-font-delta,0px) + var(--dsh-content-font-delta,0px) + var(--dsh-content-font-delta,0px));resize:none;overflow:hidden;border:0;outline:none;padding:0;background:transparent;color:inherit;font:inherit;font-size:var(--dsh-content-font-size,14px);line-height:calc(22px + var(--dsh-content-font-delta,0px))}
+.dsh-resend-rich-input [aria-disabled="true"]{opacity:.5}
+.dsh-resend-rich-input .ProseMirror{white-space:pre-wrap;overflow-wrap:anywhere}
+.dsh-resend-rich-input .ProseMirror p{margin:0}
+.dsh-resend-file-reference{display:inline-flex;align-items:center;gap:4px;max-width:100%;vertical-align:baseline;border-radius:4px;padding:0 4px;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent);white-space:normal}
+.dsh-resend-file-reference span{overflow-wrap:anywhere}
+.dsh-resend-file-reference button{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font:inherit}
+.dsh-resend-file-reference button:disabled{opacity:.4;cursor:default}
+.dsh-resend-file-reference.ProseMirror-selectednode{outline:1px solid var(--dsw-alias-state-business-primary)}
 .dsh-resend-editor-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px}
 .dsh-resend-editor-composer{display:flex;min-width:0;margin-right:auto}
 .dsh-resend-editor-composer .dsh-resend-disabled-action{min-width:0}

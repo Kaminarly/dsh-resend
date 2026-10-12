@@ -40,7 +40,7 @@ function runNode(code) {
 describe('the build produces the committed artifact set', () => {
   it('emits exactly the artifacts the build declares, and nothing else', () => {
     const built = readdirSync(libDir).sort()
-    expect(built).toEqual(ARTIFACTS.map((artifact) => artifact.file).sort())
+    expect(built).toEqual([...ARTIFACTS.map((artifact) => artifact.file), 'THIRD-PARTY-LICENSES.txt'].sort())
   })
 
   it('commits every artifact it emits — an untracked one is invisible to the lib/ diff gate', () => {
@@ -56,7 +56,7 @@ describe('the build produces the committed artifact set', () => {
       .map((file) => path.basename(file))
       .sort()
 
-    expect(tracked).toEqual(ARTIFACTS.map((artifact) => artifact.file).sort())
+    expect(tracked).toEqual([...ARTIFACTS.map((artifact) => artifact.file), 'THIRD-PARTY-LICENSES.txt'].sort())
   })
 
   it('every artifact carries the GENERATED FILE banner naming its source', () => {
@@ -75,7 +75,7 @@ describe('the build is reproducible', () => {
     await buildInto(a)
     await buildInto(b)
 
-    for (const { file } of ARTIFACTS) {
+    for (const file of [...ARTIFACTS.map(artifact => artifact.file), 'THIRD-PARTY-LICENSES.txt']) {
       expect(sha256(path.join(b, file)), `${file} differs between two builds`).toBe(sha256(path.join(a, file)))
     }
   })
@@ -84,7 +84,7 @@ describe('the build is reproducible', () => {
     const fresh = path.join(tmpDir, 'build-fresh')
     await buildInto(fresh)
 
-    for (const { file } of ARTIFACTS) {
+    for (const file of [...ARTIFACTS.map(artifact => artifact.file), 'THIRD-PARTY-LICENSES.txt']) {
       expect(sha256(path.join(libDir, file)), `lib/${file} is stale: rebuild it (this is what \`git diff --exit-code -- lib/\` catches)`).toBe(
         sha256(path.join(fresh, file)),
       )

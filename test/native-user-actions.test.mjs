@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createElement, memo } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { clientComposition } from './helpers/client.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { readyPreferences } from './helpers/preferences.mjs'
 import { resolveHostApp } from '../scripts/host-app.mjs'
 import vm from 'node:vm'
@@ -56,7 +56,7 @@ describe('user actions stay in the original host message', () => {
       await dom.click(dom.container.querySelector('[aria-label="引用"]'))
       expect(dom.seen).toEqual(['src/a.js'])
       await dom.click(buttons[1])
-      expect(dom.container.querySelector('textarea').value).toBe('中文原文\n第二行')
+      expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('中文原文\n第二行')
       expect(dom.container.querySelectorAll('[data-original-bubble]')).toHaveLength(1)
       expect(dom.container.querySelectorAll('.dsh-resend-editor-surface button')).toHaveLength(3)
       expect(dom.container.querySelectorAll('.dsh-resend-editor-actions button')).toHaveLength(2)

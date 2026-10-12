@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { resolveConfig } from '@deepseek-ai/cordis'
 import * as host from '../lib/index.js'
 import { settingsHost, settingsClientProvider } from './helpers/settings-host.mjs'
@@ -159,7 +159,7 @@ describe('saved display preferences', () => {
     const button = label => dom.container.querySelector(`button[aria-label="${label}"]`)
     try {
       await dom.click(button('Edit'))
-      const textarea = dom.container.querySelector('textarea')
+      const textarea = dom.container.querySelector('[role="textbox"]')
       await dom.change(textarea, '草稿不会丢失')
       let save
       await dom.act(async () => { save = page.preferences.set('inlineEditorBeneathMessage', false); await tick() })
@@ -169,21 +169,21 @@ describe('saved display preferences', () => {
       await tick()
       expect(page.preferences.getSnapshot().inlineEditorBeneathMessage).toBe(true)
       await dom.act(async () => { await complete; await save })
-      expect(dom.container.querySelector('textarea')).toBe(textarea)
-      expect(textarea.value).toBe('草稿不会丢失')
+      expect(dom.container.querySelector('[role="textbox"]')).toBe(textarea)
+      expect(editorText(textarea)).toBe('草稿不会丢失')
       expect(page.preferences.getSnapshot().inlineEditorBeneathMessage).toBe(false)
       disconnected = true
       await dom.act(async () => { await client.forms.describe().load() })
       expect(button('Send').disabled).toBe(true)
       expect(button('Edit in the composer').disabled).toBe(true)
-      expect(textarea.disabled).toBe(false)
+      expect((textarea.getAttribute('aria-disabled') === 'true')).toBe(false)
       await dom.key(textarea, 'Enter')
       await dom.click(button('Edit in the composer'))
       expect(composition.calls).toEqual([])
       expect(composition.record.draftWrites).toEqual([])
       await dom.change(textarea, '读取失败后仍可修改')
       await dom.click(button('Cancel'))
-      expect(dom.container.querySelector('textarea')).toBeNull()
+      expect(dom.container.querySelector('[role="textbox"]')).toBeNull()
     } finally { await dom.cleanup() }
   })
   it('renders loading and read failures without enabling message actions, then retries against the host', async () => {

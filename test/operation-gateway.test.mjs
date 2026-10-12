@@ -3,7 +3,7 @@ import { clientHalf } from '../scripts/client-bundle.mjs'
 import { clientComposition, dispatchToHost, hostComposition } from './helpers/gateway.mjs'
 import { clientComposition as mountClientServices } from './helpers/client.mjs'
 import { createElement } from 'react'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 
 describe('message operations consume the real Gateway answer', () => {
   // Root-context calls bypass Cordis injection checks. Drive the registered
@@ -39,7 +39,7 @@ describe('message operations consume the real Gateway answer', () => {
       }))
       if (op === 'edit') {
         await dom.click(dom.container.querySelector('[aria-label="' + t('row.edit') + '"]'))
-        await dom.change(dom.container.querySelector('textarea'), '编辑后的中文提示')
+        await dom.change(dom.container.querySelector('[role="textbox"]'), '编辑后的中文提示')
         await dom.click(dom.container.querySelector('[aria-label="' + t('row.send') + '"]'))
       } else {
         await dom.click(dom.container.querySelector('[aria-label="' + t('row.regenerate') + '"]'))
@@ -48,7 +48,7 @@ describe('message operations consume the real Gateway answer', () => {
       await dom.act(async () => { await vi.waitFor(() => expect(answers).toHaveLength(1), { interval: 5 }) })
       expect(document.body.querySelector('[role="alert"]')?.textContent).toBeUndefined()
       expect(answers).toMatchObject([{ ok: true, value: { ok: true } }])
-      if (op === 'edit') expect(dom.container.querySelector('textarea') === null).toBe(true)
+      if (op === 'edit') expect(dom.container.querySelector('[role="textbox"]') === null).toBe(true)
       expect(calls.filter(endpoint => endpoint === 'resend/replay')).toEqual(['resend/replay'])
       if (op === 'regenerate') expect(calls[0]).toBe('resend/conversation')
       expect(host.host.calls.followups).toBe(1)

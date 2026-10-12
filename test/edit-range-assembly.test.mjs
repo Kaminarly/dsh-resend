@@ -4,7 +4,7 @@ import { clientHalf } from '../scripts/client-bundle.mjs'
 import { clientComposition } from './helpers/client.mjs'
 import { hostComposition, dispatchToHost, clientComposition as gatewayClient } from './helpers/gateway.mjs'
 import { installedConversationAssembler, assemblerChatSnapshot, installedChatDefinitions } from './helpers/conversation-assembler.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { resolveHostApp } from '../scripts/host-app.mjs'
 import { measuredFixture, hostState, appendUser, logOf } from './helpers/host.mjs'
 import { memoryConfigForms } from './helpers/preferences.mjs'
@@ -45,8 +45,8 @@ it.skipIf(!resolveHostApp())('uses the installed assembler and actual Host eligi
     await show()
     expect(edit(0).disabled).toBe(true)
     await dom.click(edit(6))
-    await dom.change(dom.container.querySelector('textarea'), '历史加载后保留的草稿')
-    const textarea = dom.container.querySelector('textarea')
+    await dom.change(dom.container.querySelector('[role="textbox"]'), '历史加载后保留的草稿')
+    const textarea = dom.container.querySelector('[role="textbox"]')
     const injection = appendUser(session, { id: 'context', text: 'host injection', source: 'host' })
     assembler.append({ type: 'durable', event: injection })
     await show()
@@ -58,8 +58,8 @@ it.skipIf(!resolveHostApp())('uses the installed assembler and actual Host eligi
     expect(edit(6).disabled).toBe(true)
     expect(edit(image.seq).disabled).toBe(true)
     expect(edit(image.seq).parentElement.getAttribute('aria-label')).toBe('This message has no editable text')
-    expect(dom.container.querySelector('textarea')).toBe(textarea)
-    expect(textarea.value).toBe('历史加载后保留的草稿')
+    expect(dom.container.querySelector('[role="textbox"]')).toBe(textarea)
+    expect(editorText(textarea)).toBe('历史加载后保留的草稿')
     await dom.key(textarea, 'Enter')
     expect(h.host.calls.followups).toBe(0)
     const before = session.seq
@@ -68,7 +68,7 @@ it.skipIf(!resolveHostApp())('uses the installed assembler and actual Host eligi
     for (const event of logOf(session).slice(before)) assembler.append({ type: 'durable', event })
     await show()
     expect(edit(6).disabled).toBe(false)
-    expect(textarea.value).toBe('历史加载后保留的草稿')
+    expect(editorText(textarea)).toBe('历史加载后保留的草稿')
     assembler.replaceWindow(logOf(session).map(event => ({ type: 'durable', event })), false)
     await show()
     expect(edit(6).disabled).toBe(false)

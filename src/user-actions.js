@@ -1,4 +1,4 @@
-/** The host user-message actions, plain-text editor and eligibility metadata. */
+/** The host user-message actions, independent editor and eligibility metadata. */
 import { cloneElement, createElement, Fragment, isValidElement, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { IconCloseOutlineRegular, IconEditOutlineRegular, IconPaperPlaneOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconAction, UIStyles } from './ui.js'
@@ -9,6 +9,7 @@ import { useHiding } from './use-hiding.js'
 import { operationErrorText } from './operation-error.js'
 import { useConversationEligibility } from './conversation-eligibility.js'
 import { ReplayPreflight } from './file-rollback-preview.js'
+import { createTemporaryEditor } from './temporary-editor.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
 const identity = (value) => value
@@ -74,43 +75,30 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * editing — the one place this surface reads live data — fails as the editor's
  * own panel, preserving the host message and its copy action.
  */
-function InlineEditor({ t, value, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
-  const textarea = useRef(null)
-  const fitText = () => {
-    const input = textarea.current
-    if (!input) return
-    // Reset before measuring so deleting text also shrinks back to three lines.
-    input.style.height = '0px'
-    input.style.height = input.scrollHeight + 'px'
-  }
-  useLayoutEffect(fitText, [value])
+function InlineEditor({ t, value, draft, editorRef, lookup, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+  const root = useRef(null)
+  const callbacks = useRef()
+  callbacks.current = { onText, onKeyDown }
+  const [notice, setNotice] = useState(false)
   useLayoutEffect(() => {
-    const input = textarea.current
-    input.focus()
-    input.setSelectionRange(input.value.length, input.value.length)
+    const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup,
+      label: t('row.editInput'), removeLabel: t('row.removeReference'),
+      onChange: next => callbacks.current.onText(next), onNotice: setNotice,
+      onKeyDown: event => callbacks.current.onKeyDown(event) })
+    editorRef.current = editor
+    return () => { if (editorRef.current === editor) editorRef.current = null; editor.destroy() }
   }, [])
-  useLayoutEffect(() => {
-    const input = textarea.current
-    const Observer = input.ownerDocument.defaultView.ResizeObserver
-    if (!Observer) return
-    let width
-    const observer = new Observer(([entry]) => {
-      // Only width changes affect wrapping; height changes must not loop.
-      if (entry.contentRect.width === width) return
-      width = entry.contentRect.width
-      fitText()
-    })
-    observer.observe(input)
-    return () => observer.disconnect()
-  }, [])
+  useLayoutEffect(() => editorRef.current?.setDisabled(disabled), [disabled])
+  const label = t('row.editInput'), removeLabel = t('row.removeReference')
+  useLayoutEffect(() => editorRef.current?.setLabels(label, removeLabel), [label, removeLabel])
   return createElement('div', { className: 'dsh-resend-editor-surface' }, [
     createElement('div', { key: 'header', className: 'dsh-resend-editor-header' }, [
       createElement('span', { key: 'label', className: 'dsh-resend-editor-label' }, t('row.temporaryInput')),
       control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
     ]),
     createElement('div', { key: 'editor', className: 'dsh-resend-editor' }, [
-      createElement('textarea', { key: 'textarea', ref: textarea, value, rows: 3,
-        disabled, 'aria-label': t('row.editInput'), onChange: onText, onKeyDown }),
+      createElement('div', { key: 'input', ref: root, className: 'dsh-resend-rich-input' }),
+      notice && createElement('span', { key: 'notice', role: 'status' }, t('row.referenceLookupUnavailable')),
       createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
         createElement('span', { key: 'composer', className: 'dsh-resend-editor-composer' },
           createElement(IconAction, { label: t('row.editInComposer'), icon: IconEditOutlineRegular,
@@ -129,11 +117,14 @@ export function UserActionsRow(props) {
   const preflight = useSyncExternalStore(operations.subscribe, () => operations.preflightFor?.(sessionId))
   const { plan, css, error: hideError, diagnostics } = useHiding({ ...props, suppressError: true })
   const data = { seq: node.data.seq ?? node.anchorSeq, text: node.data.text ?? userMessageText(node.data) }
-  const [editing, setEditing] = useState(false)
+  const target = { sessionId, targetSeq: data.seq }
+  const targetKey = JSON.stringify([sessionId, data.seq, data.text])
+  const [editing, setEditing] = useState()
   const [text, setText] = useState(data.text)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState()
   const inFlight = useRef(false)
+  const editorRef = useRef(null)
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
   const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
@@ -146,17 +137,17 @@ export function UserActionsRow(props) {
     if (context.data.text.trim() === '') return t('row.noText')
   }
   const live = useRef()
-  live.current = { plan, data, session, revision, text }
+  live.current = { plan, data, session, revision, text, targetKey }
   const currentReason = () => reasonFor(preferences.getSnapshot(),
     operations.conversationFor(sessionId, live.current.revision), live.current)
   const stopReason = reasonFor(prefs, conversation, live.current)
   const composerReason = stopReason ?? t('row.composerResendUnavailable')
 
   const open = () => {
-    if (currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
-    setText(live.current.data.text)
+    if (live.current.targetKey !== targetKey || currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
+    setText(operations.draftFor(target, data.text)?.text ?? live.current.data.text)
     setError(undefined)
-    setEditing(true)
+    setEditing(targetKey)
   }
   const cancel = () => {
     if (inFlight.current) return
@@ -164,20 +155,27 @@ export function UserActionsRow(props) {
     setError(undefined)
   }
   const send = async () => {
-    if (inFlight.current || operations.preflightFor?.(sessionId) || currentReason() !== undefined || live.current.text.trim() === '') return
+    if (live.current.targetKey !== targetKey || inFlight.current || operations.preflightFor?.(sessionId) || currentReason() !== undefined) return
+    const finalText = editorRef.current?.getText()
+    if (finalText === undefined || finalText.trim() === '') return
     inFlight.current = true
+    editorRef.current.setDisabled(true)
     setPending(true)
     setError(undefined)
     try {
-      const result = await operations.run({ sessionId, targetSeq: live.current.data.seq, op: 'edit', text: live.current.text })
+      const result = await operations.run({ ...target, op: 'edit', text: finalText })
       if (result.ok) {
-        if (!result.value?.canceled) setEditing(false)
-      } else setError(t('row.operationFailed') + '：' + operationErrorText(result.error, t))
+        if (!result.value?.canceled) {
+          if (result.value?.resendMessageId !== undefined) operations.clearDraft(target)
+          if (live.current.targetKey === targetKey) setEditing(false)
+        }
+      } else if (live.current.targetKey === targetKey) setError(t('row.operationFailed') + '：' + operationErrorText(result.error, t))
     } catch (cause) {
-      setError(t('row.operationFailed') + '：' + operationErrorText(cause, t))
+      if (live.current.targetKey === targetKey) setError(t('row.operationFailed') + '：' + operationErrorText(cause, t))
       console.warn('[dsh-resend] edit at seq ' + data.seq + ' in session ' + sessionId + ': ' + (cause?.message ?? cause))
     } finally {
       inFlight.current = false
+      editorRef.current?.setDisabled(false)
       setPending(false)
     }
   }
@@ -190,7 +188,7 @@ export function UserActionsRow(props) {
     if (event.key === 'Escape') {
       event.preventDefault()
       cancel()
-    } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+    } else if (event.key === 'Enter' && !event.shiftKey && !(event.nativeEvent ?? event).isComposing && (event.nativeEvent ?? event).keyCode !== 229) {
       event.preventDefault()
       void send()
     }
@@ -219,9 +217,15 @@ export function UserActionsRow(props) {
   // Keep editing usable for Profiles that previously selected composer-only mode.
   const idle = [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
   if (prefs.inlineEditorBeneathMessage === false) idle.push(control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, composerReason, pending || !!preflight))
-  const editor = editing && createElement(InlineEditorSurface, {
-      key: 'inline', t, value: text, disabled: pending || !!preflight, stopReason, composerReason,
-      onText: (event) => setText(event.target.value),
+  const editor = editing === targetKey && createElement(InlineEditorSurface, {
+      key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
+      lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),
+      disabled: pending || !!preflight, stopReason, composerReason,
+      onText: (draft) => {
+        if (live.current.targetKey !== targetKey) return
+        operations.saveDraft(target, { ...draft, sourceText: data.text })
+        setText(draft.text)
+      },
       onSend: () => { void send() }, onComposer: editInComposer, onCancel: cancel, onKeyDown,
     })
   const actions = createElement('span', { className: 'dsh-resend-user-actions' }, idle)

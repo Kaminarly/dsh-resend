@@ -138,8 +138,11 @@ describe('peerDependencies are the enforced compatibility mechanism (spec §3)',
 describe('no third-party contract package anywhere (spec §3)', () => {
   const CONTRACT_PACKAGES = ['dsh-log-contract']
 
-  it('the only runtime dependency is the schema library the codecs are written in', () => {
-    expect(pkg.dependencies).toEqual({ zod: '^4.4.3' })
+  it('runtime dependencies contain only the schema library and the approved independent editor', () => {
+    expect(pkg.dependencies).toEqual({ zod: '^4.4.3',
+      'prosemirror-commands': '1.7.2', 'prosemirror-history': '1.5.1', 'prosemirror-keymap': '1.2.3',
+      'prosemirror-model': '1.25.12', 'prosemirror-state': '1.4.4', 'prosemirror-view': '1.42.6',
+    })
   })
 
   it('no dependency field names a contract package', () => {

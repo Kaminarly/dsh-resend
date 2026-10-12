@@ -39,6 +39,9 @@ function installDom() {
   globalThis.window = dom.window
   globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  // jsdom has no layout; provide the browser geometry calls used when scrolling a selection.
+  dom.window.Range.prototype.getClientRects = () => []
+  dom.window.Range.prototype.getBoundingClientRect = () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 })
   return dom
 }
 
@@ -114,6 +117,20 @@ export async function renderDom(element) {
       await act(async () => target.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...options })))
     },
     async change(target, value) {
+      if (target?.getAttribute('role') === 'textbox') {
+        await act(async () => {
+          target.focus()
+          const range = document.createRange()
+          range.selectNodeContents(target)
+          const selection = document.getSelection()
+          selection.removeAllRanges()
+          selection.addRange(range)
+          const event = new window.Event('paste', { bubbles: true, cancelable: true })
+          Object.defineProperty(event, 'clipboardData', { value: { types: ['text/plain'], getData: () => value } })
+          target.dispatchEvent(event)
+        })
+        return
+      }
       const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
       await act(async () => {
         setter.call(target, value)
@@ -125,4 +142,17 @@ export async function renderDom(element) {
       container.remove()
     },
   }
+}
+
+/** Read visible text and the complete path printed by each reference chip. */
+export function editorText(element) {
+  if (!element) return undefined
+  if (element.tagName === 'TEXTAREA') return element.value
+  const read = node => {
+    if (node.nodeType === 3) return node.textContent
+    if (node.dataset?.mention) return node.dataset.mention
+    if (node.tagName === 'BR') return node.classList.contains('ProseMirror-trailingBreak') ? '' : node.dataset.eol ?? '\n'
+    return [...node.childNodes].map(read).join('')
+  }
+  return read(element)
 }

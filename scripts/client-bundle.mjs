@@ -109,8 +109,16 @@ export function evaluateBundle(source = readFileSync(CLIENT_BUNDLE, 'utf8')) {
   }
   const browser = {
     console,
+    setTimeout, clearTimeout,
     get window() { return Object.assign(globalThis.window ?? {}, { __ModuleLoader__: moduleLoader }) },
     get document() { return globalThis.document },
+    get navigator() { return globalThis.window?.navigator },
+    get innerHeight() { return globalThis.window?.innerHeight },
+    get innerWidth() { return globalThis.window?.innerWidth },
+    get MutationObserver() { return globalThis.window?.MutationObserver },
+    get getComputedStyle() { return globalThis.window?.getComputedStyle },
+    get requestAnimationFrame() { return globalThis.window?.requestAnimationFrame ?? (callback => setTimeout(callback, 0)) },
+    get cancelAnimationFrame() { return globalThis.window?.cancelAnimationFrame ?? clearTimeout },
     get ResizeObserver() { return globalThis.ResizeObserver ?? globalThis.window?.ResizeObserver },
   }
   vm.runInNewContext(source, browser, { filename: 'client.bundle.js' })

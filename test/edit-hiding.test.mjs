@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
-import { renderDom } from './helpers/render.mjs'
+import { renderDom, editorText } from './helpers/render.mjs'
 import { clientComposition } from './helpers/client.mjs'
 import { installedConversationAssembler, assemblerChatSnapshot, installedChatDefinitions } from './helpers/conversation-assembler.mjs'
 import { resolveHostApp } from '../scripts/host-app.mjs'
@@ -42,20 +42,20 @@ describe('edit and resend at the registered action row', () => {
     const dom = await editor()
     try {
       await dom.click(dom.button('Edit'))
-      const textarea = dom.container.querySelector('textarea')
-      expect(textarea.value).toBe('原文 @file /skill')
+      const textarea = dom.container.querySelector('[role="textbox"]')
+      expect(editorText(textarea)).toBe('原文 @file /skill')
       await dom.key(textarea, 'Enter', { shiftKey: true })
       await dom.key(textarea, 'Enter', { isComposing: true })
       expect(dom.calls).toHaveLength(0)
       await dom.key(textarea, 'Escape')
-      expect(dom.container.querySelector('textarea')).toBeNull()
+      expect(dom.container.querySelector('[role="textbox"]')).toBeNull()
       expect(dom.record.draftWrites).toEqual([])
       await dom.click(dom.button('Edit'))
       await dom.click(dom.button('Cancel'))
       expect(dom.calls).toHaveLength(0)
       await dom.click(dom.button('Edit'))
-      await dom.change(dom.container.querySelector('textarea'), '修改后的中文 @file /skill')
-      await dom.key(dom.container.querySelector('textarea'), 'Enter')
+      await dom.change(dom.container.querySelector('[role="textbox"]'), '修改后的中文 @file /skill')
+      await dom.key(dom.container.querySelector('[role="textbox"]'), 'Enter')
       expect(dom.calls).toEqual([{ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: '修改后的中文 @file /skill' }])
     } finally { await dom.cleanup() }
   })
@@ -71,7 +71,7 @@ describe('edit and resend at the registered action row', () => {
       })
       expect(dom.calls).toHaveLength(1)
       expect(dom.calls[0].op).toBe('edit')
-      expect(dom.container.querySelector('textarea')).toBeNull()
+      expect(dom.container.querySelector('[role="textbox"]')).toBeNull()
       expect(dom.container.querySelector('style')).not.toBeNull()
     } finally { await dom.cleanup() }
   })
@@ -86,7 +86,7 @@ describe('edit and resend at the registered action row', () => {
       // Do not render: exercise the gap between the old button and live store.
       await dom.click(composer)
       expect(dom.record.draftWrites).toEqual([])
-      expect(dom.container.querySelector('textarea')).not.toBeNull()
+      expect(dom.container.querySelector('[role="textbox"]')).not.toBeNull()
       await dom.render(createElement(dom.registration.component, dom.props))
       expect(dom.button('Edit in the composer').disabled).toBe(true)
       expect(dom.calls).toHaveLength(0)
@@ -97,12 +97,12 @@ describe('edit and resend at the registered action row', () => {
     const dom = await editor()
     try {
       await dom.click(dom.button('Edit'))
-      await dom.change(dom.container.querySelector('textarea'), '@file /skill \uFFFC\uE100正文')
+      await dom.change(dom.container.querySelector('[role="textbox"]'), '@file /skill \uFFFC\uE100正文')
       await dom.click(dom.button('Edit in the composer'))
       expect(dom.button('Edit in the composer').disabled).toBe(true)
       expect(dom.record.draftWrites).toEqual([])
       expect(dom.calls).toHaveLength(0)
-      expect(dom.container.querySelector('textarea').value).toBe('@file /skill \uFFFC\uE100正文')
+      expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('@file /skill \uFFFC\uE100正文')
     } finally { await dom.cleanup() }
   })
 })

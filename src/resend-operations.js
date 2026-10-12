@@ -59,6 +59,7 @@ export function createResendOperations(remote) {
   const listeners = new Set()
   const conversations = new Map()
   const preflights = new Map()
+  const drafts = new Map()
   let disposed = false
   const unreadConversation = Object.freeze({ ready: false, status: 'loading' })
 
@@ -81,6 +82,10 @@ export function createResendOperations(remote) {
   function record(request, result) {
     if (disposed || result?.ok !== true) return
     const { carrierSeq, shadowedSeqs, resendMessageId } = result.value
+    if (request.op === 'edit' && resendMessageId !== undefined) {
+      drafts.get(request.sessionId)?.delete(request.targetSeq)
+      if (drafts.get(request.sessionId)?.size === 0) drafts.delete(request.sessionId)
+    }
     const records = bySession.get(request.sessionId) ?? new Map()
     bySession.set(request.sessionId, records)
     records.set(
@@ -122,6 +127,23 @@ export function createResendOperations(remote) {
 
   return {
     run,
+    draftFor({ sessionId, targetSeq }, sourceText) {
+      const draft = drafts.get(sessionId)?.get(targetSeq)
+      return draft?.sourceText === sourceText ? draft : undefined
+    },
+    saveDraft({ sessionId, targetSeq }, draft) {
+      if (disposed) return
+      if (!drafts.has(sessionId)) drafts.set(sessionId, new Map())
+      drafts.get(sessionId).set(targetSeq, draft)
+    },
+    clearDraft({ sessionId, targetSeq }) {
+      drafts.get(sessionId)?.delete(targetSeq)
+      if (drafts.get(sessionId)?.size === 0) drafts.delete(sessionId)
+    },
+    async referenceCandidates(sessionId, query, signal) {
+      if (typeof remote.fileReferences?.list !== 'function') return { ok: false }
+      return remote.fileReferences.list(sessionId, query, signal)
+    },
     preflightFor: sessionId => preflights.get(sessionId),
     async chooseReplay(sessionId, phase) {
       const entry = preflights.get(sessionId)
@@ -227,6 +249,7 @@ export function createResendOperations(remote) {
       bySession.clear()
       recordsBySession.clear()
       conversations.clear()
+      drafts.clear()
       listeners.clear()
     },
   }

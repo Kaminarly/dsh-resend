@@ -75,17 +75,19 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * editing — the one place this surface reads live data — fails as the editor's
  * own panel, preserving the host message and its copy action.
  */
-function InlineEditor({ t, value, draft, editorRef, lookup, queryContext, subscribeQueryInvalidation, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryContext, subscribeQueryInvalidation, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
   const root = useRef(null)
   const callbacks = useRef()
   callbacks.current = { onText, onKeyDown }
   const [notice, setNotice] = useState(false)
+  const [skillNotice, setSkillNotice] = useState()
   const lastQueryContext = useRef(queryContext)
   useLayoutEffect(() => {
-    const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup,
+    const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup, lookupSkills,
       label: t('row.editInput'), removeLabel: t('row.removeReference'),
       translate: t,
       onChange: next => callbacks.current.onText(next), onNotice: setNotice,
+      onSkillNotice: setSkillNotice,
       onKeyDown: event => callbacks.current.onKeyDown(event) })
     editorRef.current = editor
     const unsubscribe = subscribeQueryInvalidation?.(() => editor.invalidateQueries())
@@ -106,6 +108,10 @@ function InlineEditor({ t, value, draft, editorRef, lookup, queryContext, subscr
     createElement('div', { key: 'editor', className: 'dsh-resend-editor' }, [
       createElement('div', { key: 'input', ref: root, className: 'dsh-resend-rich-input' }),
       notice && createElement('span', { key: 'notice', role: 'status' }, t('row.referenceLookupUnavailable')),
+      skillNotice && createElement('span', { key: 'skills', role: 'status', 'data-skill-notice': true },
+        (Array.isArray(skillNotice) ? skillNotice : [skillNotice]).map((entry, index) =>
+          createElement('span', { key: index }, t('row.skill' + entry.status) +
+            (entry.names.length ? ' ' + entry.names.map(name => '/' + name).join('、') : '')))),
       createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
         createElement('span', { key: 'composer', className: 'dsh-resend-editor-composer' },
           createElement(IconAction, { label: t('row.editInComposer'), icon: IconEditOutlineRegular,
@@ -232,7 +238,10 @@ export function UserActionsRow(props) {
   const editor = editing === targetKey && createElement(InlineEditorSurface, {
       key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
       lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),
-      queryContext, subscribeQueryInvalidation: operations.subscribeReferenceInvalidation,
+      lookupSkills: signal => operations.skillCandidates(sessionId, signal),
+      queryContext, subscribeQueryInvalidation: listener => operations.subscribeReferenceInvalidation(changedSessionId => {
+        if (changedSessionId === undefined || changedSessionId === sessionId) listener()
+      }),
       disabled: pending || !!preflight, stopReason, composerReason,
       onText: (draft) => {
         if (live.current.targetKey !== targetKey) return

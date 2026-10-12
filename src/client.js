@@ -240,6 +240,17 @@ const DICTIONARIES = {
     'row.fileSelect': '引用文件',
     'row.fileSelectDirectory': '引用目录',
     'row.fileDrill': '进入目录',
+    'row.skillCandidates': '可供用户调用的技能',
+    'row.skillLoading': '正在查询技能…',
+    'row.skillReady': '选择技能后可继续编辑名称；发送时由宿主确认并加载。',
+    'row.skillEmpty': '没有匹配的可用技能，关闭菜单后可按原文重发。',
+    'row.skillUnavailable': '宿主未提供技能查询，无法确认可用性。已保留原文，可继续重发。',
+    'row.skillFailed': '技能查询失败，无法确认可用性。已保留原文，可继续重发。',
+    'row.skillClose': '关闭技能菜单',
+    'row.skillSelect': '选择技能',
+    'row.skillChecking': '正在确认文本中的技能…',
+    'row.skillMissing': '以下技能当前不可供用户调用，可能已失效或改名。已保留原文，可继续重发：',
+    'row.skillInvalid': '以下文字不符合技能调用格式，将作为普通原文发送；技能名称前后需有空白：',
     'row.hiddenCount': '已隐藏 {count} 条消息',
     'row.dismiss': '关闭',
     'row.hideFailed': '重写后的消息无法隐藏',
@@ -403,6 +414,17 @@ const DICTIONARIES = {
     'row.fileSelect': 'Reference file',
     'row.fileSelectDirectory': 'Reference directory',
     'row.fileDrill': 'Browse directory',
+    'row.skillCandidates': 'User-invocable skills',
+    'row.skillLoading': 'Looking up skills…',
+    'row.skillReady': 'The selected name stays editable. The host checks and loads it when sent.',
+    'row.skillEmpty': 'No matching available skills. Close the menu to resend the original text.',
+    'row.skillUnavailable': 'Skill lookup is unavailable; availability is unknown. The original text can still be resent.',
+    'row.skillFailed': 'Skill lookup failed; availability is unknown. The original text can still be resent.',
+    'row.skillClose': 'Close skill menu',
+    'row.skillSelect': 'Select skill',
+    'row.skillChecking': 'Checking skills in the text…',
+    'row.skillMissing': 'These skills cannot currently be invoked by users and may have been removed or renamed. The original text can still be resent:',
+    'row.skillInvalid': 'These tokens will be sent as plain text. Skill names require whitespace boundaries:',
     'row.hiddenCount': '{count} messages hidden',
     'row.dismiss': 'Dismiss',
     'row.hideFailed': 'The rewound messages could not be hidden',
@@ -539,6 +561,7 @@ function mountSurfaces(scope, ctx) {
   const operations = createResendOperations(scope.remote)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
   scope.on('connection/reset', () => operations.invalidateConversations())
+  scope.remote.$on?.('agent-preset/selected', sessionId => operations.invalidateReferenceQueries(sessionId))
 
   // Rewind points and hidden companions are Definitions; visible user actions
   // are attached to the original host renderer below.

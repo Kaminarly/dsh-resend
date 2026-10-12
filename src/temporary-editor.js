@@ -5,11 +5,12 @@ import { history, undo, redo, closeHistory } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
 import { schema, createDocument, exportText, referenceTokens } from './reference-text.js'
-import { createFileReferenceMenu } from './file-reference-menu.js'
+import { createReferenceMenu } from './reference-menu.js'
+import { skillTokens, skillName, skillCatalog } from './skill-text.js'
 
 /** One independent editor; the saved EditorState retains selection and undo on reopen. */
 export function createTemporaryEditor(element, options) {
-  let view, menu, destroyed = false, frozen = options.disabled === true, request
+  let view, menu, destroyed = false, frozen = options.disabled === true, request, skillRequest
   let candidates = options.draft?.candidates ?? []
   let label = options.label, removeLabel = options.removeLabel
   const changed = () => options.onChange({ state: view.state, text: exportText(view.state.doc), candidates })
@@ -46,9 +47,13 @@ export function createTemporaryEditor(element, options) {
     dispatchTransaction(transaction) {
       if (destroyed || frozen && transaction.docChanged) return
       if (transaction.docChanged || transaction.selectionSet) request?.abort()
+      if (transaction.docChanged) skillRequest?.abort()
+      const previous = view.state
       view.updateState(view.state.apply(transaction))
       changed()
-      void menu?.refresh()
+      if (transaction.getMeta('restoreReferences')) void menu?.refreshAfterRestoration(previous)
+      else void menu?.refresh()
+      if (transaction.docChanged) void checkSkills()
     },
     handleKeyDown(_view, event) {
       if (!frozen && menu?.handleKey(event)) return true
@@ -99,11 +104,36 @@ export function createTemporaryEditor(element, options) {
     },
   })
 
-  menu = createFileReferenceMenu(element, { getView: () => view, lookup: options.lookup,
+  menu = createReferenceMenu(element, { getView: () => view, lookup: options.lookup, lookupSkills: options.lookupSkills,
     disabled: () => frozen, translate: options.translate,
     syncSelection: () => syncClipboardSelection(view, true),
     onCandidate: candidate => { candidates = [...candidates, candidate] },
   })
+
+  async function checkSkills() {
+    skillRequest?.abort()
+    if (destroyed || frozen) return
+    const tokens = skillTokens(exportText(view.state.doc))
+    const invalid = tokens.filter(name => !skillName.test(name))
+    const names = tokens.filter(name => skillName.test(name))
+    if (!names.length) { options.onSkillNotice?.(invalid.length ? { status: 'Invalid', names: invalid } : undefined); return }
+    const controller = new element.ownerDocument.defaultView.AbortController()
+    skillRequest = controller
+    options.onSkillNotice?.({ status: 'Checking', names: [] })
+    let result
+    try { result = await options.lookupSkills(controller.signal) } catch { result = undefined }
+    if (destroyed || frozen || controller.signal.aborted || skillRequest !== controller) return
+    const catalog = skillCatalog(result)
+    if (!catalog) {
+      options.onSkillNotice?.({ status: result?.unavailable ? 'Unavailable' : 'Failed', names: [] })
+      return
+    }
+    const missing = names.filter(name => !catalog.some(skill => skill.name === name))
+    const notices = []
+    if (missing.length) notices.push({ status: 'Missing', names: missing })
+    if (invalid.length) notices.push({ status: 'Invalid', names: invalid })
+    options.onSkillNotice?.(notices.length ? notices : undefined)
+  }
 
   async function restoreReferences() {
     request?.abort()
@@ -150,18 +180,20 @@ export function createTemporaryEditor(element, options) {
       })
       if (from !== undefined) transaction.replaceWith(from, to, node)
     }
-    if (transaction.docChanged) view.dispatch(transaction.setMeta('addToHistory', false))
+    if (transaction.docChanged) view.dispatch(transaction.setMeta('addToHistory', false).setMeta('restoreReferences', true))
     else changed()
     options.onNotice(unavailable)
   }
 
   if (!options.draft?.state) view.dispatch(view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)))
+  menu.invalidate()
   view.focus()
   changed()
   void restoreReferences()
+  void checkSkills()
   return {
     getText: () => exportText(view.state.doc),
-    invalidateQueries() { request?.abort(); menu.invalidate() },
+    invalidateQueries() { request?.abort(); skillRequest?.abort(); menu.invalidate(); void checkSkills() },
     setLabels(nextLabel, nextRemoveLabel, translate) {
       label = nextLabel
       removeLabel = nextRemoveLabel
@@ -173,11 +205,12 @@ export function createTemporaryEditor(element, options) {
     },
     setDisabled(disabled) {
       frozen = disabled
-      if (disabled) { request?.abort(); menu.close() }
+      if (disabled) { request?.abort(); skillRequest?.abort(); menu.close() }
+      else void checkSkills()
       view.setProps({ editable: () => !frozen,
         attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', 'aria-disabled': String(frozen) } })
       view.dom.querySelectorAll('.dsh-resend-file-reference button').forEach(button => { button.disabled = frozen })
     },
-    destroy() { destroyed = true; request?.abort(); menu.destroy(); view.destroy() },
+    destroy() { destroyed = true; request?.abort(); skillRequest?.abort(); menu.destroy(); view.destroy() },
   }
 }

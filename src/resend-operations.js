@@ -145,9 +145,16 @@ export function createResendOperations(remote) {
       if (typeof remote.fileReferences?.list !== 'function') return { ok: false, unavailable: true }
       return remote.fileReferences.list(sessionId, query, signal)
     },
+    async skillCandidates(sessionId, signal) {
+      if (typeof remote.skills?.list !== 'function') return { ok: false, unavailable: true }
+      return remote.skills.list({ sessionId }, signal)
+    },
     subscribeReferenceInvalidation(listener) {
       referenceInvalidationListeners.add(listener)
       return () => referenceInvalidationListeners.delete(listener)
+    },
+    invalidateReferenceQueries(sessionId) {
+      for (const listener of Array.from(referenceInvalidationListeners)) listener(sessionId)
     },
     preflightFor: sessionId => preflights.get(sessionId),
     async chooseReplay(sessionId, phase) {

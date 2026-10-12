@@ -56,6 +56,9 @@ describe('edit and resend at the registered action row', () => {
       await dom.click(dom.button('Edit'))
       await dom.change(dom.container.querySelector('[role="textbox"]'), '修改后的中文 @file /skill')
       await dom.key(dom.container.querySelector('[role="textbox"]'), 'Enter')
+      expect(dom.calls).toEqual([])
+      await dom.key(dom.container.querySelector('[role="textbox"]'), 'Escape')
+      await dom.key(dom.container.querySelector('[role="textbox"]'), 'Enter')
       expect(dom.calls).toEqual([{ sessionId: 'session-1', targetSeq: 2, op: 'edit', text: '修改后的中文 @file /skill' }])
     } finally { await dom.cleanup() }
   })

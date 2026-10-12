@@ -1,18 +1,23 @@
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { renderDom, editorText } from './helpers/render.mjs'
 import { readyPreferences } from './helpers/preferences.mjs'
+import { createSkillHost, representativeSkills } from '../scripts/fixtures/skill-host.mjs'
 
 const resources = []
+const skillHost = await createSkillHost()
 afterEach(async () => { for (const close of resources.splice(0).reverse()) await close() })
 
-async function editor({ text = '原文 @a/same.md /tdd', lookup, replay, sessionId = 's', seq = 0 } = {}) {
+async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay, sessionId = 's', seq = 0 } = {}) {
   const face = clientHalf().exports
   const calls = []
-  const operations = face.createResendOperations({ fileReferences: lookup && { list: lookup }, resend: {
+  const operations = face.createResendOperations({ fileReferences: lookup && { list: lookup }, skills: skills && { list: skills }, resend: {
     conversation: async () => ({ ok: true, value: { ok: true, value: { userSeqs: [seq], lastUserSeq: seq, assistantSeqs: [] } } }),
     replay: async input => { calls.push(input); return { ok: true, value: replay ? await replay(input) : { ok: false, error: { code: 'agent-busy' } } } },
+    apply: async request => { calls.push({ retry: request }); return { ok: true, value: { ok: true, value: {
+      carrierSeq: 5, shadowedSeqs: [seq], resendMessageId: 'accepted-retry',
+    } } } },
   } })
   const node = { key: 'u', kind: 'user', anchorSeq: seq, data: { seq, text } }
   const props = { node, sessionId, operations, preferences: readyPreferences(face), t: key => key,
@@ -25,6 +30,208 @@ async function editor({ text = '原文 @a/same.md /tdd', lookup, replay, session
     button: key => dom.container.querySelector(`[aria-label="row.${key}"]`),
   }
 }
+
+it('selects only target-session skills as editable text before resending', async () => {
+  const dom = await editor({ text: '请使用', sessionId: 'target', skills: async (request, signal) => {
+    expect(request).toEqual({ sessionId: 'target' })
+    expect(signal.aborted).toBe(false)
+    return { ok: true, value: { skills: [{ name: 'tdd', description: '测试驱动' }, { name: 'code-review', description: '审查' }] } }
+  } })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '请使用 /td')
+  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['/tdd'])
+  await dom.key(dom.input(), 'Tab')
+  expect(editorText(dom.input())).toBe('请使用 /tdd ')
+  expect(dom.container.querySelector('[data-path]')).toBeNull()
+  expect(dom.calls).toHaveLength(0)
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('请使用 /tdd ')
+})
+
+it('restoring a pasted file reference retains the active skill query and lets the user finish selection', async () => {
+  const dom = await editor({ text: '正文',
+    lookup: async () => ({ ok: true, value: [{ path: 'file.md', kind: 'file' }] }),
+    skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } }),
+  })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '阅读 @file.md 使用 /td')
+  expect(dom.container.querySelector('[data-path]')).not.toBeNull()
+  expect(dom.container.querySelector('[role="option"]')?.textContent).toBe('/tdd')
+  await dom.key(dom.input(), 'Tab')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('阅读 @file.md 使用 /tdd ')
+})
+
+it.each([
+  ['Missing', async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } })],
+  ['Unavailable', undefined],
+  ['Failed', async () => { throw new Error('查询失败') }],
+  ['Failed', async () => ({ ok: true, value: { skills: [{ name: null }] } })],
+])('warns accurately about historical skills (%s) while allowing the unchanged original text to resend', async (status, skills) => {
+  const text = '使用 /missing 与 /model-only'
+  const dom = await editor({ text, skills })
+  await dom.click(dom.button('edit'))
+  expect(dom.container.querySelector('[data-skill-notice]')?.textContent).toContain('row.skill' + status)
+  expect(editorText(dom.input())).toBe(text)
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe(text)
+})
+
+it('keeps multiple skill names editable, replaceable and removable without turning them into tags', async () => {
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }, { name: 'code-review' }] } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /t')
+  await dom.key(dom.input(), 'Enter')
+  await dom.change(dom.input(), '使用 /tdd 然后 /code')
+  await dom.key(dom.input(), 'Tab')
+  expect(editorText(dom.input())).toBe('使用 /tdd 然后 /code-review ')
+  expect(dom.calls).toHaveLength(0)
+  expect(dom.container.querySelector('[data-skill-notice]')).toBeNull()
+  await dom.change(dom.input(), '使用 /code-review 然后 /tdd 已替换')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('使用 /code-review 然后 /tdd 已替换')
+  await dom.change(dom.input(), '技能均已删除')
+  expect(dom.container.querySelector('[data-skill-notice]')).toBeNull()
+  expect(dom.container.querySelector('[data-path]')).toBeNull()
+})
+
+it.each(['读取 /usr/bin 与 5/8', '读取 D:/Project/file.md', '紧挨/tdd', '读取 /tdd，检查'])('does not open a skill menu or rewrite paths, fractions or invalid boundaries: %s', async text => {
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), text)
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  if (text.includes('，')) expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('row.skillInvalid')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe(text)
+})
+
+it('rejects explicit model-only candidates and deduplicates names, retaining user-only skills', async () => {
+  const dom = await editor({ text: '使用 /model-only', skills: async () => ({ ok: true, value: { skills: [
+    { name: 'model-only', invocation: { userInvocable: false, modelInvocable: true } },
+    { name: 'tdd', modelInvocable: false }, { name: 'tdd' },
+  ] } }) })
+  await dom.click(dom.button('edit'))
+  expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('/model-only')
+  await dom.change(dom.input(), '使用 /')
+  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['/tdd'])
+  await dom.key(dom.input(), 'Enter')
+  expect(editorText(dom.input())).toBe('使用 /tdd ')
+})
+
+it.each([
+  ['Loading', () => new Promise(() => {})],
+  ['Empty', async () => ({ ok: true, value: { skills: [] } })],
+  ['Unavailable', undefined],
+  ['Failed', async () => ({ ok: false, error: { code: 'gateway/internal' } })],
+])('a skill menu in state %s captures Enter, Tab and IME confirmation until Escape closes it', async (status, skills) => {
+  const dom = await editor({ text: '正文', skills })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /missing')
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.skill' + status)
+  await dom.key(dom.input(), 'Enter', { isComposing: true })
+  await dom.key(dom.input(), 'Enter', { keyCode: 229 })
+  await dom.key(dom.input(), 'Enter')
+  await dom.key(dom.input(), 'Tab')
+  expect(dom.calls).toHaveLength(0)
+  expect(editorText(dom.input())).toBe('使用 /missing')
+  await dom.key(dom.input(), 'Escape')
+  expect(dom.input()).not.toBeNull()
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('使用 /missing')
+})
+
+it('ignores reversed skill replies, stale buttons and obsolete warnings after draft changes', async () => {
+  const replies = []
+  const dom = await editor({ text: '正文', skills: (_request, signal) => new Promise(resolve => replies.push({ signal, resolve })) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /old')
+  const old = [...replies]
+  await dom.change(dom.input(), '使用 /new')
+  const newest = replies.filter(reply => !old.includes(reply))
+  await dom.act(async () => newest.forEach(reply => reply.resolve({ ok: true, value: { skills: [{ name: 'new' }] } })))
+  const button = dom.container.querySelector('[role="option"]')
+  await dom.act(async () => old.forEach(reply => reply.resolve({ ok: true, value: { skills: [] } })))
+  expect(button.textContent).toBe('/new')
+  expect(dom.container.querySelector('[data-skill-notice]')).toBeNull()
+  await dom.change(dom.input(), '新草稿不含技能')
+  await dom.click(button)
+  expect(editorText(dom.input())).toBe('新草稿不含技能')
+  expect(replies.every(reply => reply.signal.aborted)).toBe(true)
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(dom.container.querySelector('[data-skill-notice]')).toBeNull()
+})
+
+it('invalidates only the affected session skill menu and rechecks historical skill availability after a preset event', async () => {
+  let skills = [{ name: 'tdd' }]
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /tdd')
+  const choice = dom.container.querySelector('[role="option"]')
+  await dom.act(async () => dom.operations.invalidateReferenceQueries('another-session'))
+  expect(dom.container.querySelector('[role="option"]')).toBe(choice)
+  skills = []
+  await dom.act(async () => dom.operations.invalidateReferenceQueries('s'))
+  await dom.click(choice)
+  expect(editorText(dom.input())).toBe('使用 /tdd')
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('row.skillMissing')
+})
+
+it('freezes selected skill text for preflight and retry even when the later local draft changes', async () => {
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills: [{ name: 'tdd' }] } }),
+    replay: input => ({ ok: true, value: input.phase === 'start'
+      ? { preflight: true, preflightId: 'plan', userSeq: 0, op: 'edit', files: [] }
+      : { carrierSeq: 5, shadowedSeqs: [] } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /t')
+  await dom.key(dom.input(), 'Tab')
+  await dom.key(dom.input(), 'Enter')
+  await dom.change(dom.input(), '冻结期间修改 /missing')
+  expect(editorText(dom.input())).toBe('使用 /tdd ')
+  await dom.act(async () => dom.operations.chooseReplay('s', 'keep'))
+  await dom.click(dom.button('edit'))
+  expect(editorText(dom.input())).toBe('使用 /tdd ')
+  await dom.change(dom.input(), '后续编辑 /missing')
+  await dom.act(async () => dom.operations.sendAgain({ sessionId: 's', carrierSeq: 5 }))
+  expect(dom.calls.map(call => call.phase ?? 'retry')).toEqual(['start', 'keep', 'retry'])
+  expect(dom.calls[0].request.text).toBe('使用 /tdd ')
+  expect(dom.calls[2].retry.text).toBe('使用 /tdd ')
+})
+
+it.skipIf(!skillHost).each([
+  ['请选择', '请使用 /help', '请使用 /help ', ['help']],
+  ['重复名称', '使用 /tdd /code-review /tdd 已选好', '使用 /tdd /code-review /tdd 已选好', ['tdd', 'code-review']],
+  ['失效技能', '使用 /missing /model-only 已保留', '使用 /missing /model-only 已保留', []],
+  ['用户专用技能', '使用 /user-only 已选好', '使用 /user-only 已选好', ['user-only']],
+  ['路径与分数', '读取 /usr/bin 5/8 /tdd，检查', '读取 /usr/bin 5/8 /tdd，检查', []],
+])('loads actual host instructions from the resent user message: %s', async (_label, edited, expected, names) => {
+  const { hostComposition, dispatchToHost } = await import('./helpers/gateway.mjs')
+  const { hostState, SESSION_ID } = await import('./helpers/host.mjs')
+  const state = hostState({ agent: 'delivering' })
+  const host = await hostComposition({ host: state })
+  resources.push(() => host.ctx.fiber.dispose())
+  const dom = await editor({ text: '原文', sessionId: SESSION_ID, seq: 2,
+    skills: async () => ({ ok: true, value: { skills: representativeSkills.filter(skill => skill.invocation.userInvocable)
+      .map(skill => ({ name: skill.name, description: skill.description, modelInvocable: skill.invocation.modelInvocable })) } }),
+    replay: async input => (await dispatchToHost(host, 'resend/replay', { request: input })).value,
+  })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), edited)
+  if (edited === '请使用 /help') {
+    await dom.key(dom.input(), 'Tab')
+    expect(dom.calls).toHaveLength(0)
+  }
+  if (edited.includes('/missing')) expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('row.skillMissing')
+  await dom.key(dom.input(), 'Enter')
+  await dom.act(async () => vi.waitFor(() => expect(state.calls.followups).toBe(1)))
+  const message = state.calls.followupInputs[0]
+  expect(message.source).toEqual({ kind: 'user' })
+  expect(message.content).toEqual([{ type: 'text', text: expected }])
+  const result = await skillHost.invoke(message, { session: state.session })
+  expect(result.injected.map(message => message.source.name)).toEqual(names)
+  for (const message of result.injected) expect(message.content[0].text).toContain('隔离的 ' + message.source.name + ' 技能指令')
+  expect(result.requested.every(request => request.lookup.cwd === state.session.header.cwd)).toBe(true)
+})
 
 it('selects a complete host file path from an independent menu before Enter can resend', async () => {
   const dom = await editor({ text: '请阅读', sessionId: 'target', lookup: async (sessionId, query) => {
@@ -123,7 +330,8 @@ it('only opens at the current token, including a new line, without swallowing fo
   const dom = await editor({ text: '原文', lookup: async () => ({ ok: true, value: [{ path: 'file.md', kind: 'file' }] }) })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '正文 @file /skill')
-  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.skillUnavailable')
+  await dom.key(dom.input(), 'Escape')
   await dom.key(dom.input(), 'Enter')
   expect(dom.calls[0].request.text).toBe('正文 @file /skill')
   await dom.change(dom.input(), '正文\n@file')

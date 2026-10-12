@@ -75,22 +75,29 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * editing — the one place this surface reads live data — fails as the editor's
  * own panel, preserving the host message and its copy action.
  */
-function InlineEditor({ t, value, draft, editorRef, lookup, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+function InlineEditor({ t, value, draft, editorRef, lookup, queryContext, subscribeQueryInvalidation, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
   const root = useRef(null)
   const callbacks = useRef()
   callbacks.current = { onText, onKeyDown }
   const [notice, setNotice] = useState(false)
+  const lastQueryContext = useRef(queryContext)
   useLayoutEffect(() => {
     const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup,
       label: t('row.editInput'), removeLabel: t('row.removeReference'),
+      translate: t,
       onChange: next => callbacks.current.onText(next), onNotice: setNotice,
       onKeyDown: event => callbacks.current.onKeyDown(event) })
     editorRef.current = editor
-    return () => { if (editorRef.current === editor) editorRef.current = null; editor.destroy() }
+    const unsubscribe = subscribeQueryInvalidation?.(() => editor.invalidateQueries())
+    return () => { unsubscribe?.(); if (editorRef.current === editor) editorRef.current = null; editor.destroy() }
   }, [])
+  useLayoutEffect(() => {
+    if (lastQueryContext.current !== queryContext) editorRef.current?.invalidateQueries()
+    lastQueryContext.current = queryContext
+  }, [queryContext])
   useLayoutEffect(() => editorRef.current?.setDisabled(disabled), [disabled])
   const label = t('row.editInput'), removeLabel = t('row.removeReference')
-  useLayoutEffect(() => editorRef.current?.setLabels(label, removeLabel), [label, removeLabel])
+  useLayoutEffect(() => editorRef.current?.setLabels(label, removeLabel, t), [label, removeLabel, t])
   return createElement('div', { className: 'dsh-resend-editor-surface' }, [
     createElement('div', { key: 'header', className: 'dsh-resend-editor-header' }, [
       createElement('span', { key: 'label', className: 'dsh-resend-editor-label' }, t('row.temporaryInput')),
@@ -126,6 +133,11 @@ export function UserActionsRow(props) {
   const inFlight = useRef(false)
   const editorRef = useRef(null)
   const session = typeof useSession === 'function' ? useSession(identity) : undefined
+  const fileScope = typeof props.useSessions === 'function' ? props.useSessions(snapshot => {
+    const summary = snapshot.byId[sessionId]
+    return JSON.stringify([summary?.cwd, summary?.projectionValues?.agentPreset])
+  }) : undefined
+  const queryContext = JSON.stringify([fileScope, session?.openState])
   const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
   const reasonFor = (saved, current, context) => {
@@ -220,6 +232,7 @@ export function UserActionsRow(props) {
   const editor = editing === targetKey && createElement(InlineEditorSurface, {
       key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
       lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),
+      queryContext, subscribeQueryInvalidation: operations.subscribeReferenceInvalidation,
       disabled: pending || !!preflight, stopReason, composerReason,
       onText: (draft) => {
         if (live.current.targetKey !== targetKey) return

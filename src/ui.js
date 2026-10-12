@@ -94,6 +94,16 @@ const CSS = `
 .dsh-resend-file-reference button{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font:inherit}
 .dsh-resend-file-reference button:disabled{opacity:.4;cursor:default}
 .dsh-resend-file-reference.ProseMirror-selectednode{outline:1px solid var(--dsw-alias-state-business-primary)}
+.dsh-resend-reference-menu{margin-top:8px;padding:8px;border:1px solid var(--dsw-alias-border-l4);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit}
+.dsh-resend-reference-menu[hidden]{display:none}
+.dsh-resend-reference-menu-header{display:flex;justify-content:space-between;gap:8px}
+.dsh-resend-reference-menu [role="status"]{padding:6px 0;font-size:.9em}
+.dsh-resend-reference-menu [role="listbox"]{max-height:240px;overflow:auto}
+.dsh-resend-reference-candidate{display:flex;gap:6px;margin:2px 0}
+.dsh-resend-reference-menu button{border:0;border-radius:4px;padding:6px;background:transparent;color:inherit;cursor:pointer;font:inherit;text-align:left;overflow-wrap:anywhere}
+.dsh-resend-reference-candidate [role="option"]{flex:1;min-width:0}
+.dsh-resend-reference-menu button:hover,.dsh-resend-reference-menu [aria-selected="true"]{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent)}
+.dsh-resend-reference-menu button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary)}
 .dsh-resend-editor-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px}
 .dsh-resend-editor-composer{display:flex;min-width:0;margin-right:auto}
 .dsh-resend-editor-composer .dsh-resend-disabled-action{min-width:0}

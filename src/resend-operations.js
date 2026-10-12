@@ -57,6 +57,7 @@ export function createResendOperations(remote) {
   const recordsBySession = new Map()
   const emptyRecords = Object.freeze([])
   const listeners = new Set()
+  const referenceInvalidationListeners = new Set()
   const conversations = new Map()
   const preflights = new Map()
   const drafts = new Map()
@@ -141,8 +142,12 @@ export function createResendOperations(remote) {
       if (drafts.get(sessionId)?.size === 0) drafts.delete(sessionId)
     },
     async referenceCandidates(sessionId, query, signal) {
-      if (typeof remote.fileReferences?.list !== 'function') return { ok: false }
+      if (typeof remote.fileReferences?.list !== 'function') return { ok: false, unavailable: true }
       return remote.fileReferences.list(sessionId, query, signal)
+    },
+    subscribeReferenceInvalidation(listener) {
+      referenceInvalidationListeners.add(listener)
+      return () => referenceInvalidationListeners.delete(listener)
     },
     preflightFor: sessionId => preflights.get(sessionId),
     async chooseReplay(sessionId, phase) {
@@ -173,6 +178,7 @@ export function createResendOperations(remote) {
     // Reconnection may precede Chat refill. Re-read every observed session and
     // retire in-flight replies so old neighbours cannot reopen an invalid target.
     invalidateConversations() {
+      for (const listener of Array.from(referenceInvalidationListeners)) listener()
       for (const [sessionId, entry] of conversations) {
         void this.refreshConversation(sessionId, entry.revision, true)
       }
@@ -243,6 +249,8 @@ export function createResendOperations(remote) {
     },
     /** Drop this page's records and listeners when the plugin unloads. */
     dispose() {
+      for (const listener of Array.from(referenceInvalidationListeners)) listener()
+      referenceInvalidationListeners.clear()
       disposed = true
       for (const entry of preflights.values()) entry.resolve({ ok: true, value: { canceled: true } })
       preflights.clear()

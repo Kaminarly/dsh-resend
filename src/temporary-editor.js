@@ -5,10 +5,11 @@ import { history, undo, redo, closeHistory } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
 import { schema, createDocument, exportText, referenceTokens } from './reference-text.js'
+import { createFileReferenceMenu } from './file-reference-menu.js'
 
 /** One independent editor; the saved EditorState retains selection and undo on reopen. */
 export function createTemporaryEditor(element, options) {
-  let view, destroyed = false, frozen = options.disabled === true, request
+  let view, menu, destroyed = false, frozen = options.disabled === true, request
   let candidates = options.draft?.candidates ?? []
   let label = options.label, removeLabel = options.removeLabel
   const changed = () => options.onChange({ state: view.state, text: exportText(view.state.doc), candidates })
@@ -21,9 +22,9 @@ export function createTemporaryEditor(element, options) {
   const state = options.draft?.state?.reconfigure({ plugins }) ?? EditorState.create({
     doc: createDocument(options.text, candidates), plugins,
   })
-  function syncClipboardSelection(view) {
+  function syncClipboardSelection(view, includeCaret = false) {
     const selection = view.dom.ownerDocument.getSelection()
-    if (!selection || selection.isCollapsed || !view.dom.contains(selection.anchorNode) || !view.dom.contains(selection.focusNode)) return false
+    if (!selection || !includeCaret && selection.isCollapsed || !view.dom.contains(selection.anchorNode) || !view.dom.contains(selection.focusNode)) return false
     const anchor = view.posAtDOM(selection.anchorNode, selection.anchorOffset)
     const head = view.posAtDOM(selection.focusNode, selection.focusOffset)
     if (anchor !== view.state.selection.anchor || head !== view.state.selection.head) {
@@ -39,13 +40,18 @@ export function createTemporaryEditor(element, options) {
       copy: syncClipboardSelection, cut: syncClipboardSelection,
       // Skip editor keymaps during IME confirmation without preventing browser composition.
       keydown: (_view, event) => event.isComposing || event.keyCode === 229 || view.composing,
+      compositionstart: () => { menu?.composing(); return false },
+      compositionend: () => { queueMicrotask(() => { if (!destroyed) void menu?.refresh() }); return false },
     },
     dispatchTransaction(transaction) {
       if (destroyed || frozen && transaction.docChanged) return
+      if (transaction.docChanged || transaction.selectionSet) request?.abort()
       view.updateState(view.state.apply(transaction))
       changed()
+      void menu?.refresh()
     },
     handleKeyDown(_view, event) {
+      if (!frozen && menu?.handleKey(event)) return true
       if (event.key === 'Escape' || event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
         if (!frozen) options.onKeyDown(event)
@@ -93,6 +99,12 @@ export function createTemporaryEditor(element, options) {
     },
   })
 
+  menu = createFileReferenceMenu(element, { getView: () => view, lookup: options.lookup,
+    disabled: () => frozen, translate: options.translate,
+    syncSelection: () => syncClipboardSelection(view, true),
+    onCandidate: candidate => { candidates = [...candidates, candidate] },
+  })
+
   async function restoreReferences() {
     request?.abort()
     if (destroyed || frozen) return
@@ -101,10 +113,10 @@ export function createTemporaryEditor(element, options) {
     if (!paths.length) { options.onNotice(false); return }
     const controller = new element.ownerDocument.defaultView.AbortController()
     request = controller
-    const initial = view.state.doc
+    const initial = view.state
     // A trailing slash asks the host to list children. Query the directory itself instead.
     const results = await Promise.allSettled(paths.map(path => options.lookup(path.replace(/\/$/u, ''), controller.signal)))
-    if (destroyed || frozen || controller.signal.aborted || request !== controller || view.state.doc !== initial) return
+    if (destroyed || frozen || controller.signal.aborted || request !== controller || view.state !== initial) return
     let unavailable = false
     const confirmed = []
     for (const result of results) {
@@ -149,9 +161,11 @@ export function createTemporaryEditor(element, options) {
   void restoreReferences()
   return {
     getText: () => exportText(view.state.doc),
-    setLabels(nextLabel, nextRemoveLabel) {
+    invalidateQueries() { request?.abort(); menu.invalidate() },
+    setLabels(nextLabel, nextRemoveLabel, translate) {
       label = nextLabel
       removeLabel = nextRemoveLabel
+      menu.setLabels(translate)
       view.setProps({ attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', 'aria-disabled': String(frozen) } })
       view.dom.querySelectorAll('.dsh-resend-file-reference').forEach(chip => {
         chip.querySelector('button').setAttribute('aria-label', removeLabel + ' ' + chip.dataset.path)
@@ -159,11 +173,11 @@ export function createTemporaryEditor(element, options) {
     },
     setDisabled(disabled) {
       frozen = disabled
-      if (disabled) request?.abort()
+      if (disabled) { request?.abort(); menu.close() }
       view.setProps({ editable: () => !frozen,
         attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', 'aria-disabled': String(frozen) } })
       view.dom.querySelectorAll('.dsh-resend-file-reference button').forEach(button => { button.disabled = frozen })
     },
-    destroy() { destroyed = true; request?.abort(); view.destroy() },
+    destroy() { destroyed = true; request?.abort(); menu.destroy(); view.destroy() },
   }
 }

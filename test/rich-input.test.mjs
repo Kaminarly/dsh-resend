@@ -26,6 +26,154 @@ async function editor({ text = '原文 @a/same.md /tdd', lookup, replay, session
   }
 }
 
+it('selects a complete host file path from an independent menu before Enter can resend', async () => {
+  const dom = await editor({ text: '请阅读', sessionId: 'target', lookup: async (sessionId, query) => {
+    expect(sessionId).toBe('target')
+    return { ok: true, value: query === 'same' ? [
+      { path: 'a/same.md', kind: 'file' }, { path: 'b/same.md', kind: 'file' },
+      { path: 'other-session', kind: 'session' },
+    ] : [] }
+  } })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '请阅读 @same')
+  expect(dom.container.querySelector('[role="listbox"]')).not.toBeNull()
+  expect(dom.container.querySelectorAll('[role="option"]')).toHaveLength(2)
+  await dom.key(dom.input(), 'ArrowDown')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls).toHaveLength(0)
+  expect(editorText(dom.input())).toBe('请阅读 @b/same.md ')
+  expect(dom.container.querySelector('[data-path="b/same.md"]')).not.toBeNull()
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('请阅读 @b/same.md ')
+})
+
+it('drills into directories separately from selection and closes a spaced external directory before prose', async () => {
+  const seen = []
+  const dom = await editor({ text: '正文', lookup: async (_sessionId, query) => {
+    seen.push(query)
+    return { ok: true, value: query === '资料/' ? [{ path: '资料/中文 说明.md', kind: 'file' }] :
+      [{ path: '资料', kind: 'directory' }, { path: 'D:/Other Project', kind: 'directory' }] }
+  } })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '正文 @')
+  await dom.click(dom.container.querySelector('[aria-label="row.fileDrill 资料"]'))
+  expect(seen).toContain('资料/')
+  expect(editorText(dom.input())).toBe('正文 @资料/')
+  await dom.click(dom.container.querySelector('[aria-label="row.fileParent"]'))
+  expect(editorText(dom.input())).toBe('正文 @')
+  await dom.click(dom.container.querySelector('[aria-label="row.fileSelectDirectory D:/Other Project"]'))
+  expect(editorText(dom.input())).toBe('正文 @"D:/Other Project/" ')
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('正文 @"D:/Other Project/" ')
+  await dom.key(dom.input(), 'z', { ctrlKey: true })
+  expect(editorText(dom.input())).toBe('正文 @')
+})
+
+it('changing the draft cancels both menu and restoration queries before old results can insert a tag', async () => {
+  const replies = []
+  const dom = await editor({ text: '正文', lookup: (_sessionId, query, signal) =>
+    new Promise(resolve => replies.push({ query, signal, resolve })) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '正文 @file')
+  await dom.change(dom.input(), '已修改的正文')
+  expect(replies.every(reply => reply.signal.aborted)).toBe(true)
+  await dom.act(async () => { for (const reply of replies) reply.resolve({ ok: true, value: [{ path: 'file', kind: 'file' }] }) })
+  expect(dom.container.querySelector('[data-path]')).toBeNull()
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(editorText(dom.input())).toBe('已修改的正文')
+})
+
+it.each([
+  ['Loading', (_sessionId, _query, _signal) => new Promise(() => {})],
+  ['Empty', async () => ({ ok: true, value: [] })],
+  ['Unavailable', undefined],
+  ['Failed', async () => { throw new Error('查询失败') }],
+])('distinguishes the %s menu state and retains plain text until the menu closes', async (status, lookup) => {
+  const dom = await editor({ text: '原文', lookup })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '原文 @not-found')
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.file' + status)
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls).toHaveLength(0)
+  expect(editorText(dom.input())).toBe('原文 @not-found')
+  await dom.key(dom.input(), 'Escape')
+  expect(dom.input()).not.toBeNull()
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('原文 @not-found')
+})
+
+it('newer candidate replies win and closed editors abort their remaining queries', async () => {
+  const replies = []
+  const dom = await editor({ text: '原文', lookup: (_sessionId, query, signal) =>
+    new Promise(resolve => replies.push({ query, signal, resolve })) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '原文 @first')
+  await dom.change(dom.input(), '原文 @second')
+  await dom.act(async () => { for (const reply of replies.filter(item => item.query === 'second'))
+    reply.resolve({ ok: true, value: [{ path: 'new/second.md', kind: 'file' }] }) })
+  await dom.act(async () => { for (const reply of replies.filter(item => item.query === 'first'))
+    reply.resolve({ ok: true, value: [{ path: 'old/first.md', kind: 'file' }] }) })
+  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['new/second.md'])
+  await dom.click(dom.button('cancel'))
+  expect(replies.every(reply => reply.signal.aborted)).toBe(true)
+  expect(dom.input()).toBeNull()
+})
+
+it('only opens at the current token, including a new line, without swallowing following prose or skill text', async () => {
+  const dom = await editor({ text: '原文', lookup: async () => ({ ok: true, value: [{ path: 'file.md', kind: 'file' }] }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '正文 @file /skill')
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('正文 @file /skill')
+  await dom.change(dom.input(), '正文\n@file')
+  expect(dom.container.querySelector('[role="option"]')?.textContent).toBe('file.md')
+  await dom.key(dom.input(), 'Tab')
+  expect(editorText(dom.input())).toBe('正文\n@file.md ')
+})
+
+it('old directory controls cannot replace a newer query even if a delayed click reaches them', async () => {
+  const dom = await editor({ text: '原文', lookup: async (_sessionId, query) => ({ ok: true, value:
+    [{ path: query === 'first/' ? 'first/sub' : 'second/sub', kind: 'directory' }] }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '原文 @first/')
+  const oldDrill = dom.container.querySelector('[aria-label="row.fileDrill first/sub"]')
+  const oldParent = dom.container.querySelector('[aria-label="row.fileParent"]')
+  await dom.change(dom.input(), '原文 @second/')
+  await dom.click(oldDrill)
+  await dom.click(oldParent)
+  expect(editorText(dom.input())).toBe('原文 @second/')
+  expect(dom.calls).toHaveLength(0)
+})
+
+it('connection reset aborts pending file queries and retires visible choices while retaining the draft', async () => {
+  const replies = []
+  const dom = await editor({ text: '原文', lookup: (_sessionId, query, signal) =>
+    new Promise(resolve => replies.push({ query, signal, resolve })) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '正文 @same')
+  await dom.act(async () => dom.operations.invalidateConversations())
+  expect(replies.every(reply => reply.signal.aborted)).toBe(true)
+  await dom.act(async () => { for (const reply of replies) reply.resolve({ ok: true, value: [{ path: 'old/same.md', kind: 'file' }] }) })
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(editorText(dom.input())).toBe('正文 @same')
+})
+
+it('changing the target preset retires its old file choices without clearing the independent draft', async () => {
+  const dom = await editor({ text: '原文', lookup: async () => ({ ok: true, value: [{ path: 'old/file.md', kind: 'file' }] }) })
+  let preset = 'original'
+  dom.props.useSessions = select => select({ byId: { s: { cwd: 'D:/Project', projectionValues: { agentPreset: preset } } } })
+  await dom.render(dom.element())
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '正文 @file')
+  const choice = dom.container.querySelector('[role="option"]')
+  preset = 'new'
+  await dom.render(dom.element())
+  await dom.click(choice)
+  expect(dom.container.querySelector('[role="listbox"]')).toBeNull()
+  expect(editorText(dom.input())).toBe('正文 @file')
+})
+
 it('retains the edited draft after Escape and reopening the same message', async () => {
   const dom = await editor()
   await dom.click(dom.button('edit'))

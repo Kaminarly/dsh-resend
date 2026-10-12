@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict'
+import { chromium } from 'playwright'
+import { build } from 'esbuild'
+import { createServer } from 'node:http'
+import { readFile, mkdir, writeFile } from 'node:fs/promises'
+import { once } from 'node:events'
+import { fileURLToPath } from 'node:url'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+const fixture = await build({ entryPoints: [new URL('./fixtures/rich-input-browser.js', import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1')], absWorkingDir: root,
+  bundle: true, format: 'iife', platform: 'browser', write: false })
+const bundle = await readFile(new URL('../lib/client.bundle.js', import.meta.url))
+const html = '<!doctype html><meta charset="utf-8"><title>临时输入框隔离验收</title><style>body{font:14px sans-serif;max-width:900px;margin:32px auto;--dsw-alias-bg-layer-1:#fff;--dsw-alias-label-primary:#222;--dsw-alias-border-l4:#bbb;--dsw-alias-state-business-primary:#2673dd;--dsw-alias-button-info-fill:#2673dd}button{cursor:pointer}#composer{margin-top:32px;padding:16px;border:1px solid #ccc}</style><h1>临时输入框隔离验收</h1><div id="row"></div><section id="composer"><label>普通草稿<textarea id="ordinary">普通正文 /skill @keep</textarea></label><span data-attachment="附件.pdf">附件.pdf</span></section><script src="/fixture.js"></script><script src="/client.js"></script>'
+const server = createServer((request, response) => {
+  const payload = request.url === '/fixture.js' ? fixture.outputFiles[0].contents : request.url === '/client.js' ? bundle : html
+  response.setHeader('Content-Type', request.url?.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8')
+  response.end(payload)
+}).listen(0, '127.0.0.1')
+await once(server, 'listening')
+let browser
+const checks = [], errors = [], network = []
+const channel = process.env.EDITOR_BROWSER_CHANNEL ?? 'msedge'
+try {
+  browser = await chromium.launch({ channel, headless: true })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 1000 } })
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  page.on('request', request => network.push(request.url()))
+  const url = `http://127.0.0.1:${server.address().port}`
+  const input = page.getByRole('textbox', { name: '编辑消息' })
+  const edit = page.getByRole('button', { name: '编辑', exact: true })
+  const text = () => input.evaluate(element => {
+    const read = node => node.nodeType === 3 ? node.textContent : node.dataset?.mention ? node.dataset.mention :
+      node.tagName === 'BR' ? node.classList.contains('ProseMirror-trailingBreak') ? '' : node.dataset.eol ?? '\n' : [...node.childNodes].map(read).join('')
+    return read(element)
+  })
+  const source = () => page.evaluate(() => window.richInputFixture.text)
+  const paste = value => input.evaluate((element, value) => {
+    const data = new DataTransfer(); data.setData('text/plain', value)
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+  }, value)
+  const replaceAll = async value => { await input.focus(); await page.keyboard.press('Control+a'); await paste(value) }
+  const open = async () => { await edit.click(); await input.waitFor(); await page.waitForFunction(() => document.querySelectorAll('.dsh-resend-file-reference').length === 5) }
+  async function selectText(value) {
+    await input.evaluate((element, value) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      let node
+      while ((node = walker.nextNode())) {
+        if (node.parentElement.closest('[data-path]')) continue
+        const index = node.textContent.indexOf(value)
+        if (index < 0) continue
+        const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + value.length)
+        const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range); element.focus(); return
+      }
+      throw new Error('待选文字不存在 ' + value)
+    }, value)
+  }
+  async function check(name, run) {
+    await page.goto(url)
+    await edit.waitFor({ timeout: 5000 }).catch(async cause => {
+      console.error(JSON.stringify({ errors, body: await page.locator('body').innerText() }, null, 2)); throw cause
+    })
+    await run()
+    assert.deepEqual(errors, [])
+    checks.push(name); console.log('PASS ' + name)
+  }
+  await check('原文全文、同名完整路径、目录与多个 skill 恢复', async () => {
+    await open()
+    assert.equal(await text(), await source())
+    assert.deepEqual(await page.locator('[data-path]').evaluateAll(nodes => nodes.map(node => node.dataset.path)),
+      ['a/same.md', 'b/same.md', '资料/中文 说明.md', '有 空格', 'D:/Other Project/说明.md'])
+    assert.equal(await page.locator('[data-path="unknown"]').count(), 0)
+    assert.equal(await input.evaluate(element => { const selection = getSelection(); return selection.isCollapsed && selection.focusOffset === selection.focusNode.textContent.length }), true)
+  })
+  await check('删除、撤销、重做、替换与 skill 中间编辑，拒绝后保留全文', async () => {
+    await open()
+    await page.getByRole('button', { name: '删除引用 a/same.md', exact: true }).click()
+    assert.equal(await text(), (await source()).replace('@a/same.md', ''))
+    await page.keyboard.press('Control+z'); assert.equal(await text(), await source())
+    await page.keyboard.press('Control+Shift+z'); assert.equal(await text(), (await source()).replace('@a/same.md', ''))
+    await page.keyboard.press('Control+z')
+    await selectText('/tdd'); await page.keyboard.insertText('/research')
+    const edited = (await source()).replace('/tdd', '/research')
+    assert.equal(await text(), edited)
+    await page.waitForTimeout(550)
+    await page.keyboard.insertText('继续')
+    assert.equal(await text(), edited.replace('/research', '/research继续'))
+    await page.keyboard.press('Control+z')
+    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page.getByRole('alert').waitFor()
+    assert.equal(await text(), edited)
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls[0].request.text), edited)
+  })
+  await check('取消、Escape、重开与卸载重挂恢复草稿和撤销', async () => {
+    await open(); await selectText('/tdd'); await page.keyboard.insertText('/research')
+    const edited = (await source()).replace('/tdd', '/research')
+    await page.keyboard.press('Escape'); await edit.click(); assert.equal(await text(), edited)
+    await page.getByRole('button', { name: '取消', exact: true }).click(); await edit.click(); assert.equal(await text(), edited)
+    await page.evaluate(() => window.richInputFixture.remount()); await edit.click(); assert.equal(await text(), edited)
+    await page.keyboard.press('Control+z'); assert.equal(await text(), await source())
+  })
+  await check('预检冻结正文和标签，取消恢复编辑，确认只发送固定全文', async () => {
+    await open(); await selectText('/tdd'); await page.keyboard.insertText('/research')
+    const edited = (await source()).replace('/tdd', '/research')
+    await page.evaluate(() => window.richInputFixture.mode('preflight'))
+    await page.getByRole('button', { name: '发送', exact: true }).click()
+    await page.getByRole('button', { name: '取消重发', exact: true }).waitFor()
+    assert.equal(await input.getAttribute('contenteditable'), 'false')
+    assert.equal(await page.getByRole('button', { name: '删除引用 a/same.md', exact: true }).isDisabled(), true)
+    await paste('禁止预检期间写入'); assert.equal(await text(), edited)
+    await page.getByRole('button', { name: '取消重发', exact: true }).click()
+    await page.waitForFunction(() => document.querySelector('[role="textbox"]').contentEditable === 'true')
+    assert.equal(await text(), edited)
+    assert.equal(await page.evaluate(() => window.richInputFixture.received.length), 0)
+    await input.focus(); await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: '保留文件并重发', exact: true }).click()
+    await page.waitForFunction(() => window.richInputFixture.received.length === 1)
+    assert.equal(await page.evaluate(() => window.richInputFixture.received[0].text), edited)
+    assert.equal(await input.count(), 0)
+    await edit.click(); assert.equal(await text(), await source())
+  })
+  await check('未接收时补发使用第一次完整文本，成功后清理草稿', async () => {
+    await open(); await replaceAll('失败补发 @a/same.md /tdd\n完整中文')
+    await page.evaluate(() => window.richInputFixture.mode('owed'))
+    await input.press('Enter'); await page.waitForFunction(() => window.richInputFixture.received.length === 1)
+    await edit.click(); assert.equal(await text(), '失败补发 @a/same.md /tdd\n完整中文')
+    await replaceAll('后续本地编辑不会改写待补发文本')
+    await page.evaluate(() => window.richInputFixture.retry())
+    assert.deepEqual(await page.evaluate(() => window.richInputFixture.received.map(request => request.text)),
+      ['失败补发 @a/same.md /tdd\n完整中文', '失败补发 @a/same.md /tdd\n完整中文'])
+    await input.press('Escape'); await edit.click(); assert.equal(await text(), await source())
+    assert.deepEqual(await page.evaluate(() => window.richInputFixture.calls.map(call => call.phase ?? 'retry')), ['start', 'retry'])
+  })
+  await check('Shift+Enter 换行、空白不可发送、输入法确认不发送、异常保留内容', async () => {
+    await open(); await replaceAll('中文')
+    await page.keyboard.press('Shift+Enter'); await page.keyboard.insertText('第二行')
+    assert.equal(await text(), '中文\n第二行')
+    await input.evaluate(element => {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }))
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true, cancelable: true }))
+    })
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    await replaceAll(' \n\t'); await input.press('Enter')
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    await replaceAll('发送异常也保留的中文 /skill'); await page.evaluate(() => window.richInputFixture.mode('throw'))
+    await input.press('Enter'); await page.getByRole('alert').waitFor()
+    assert.equal(await text(), '发送异常也保留的中文 /skill')
+    assert.equal(await input.getAttribute('contenteditable'), 'true')
+  })
+  await check('草稿按 Session 和 seq 隔离；普通正文、附件、选区与撤销不变', async () => {
+    const ordinary = page.locator('#ordinary')
+    await ordinary.focus(); await ordinary.press('End'); await page.keyboard.insertText('追加')
+    await ordinary.evaluate(element => element.setSelectionRange(2, 4))
+    await open(); await replaceAll('s0 的草稿')
+    await page.evaluate(() => window.richInputFixture.switchTarget('s', 2)); await open(); await replaceAll('s2 的草稿')
+    await page.evaluate(() => window.richInputFixture.switchTarget('other', 0)); await open(); await replaceAll('other0 的草稿')
+    for (const [sessionId, seq, expected] of [['s', 0, 's0 的草稿'], ['s', 2, 's2 的草稿'], ['other', 0, 'other0 的草稿']]) {
+      await page.evaluate(([sessionId, seq]) => window.richInputFixture.switchTarget(sessionId, seq), [sessionId, seq]); await edit.click(); assert.equal(await text(), expected)
+    }
+    assert.equal(await ordinary.inputValue(), '普通正文 /skill @keep追加')
+    assert.deepEqual(await ordinary.evaluate(element => [element.selectionStart, element.selectionEnd]), [2, 4])
+    assert.equal(await page.locator('[data-attachment]').getAttribute('data-attachment'), '附件.pdf')
+    await ordinary.focus(); await ordinary.press('Control+z'); assert.equal(await ordinary.inputValue(), '普通正文 /skill @keep')
+  })
+  await check('查询失败与延迟响应不改写正文，关闭后旧响应失效', async () => {
+    await page.evaluate(() => window.richInputFixture.lookupMode('failed'))
+    await edit.click(); await input.waitFor(); assert.equal(await text(), await source())
+    assert.equal(await page.locator('[data-path]').count(), 0)
+    await input.press('Escape'); await page.evaluate(() => window.richInputFixture.lookupMode('delayed'))
+    await edit.click(); await replaceAll('已经修改 /tdd')
+    await page.evaluate(() => window.richInputFixture.release()); await page.waitForTimeout(100)
+    assert.equal(await text(), '已经修改 /tdd')
+    await input.press('Escape'); await page.evaluate(() => window.richInputFixture.release())
+    assert.equal(await input.count(), 0)
+  })
+  await check('运行中与失效目标禁止发送，保留草稿', async () => {
+    await open(); await replaceAll('有效性变化也保留草稿')
+    await page.evaluate(() => window.richInputFixture.running(true)); await input.press('Enter')
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    await page.evaluate(() => window.richInputFixture.running(false)); await page.evaluate(() => window.richInputFixture.invalidate(false))
+    await page.waitForFunction(() => document.querySelector('[aria-label="发送"]').disabled)
+    await input.press('Enter'); assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    assert.equal(await text(), '有效性变化也保留草稿')
+  })
+  assert.equal(network.every(request => request.startsWith(url)), true)
+  await mkdir(new URL('../output/', import.meta.url), { recursive: true })
+  await page.screenshot({ path: new URL(`../output/rich-input-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
+  await writeFile(new URL(`../output/rich-input-${channel}.json`, import.meta.url), JSON.stringify({ channel, version: browser.version(), checks, errors, network, realSessionMutations: 0, realModelRequests: 0 }, null, 2))
+  console.log(`${channel}: ${checks.length} groups passed, ${errors.length} browser errors`)
+} finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

@@ -1,5 +1,7 @@
 # What is the full `inputActions` API?
 
+2026-10-12 补充：当前宿主的文件 chip 发送为 `@路径`，skill 选择发送为 `/name`，宿主可从用户文本加载技能。因此，下文「不能恢复 chip」不等于「纯文本无法引用文件或调用 skill」。新证据与独立临时编辑器路线见 [移植研究](../../dsh-resend-rich-input/research/host-capabilities.md)。旧文关于正式 Composer 的公开编辑与提交接口限制仍需分别评估。
+
 Ticket: [What is the full `inputActions` API?](../issues/04-inputactions-api.md)
 Scope: read-only. Nothing was installed, run, or modified. No session was opened.
 

@@ -831,8 +831,17 @@ newline. Do not submit on `Enter` while an IME composition is active — check
 
 **The inline editor is plain text only.** Rich references — `@` file chips, `/` skills and commands,
 code quoting — exist **only** in the real composer, which is a per-session singleton that cannot be
-duplicated. So the second affordance exists: **"Edit in the composer"** calls
-`inputActions.setDraft(text)` and closes the inline editor.
+duplicated. **"Edit in the composer" is disabled on the current host**: its public
+`inputActions` face cannot intercept the normal submission after reference serialization.
+Copying text into its draft would append a new message instead of resending the selected message.
+Explain the limitation on hover/focus, retain the inline draft, and never call `setDraft` from this
+entry. The inline Edit action remains available even when the saved inline-editor preference is off.
+
+Future composer integration must retain the session and original message target, preserve and restore
+the ordinary draft on cancel, route Enter and Send through the same replay preflight, and serialize
+references through the host. Failure retains the edit; it never falls back to normal append. Refresh,
+session changes and target invalidation must end or revalidate the editing state. Slash commands must
+not bypass replay. A supported submission seam is required before enabling the entry.
 
 State the limitation plainly in the README, because the button will disappoint otherwise:
 
@@ -864,10 +873,8 @@ The trap: **`setDraft` is the one mutator with no phase guard**, while `insertTe
 `addAttachments`, and `removeAttachment` all return `false` during the busy phases. `setDraft` also
 returns nothing, so a refusal is indistinguishable from success.
 
-**You MUST gate `setDraft` yourself** on `useInput`'s phase. The phases are `plain`, `claimed`,
-`submitting`, `adjudicating`; the busy ones are the last three. Concretely: disable the "Edit in the
-composer" button unless the phase is `plain`, and re-check the phase immediately before calling —
-the store can change between render and click.
+Any future `setDraft` integration must gate it on the live input phase (`plain`, `claimed`,
+`submitting`, `adjudicating`). The current composer entry is always disabled and writes no draft.
 
 `submit()` takes **no arguments** and always requests the `queue` mode, so this plugin can never
 steer how its prompt is dispatched. Regenerate therefore does **not** go through the composer; it uses
@@ -1106,7 +1113,7 @@ The four independent preferences are saved by the current Profile:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Inline editor beneath the message | on | Off uses "Edit in the composer" for new entries; an already-open editor keeps its text |
+| Inline editor beneath the message | on | Current host always uses the inline fallback; Off also shows the disabled composer entry and its reason; an already-open editor keeps its text |
 | Show regenerate button | on | Off hides all regenerate controls without clearing the range setting |
 | Only regenerate the last assistant reply | on | Off allows earlier effective assistant replies |
 | Only edit and resend the last user message | on | Off allows earlier effective user messages and their Composer edit entries |
@@ -1262,8 +1269,9 @@ regresses. Criteria are grouped by what they observe.
     every wrapper a distinct object — the shared identity is the boundary class they all render (§7.4).
 20. **The un-boundaried case throws out of the render** — proving the boundary is what prevents the
     blank page.
-21. **`setDraft` is phase-gated** by the plugin: the composer-echo control is disabled during the
-    busy phases, and a click during a phase change does not call it.
+21. **Unsupported composer handoff stays disabled** in every input phase. Clicking or retaining an
+    old callback cannot write an ordinary draft, close the edit, or append a message. Profiles with
+    inline editing disabled still have a working inline Edit action.
 22. **The hide plan** hides exactly the rows whose keys the snapshot assigns to the shadowed seqs,
     covering the `turn-tail`, `tool-call`, and half-seq cases; it is computed once per snapshot; and a
     row that should be hidden is hidden, while the **negative control** — the same row with the
@@ -1315,6 +1323,13 @@ has a target state.
 
 - **Observing what a turn touched.** Derive the file set from the turn's events in the span being
   undone — the tool rows that write — read from the same file-backed log route as §4.2.
+  Native result association uses `message.toolCallId` and `message.source.callId`; historical
+  `message.callId` and explicit root-call event references are compatibility routes. Result surface
+  membership determines scope, including child writes and descending rewind ranges. A missing result
+  keeps work owned by a shadowed user message visible. Missing/conflicting/duplicate association or
+  unavailable snapshots MUST produce a named refusal in preflight, never an empty file set. Missing
+  mutation arguments or paths stop replay rather than assuming no file changes. Only confirmed
+  unchanged contents may bypass preflight. Normalize absolute/relative safe paths before merging.
 - **Storage.** git-first when the workspace is a repository, with a content-addressed snapshot
   fallback under the plugin data home. Never auto-commit, never touch the user's branches.
 - **The rollback act.** The user chooses per rollback between **conversation only**, **artifacts

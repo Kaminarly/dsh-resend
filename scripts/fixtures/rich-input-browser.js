@@ -20,19 +20,49 @@ const dictionary = {
   'row.fileLoading': '正在查询文件与目录…', 'row.fileReady': '选择仅引用路径；目录可选定或进入。',
   'row.fileEmpty': '没有匹配的文件或目录，可修改查询。', 'row.fileUnavailable': '宿主未提供文件查询',
   'row.fileFailed': '文件查询失败，原文已保留。',
+  'row.skillCandidates': '可供用户调用的技能', 'row.skillClose': '关闭技能菜单', 'row.skillSelect': '选择技能',
+  'row.skillLoading': '正在查询技能…', 'row.skillReady': '选择技能后可继续编辑名称；发送时由宿主确认并加载。',
+  'row.skillEmpty': '没有匹配的可用技能，关闭菜单后可按原文重发。',
+  'row.skillUnavailable': '宿主未提供技能查询，无法确认可用性。已保留原文，可继续重发。',
+  'row.skillFailed': '技能查询失败，无法确认可用性。已保留原文，可继续重发。',
+  'row.skillChecking': '正在确认文本中的技能…', 'row.skillMissing': '以下技能当前不可供用户调用。已保留原文，可继续重发：',
+  'row.skillInvalid': '以下文字不符合技能调用格式，将作为普通原文发送：',
 }
 const text = '请先阅读 @a/same.md 和 @b/same.md @"资料/中文 说明.md" @"有 空格/" @"D:/Other Project/说明.md"\n使用 /tdd /code-review /missing；保留 @unknown 和邮箱a@b.com。'
 const paths = ['a/same.md', 'b/same.md', '资料/中文 说明.md', '有 空格', 'D:/Other Project/说明.md']
 window.__ModuleLoader__ = { load({ factory }) {
   const table = { react: React, 'react-dom': ReactDOM, '@deepseek-ai/dsh-client-ui-primitives': primitives }
   const face = factory(name => { if (!(name in table)) throw new Error('模块表缺失 ' + name); return table[name] })
-  const calls = [], received = [], lookups = [], delayed = []
+  const calls = [], received = [], lookups = [], delayed = [], skillLookups = [], skillDelayed = [], loaded = []
   let mode = 'refuse', lookupMode = 'ready', current = { sessionId: 's', seq: 0 }, running = false, valid = true, carrier = 20
   let preset = 'original'
+  let skillMode = 'ready', skillCatalog = [
+    { name: 'tdd', description: '测试驱动', modelInvocable: true },
+    { name: 'code-review', description: '代码审查', modelInvocable: true },
+    { name: 'help', description: '同名技能', modelInvocable: true },
+    { name: 'user-only', description: '仅用户调用', modelInvocable: false },
+  ]
+  async function receive(request) {
+    const response = await fetch('/load-skills', { method: 'POST', body: JSON.stringify({
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: request.text }],
+    }) })
+    if (!response.ok) throw new Error('隔离技能加载失败')
+    loaded.push(await response.json())
+    received.push(request)
+  }
   const plans = new Map()
   const savedPreferences = { ready: true, restrictEditToLastUserMessage: false, inlineEditorBeneathMessage: true }
   const preferences = { getSnapshot: () => savedPreferences, subscribe: () => () => {} }
   const operations = face.createResendOperations({
+    skills: { list: async (request, signal) => {
+      const call = { sessionId: request.sessionId, signal }
+      skillLookups.push(call)
+      if (skillMode === 'failed') throw new Error('技能查询失败')
+      if (skillMode === 'unavailable') return { ok: false, unavailable: true }
+      let skills = skillCatalog
+      if (skillMode === 'delayed') skills = await new Promise(resolve => skillDelayed.push({ call, resolve }))
+      return { ok: true, value: { skills } }
+    } },
     fileReferences: { list: async (sessionId, query, signal) => {
       lookups.push({ sessionId, query, signal })
       if (lookupMode === 'failed') throw new Error('文件查询不可用')
@@ -55,11 +85,11 @@ window.__ModuleLoader__ = { load({ factory }) {
         }
         const request = input.request ?? plans.get(input.sessionId)
         if (mode === 'refuse') return { ok: true, value: { ok: false, error: { code: 'agent-busy' } } }
-        received.push(request)
+        await receive(request)
         return { ok: true, value: { ok: true, value: { carrierSeq: carrier++, shadowedSeqs: [], ...(mode === 'owed' ? {} : { resendMessageId: 'accepted' }) } } }
       },
       apply: async request => {
-        calls.push({ retry: request }); received.push(request)
+        calls.push({ retry: request }); await receive(request)
         return { ok: true, value: { ok: true, value: { carrierSeq: carrier - 1, shadowedSeqs: [], resendMessageId: 'accepted-retry' } } }
       },
     },
@@ -75,7 +105,11 @@ window.__ModuleLoader__ = { load({ factory }) {
     }))
   }
   window.richInputFixture = {
-    text, calls, received, lookups,
+    text, calls, received, lookups, skillLookups, loaded,
+    skillMode(value) { skillMode = value },
+    skills(value) { skillCatalog = value },
+    releaseSkills(index, skills) { const entry = skillDelayed[index]; if (entry) entry.resolve(skills) },
+    skillPresetEvent(sessionId) { operations.invalidateReferenceQueries(sessionId) },
     mode(value) { mode = value },
     lookupMode(value) { lookupMode = value },
     resetConnection() { operations.invalidateConversations() },

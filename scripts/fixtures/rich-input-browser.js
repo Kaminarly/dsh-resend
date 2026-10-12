@@ -1,41 +1,24 @@
-import * as React from 'react'
-import * as ReactDOM from 'react-dom'
-import { createRoot } from 'react-dom/client'
+const React = window.__UI_SEEDS__.react
+const ReactDOM = window.__UI_SEEDS__['react-dom']
+const { createRoot } = window.__UI_SEEDS__['react-dom/client']
 
 const h = React.createElement
-const icon = () => h('svg', { width: 16, height: 16 })
-const primitives = {
-  Button: React.forwardRef(({ variant, size, icon, ...props }, ref) => h('button', { ...props, ref })),
-  Tooltip: ({ children }) => children,
-  FileTypeIcon: icon,
-  ...Object.fromEntries(['Close', 'Edit', 'PaperPlane', 'Refresh', 'Warning', 'Check', 'Shield'].map(name => ['Icon' + name + 'OutlineRegular', icon])),
-}
-const dictionary = {
-  'row.edit': '编辑', 'row.send': '发送', 'row.cancel': '取消', 'row.editInput': '编辑消息',
-  'row.temporaryInput': '临时输入框', 'row.removeReference': '删除引用', 'row.editInComposer': '在正式输入框中编辑',
-  'replay.cancel': '取消重发', 'replay.keep': '保留文件并重发', 'replay.restoreCount': '还原文件并重发',
-  'files.title': '重发前确认文件',
-  'row.fileCandidates': '文件与目录候选', 'row.fileParent': '返回上级', 'row.fileClose': '关闭文件菜单',
-  'row.fileSelect': '引用文件', 'row.fileSelectDirectory': '引用目录', 'row.fileDrill': '进入目录',
-  'row.fileLoading': '正在查询文件与目录…', 'row.fileReady': '选择仅引用路径；目录可选定或进入。',
-  'row.fileEmpty': '没有匹配的文件或目录，可修改查询。', 'row.fileUnavailable': '宿主未提供文件查询',
-  'row.fileFailed': '文件查询失败，原文已保留。',
-  'row.skillCandidates': '可供用户调用的技能', 'row.skillClose': '关闭技能菜单', 'row.skillSelect': '选择技能',
-  'row.skillLoading': '正在查询技能…', 'row.skillReady': '选择技能后可继续编辑名称；发送时由宿主确认并加载。',
-  'row.skillEmpty': '没有匹配的可用技能，关闭菜单后可按原文重发。',
-  'row.skillUnavailable': '宿主未提供技能查询，无法确认可用性。已保留原文，可继续重发。',
-  'row.skillFailed': '技能查询失败，无法确认可用性。已保留原文，可继续重发。',
-  'row.skillChecking': '正在确认文本中的技能…', 'row.skillMissing': '以下技能当前不可供用户调用。已保留原文，可继续重发：',
-  'row.skillInvalid': '以下文字不符合技能调用格式，将作为普通原文发送：',
-}
+const primitives = window.__UI_SEEDS__['@deepseek-ai/dsh-client-ui-primitives']
+let dictionary
 const text = '请先阅读 @a/same.md 和 @b/same.md @"资料/中文 说明.md" @"有 空格/" @"D:/Other Project/说明.md"\n使用 /tdd /code-review /missing；保留 @unknown 和邮箱a@b.com。'
 const paths = ['a/same.md', 'b/same.md', '资料/中文 说明.md', '有 空格', 'D:/Other Project/说明.md']
-window.__ModuleLoader__ = { load({ factory }) {
+const longPath = 'D:/Other Project/' + '很长的目录名称/'.repeat(12) + '中文说明.md'
+window.__ModuleLoader__ = { async load({ factory }) {
   const table = { react: React, 'react-dom': ReactDOM, '@deepseek-ai/dsh-client-ui-primitives': primitives }
   const face = factory(name => { if (!(name in table)) throw new Error('模块表缺失 ' + name); return table[name] })
+  await face.apply({ remote: { $mount: async () => {} }, root: {}, inject: (_deps, callback) => callback({
+    remote: {}, inject() {}, effect: fn => fn(), on() {},
+    locale: { register: (_ns, table) => { dictionary = table.zh }, bind: () => key => dictionary[key] ?? key },
+    uiConversation: { events: { register: () => () => {} } }, slots: { inject() {} },
+  }) })
   const calls = [], received = [], openedFiles = [], openedSkills = [], lookups = [], delayed = [], skillLookups = [], skillDelayed = [], loaded = []
   let mode = 'refuse', lookupMode = 'ready', current = { sessionId: 's', seq: 0 }, running = false, valid = true, carrier = 20
-  let preset = 'original'
+  let preset = 'original', previewMode = 'ready'
   let skillMode = 'ready', skillCatalog = [
     { name: 'tdd', description: '测试驱动', modelInvocable: true },
     { name: 'code-review', description: '代码审查', modelInvocable: true },
@@ -65,9 +48,11 @@ window.__ModuleLoader__ = { load({ factory }) {
     } },
     fileReferences: { list: async (sessionId, query, signal) => {
       lookups.push({ sessionId, query, signal })
+      if (lookupMode === 'unavailable') return { ok: false, unavailable: true }
       if (lookupMode === 'failed') throw new Error('文件查询不可用')
       if (lookupMode === 'delayed') await new Promise(resolve => delayed.push({ query, resolve }))
       if (signal.aborted) return { ok: false }
+      if (query === 'long' || query === longPath) return { ok: true, value: [{ path: longPath, kind: 'file' }] }
       if (query === 'many') return { ok: true, value: Array.from({ length: 20 }, (_, index) => ({ path: `文件 ${index + 1}.md`, kind: 'file' })) }
       const searchPaths = [...paths, '有 空格/子 目录', '有 空格/子 目录/中文.md']
       return { ok: true, value: searchPaths.filter(path => path === query || path + '/' === query ||
@@ -99,14 +84,21 @@ window.__ModuleLoader__ = { load({ factory }) {
     const node = { key: 'u' + current.seq, kind: 'user', anchorSeq: current.seq, data: { seq: current.seq, text } }
     const nodes = new Map([[node.key, node]])
     root.render(h(face.UserActionsRow, { node, ...current, operations, preferences, t: key => dictionary[key] ?? key,
-      openFile: path => openedFiles.push(path), openSkill: name => openedSkills.push(name),
+      openFile: previewMode === 'unavailable' ? undefined : path => {
+        if (previewMode === 'failed') throw new Error('隔离预览失败')
+        openedFiles.push(path)
+      }, openSkill: previewMode === 'unavailable' ? undefined : name => {
+        if (previewMode === 'failed') throw new Error('隔离预览失败')
+        openedSkills.push(name)
+      },
       useChat: select => select({ nodes }), useSession: select => select({ running }),
       useSessions: select => select({ byId: { [current.sessionId]: { cwd: 'D:/Project', projectionValues: { agentPreset: preset } } } }),
       inputActions: { setDraft: () => { throw new Error('禁止改动正式 Composer') } },
     }))
   }
   window.richInputFixture = {
-    text, calls, received, openedFiles, openedSkills, lookups, skillLookups, loaded,
+    text, longPath, calls, received, openedFiles, openedSkills, lookups, skillLookups, loaded,
+    previewMode(value) { previewMode = value; render() },
     skillMode(value) { skillMode = value },
     skills(value) { skillCatalog = value },
     releaseSkills(index, skills) { const entry = skillDelayed[index]; if (entry) entry.resolve(skills) },

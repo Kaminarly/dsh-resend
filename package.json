@@ -30,6 +30,8 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/check-syntax.mjs && node scripts/check-typert.mjs && node scripts/check-host-contract.mjs",
     "probe": "node scripts/probe-profile.mjs",
+    "acceptance:browser": "node scripts/verify-rich-input-browser.mjs",
+    "acceptance:bundle": "node scripts/verify-rich-input-bundle.mjs",
     "test": "vitest run"
   },
   "keywords": [

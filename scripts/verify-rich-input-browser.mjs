@@ -6,14 +6,18 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { createSkillHost } from './fixtures/skill-host.mjs'
+import { createHostBrowserFixture } from './fixtures/host-browser.mjs'
+import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const fixture = await build({ entryPoints: [new URL('./fixtures/rich-input-browser.js', import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1')], absWorkingDir: root,
   bundle: true, format: 'iife', platform: 'browser', write: false })
-const bundle = await readFile(new URL('../lib/client.bundle.js', import.meta.url))
+const bundlePath = path.resolve(process.env.EDITOR_BUNDLE_PATH ?? path.join(root, 'lib/client.bundle.js'))
+const bundle = await readFile(bundlePath)
+const hostUI = createHostBrowserFixture()
 const skillHost = await createSkillHost()
 if (!skillHost) throw new Error('浏览器技能验收需要可读取的已安装宿主加载钩子')
-const html = '<!doctype html><meta charset="utf-8"><title>临时输入框隔离验收</title><style>body{font:14px sans-serif;max-width:900px;margin:32px auto;--dsw-alias-bg-layer-1:#fff;--dsw-alias-label-primary:#222;--dsw-alias-border-l4:#bbb;--dsw-alias-state-business-primary:#2673dd;--dsw-alias-button-info-fill:#2673dd}button{cursor:pointer}#composer{margin-top:32px;padding:16px;border:1px solid #ccc}</style><h1>临时输入框隔离验收</h1><div id="row"></div><section id="composer"><label>普通草稿<textarea id="ordinary">普通正文 /skill @keep</textarea></label><span data-attachment="附件.pdf">附件.pdf</span></section><script src="/fixture.js"></script><script src="/client.js"></script>'
 const server = createServer(async (request, response) => {
   if (request.url === '/load-skills') {
     try {
@@ -25,9 +29,15 @@ const server = createServer(async (request, response) => {
     } catch (error) { response.statusCode = 500; response.end(String(error)) }
     return
   }
-  const payload = request.url === '/fixture.js' ? fixture.outputFiles[0].contents : request.url === '/client.js' ? bundle : html
-  response.setHeader('Content-Type', request.url?.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8')
-  response.end(payload)
+  try {
+    const pathname = new URL(request.url, 'http://localhost').pathname
+    const payload = pathname === '/fixture.js' ? fixture.outputFiles[0].contents : pathname === '/client.js' ? bundle :
+      pathname === '/' ? hostUI.html : hostUI.read(pathname)
+    if (payload === undefined) { response.writeHead(404); response.end(); return }
+    response.setHeader('Content-Type', pathname.endsWith('.js') ? 'text/javascript; charset=utf-8' :
+      pathname.endsWith('.css') ? 'text/css; charset=utf-8' : pathname.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8')
+    response.end(payload)
+  } catch (error) { response.writeHead(500); response.end(String(error)) }
 }).listen(0, '127.0.0.1')
 await once(server, 'listening')
 let browser
@@ -35,12 +45,12 @@ const checks = [], errors = [], network = []
 const channel = process.env.EDITOR_BROWSER_CHANNEL ?? 'msedge'
 try {
   browser = await chromium.launch({ channel, headless: true })
-  const page = await browser.newPage({ viewport: { width: 1100, height: 1000 } })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] })
   page.on('pageerror', error => errors.push(error.message))
-  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  page.on('console', message => {  if (message.type() === 'error') errors.push(message.text()) })
   page.on('request', request => network.push(request.url()))
   const url = `http://127.0.0.1:${server.address().port}`
-  await mkdir(new URL('../output/', import.meta.url), { recursive: true })
+  await mkdir(new URL('../output/playwright/', import.meta.url), { recursive: true })
   const input = page.getByRole('textbox', { name: '编辑消息' })
   const edit = page.getByRole('button', { name: '编辑', exact: true })
   const text = () => input.evaluate(element => {
@@ -56,7 +66,8 @@ try {
   const replaceAll = async value => { await input.focus(); await page.keyboard.press('Control+a'); await paste(value) }
   const open = async () => { await edit.click(); await input.waitFor(); await page.waitForFunction(() => document.querySelectorAll('.dsh-resend-file-reference').length === 5) }
   async function selectText(value) {
-    await input.evaluate((element, value) => {
+    await input.evaluate(async (element, value) => {
+      element.focus()
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
       let node
       while ((node = walker.nextNode())) {
@@ -64,13 +75,16 @@ try {
         const index = node.textContent.indexOf(value)
         if (index < 0) continue
         const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + value.length)
-        const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range); element.focus(); return
+        const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+        document.dispatchEvent(new Event('selectionchange'))
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return
       }
       throw new Error('待选文字不存在 ' + value)
     }, value)
   }
-  async function check(name, run) {
-    await page.goto(url)
+  async function check(name, run, query = '') {
+    await page.goto(url + query)
     await edit.waitFor({ timeout: 5000 }).catch(async cause => {
       console.error(JSON.stringify({ errors, body: await page.locator('body').innerText() }, null, 2)); throw cause
     })
@@ -142,7 +156,7 @@ try {
     assert.equal(await text(), edited)
     assert.equal(await page.evaluate(() => window.richInputFixture.received.length), 0)
     await input.focus(); await page.keyboard.press('Enter')
-    await page.getByRole('button', { name: '保留文件并重发', exact: true }).click()
+    await page.getByRole('button', { name: '保留当前文件并继续', exact: true }).click()
     await page.waitForFunction(() => window.richInputFixture.received.length === 1)
     assert.equal(await page.evaluate(() => window.richInputFixture.received[0].text), edited)
     assert.equal(await input.count(), 0)
@@ -248,7 +262,7 @@ try {
   await check('外部绝对路径选定、撤销恢复查询、复制粘贴保留标签路径', async () => {
     await open(); await replaceAll('外部 @"D:/Other Project/')
     await page.getByRole('option', { name: '引用文件 D:/Other Project/说明.md', exact: true }).waitFor()
-    await page.screenshot({ path: new URL(`../output/rich-input-menu-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
+    await page.screenshot({ path: new URL(`../output/playwright/rich-input-menu-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
     await page.getByRole('option', { name: '引用文件 D:/Other Project/说明.md', exact: true }).click()
     assert.equal(await text(), '外部 @"D:/Other Project/说明.md" ')
     await input.press('Control+z'); assert.equal(await text(), '外部 @"D:/Other Project/')
@@ -353,7 +367,7 @@ try {
   await check('技能菜单按目标会话过滤，Enter/Tab 选择可编辑文字后由真实钩子加载并去重', async () => {
     await open(); await replaceAll('使用 /he')
     await page.getByRole('option', { name: '选择技能 /help', exact: true }).waitFor()
-    await page.screenshot({ path: new URL(`../output/skill-menu-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
+    await page.screenshot({ path: new URL(`../output/playwright/skill-menu-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
     assert.equal(await page.getByRole('option').count(), 1)
     await input.evaluate(element => {
       element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }))
@@ -467,9 +481,9 @@ try {
     await page.getByRole('button', { name: '取消重发', exact: true }).click()
     assert.equal(await text(), '使用 /user-only ')
     await input.press('Enter')
-    await page.getByRole('button', { name: '保留文件并重发', exact: true }).waitFor()
+    await page.getByRole('button', { name: '保留当前文件并继续', exact: true }).waitFor()
     await page.evaluate(() => window.richInputFixture.mode('owed'))
-    await page.getByRole('button', { name: '保留文件并重发', exact: true }).click()
+    await page.getByRole('button', { name: '保留当前文件并继续', exact: true }).click()
     await page.waitForFunction(() => window.richInputFixture.received.length === 1)
     await edit.click(); await replaceAll('后续编辑 /missing')
     await page.evaluate(() => window.richInputFixture.retry())
@@ -487,9 +501,128 @@ try {
     assert.equal(await page.evaluate(() => window.richInputFixture.received[0].text), '阅读 @a/same.md 使用 /tdd ')
     assert.deepEqual(await page.evaluate(() => window.richInputFixture.loaded[0].injected.map(message => message.source.name)), ['tdd'])
   })
+  await check('真实剪贴板键盘复制、剪切、粘贴与撤销保留引用路径', async () => {
+    await open()
+    const original = await source()
+    await input.press('Control+a'); await input.press('Control+c')
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), original)
+    await input.press('Control+x'); assert.equal(await text(), '')
+    await input.press('Control+v'); assert.equal(await text(), original)
+    await input.press('Control+z'); assert.equal(await text(), '')
+    await input.press('Control+z'); assert.equal(await text(), original)
+  })
+  await check('文件查询能力缺失提示准确，原引用按原文保留并允许重发', async () => {
+    await page.evaluate(() => window.richInputFixture.lookupMode('unavailable'))
+    await edit.click(); await input.waitFor()
+    await page.getByRole('status').filter({ hasText: '暂时无法确认文件引用' }).waitFor()
+    assert.equal(await text(), await source())
+    await replaceAll('保留 @same')
+    await page.getByRole('status').filter({ hasText: '宿主未提供文件查询' }).waitFor()
+    await input.press('Escape'); await input.press('Enter'); await page.getByRole('alert').waitFor()
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls[0].request.text), '保留 @same')
+  })
+  await check('实际点击文件、目录和外部路径；预览失败及能力缺失均保留草稿', async () => {
+    await open()
+    const original = await text()
+    for (const path of ['a/same.md', '有 空格', 'D:/Other Project/说明.md']) {
+      await page.evaluate(() => getSelection()?.removeAllRanges())
+      await page.locator('[data-path]').filter({ has: page.locator('span', { hasText: path }) }).first().locator('span').click()
+    }
+    assert.deepEqual(await page.evaluate(() => window.richInputFixture.openedFiles), ['a/same.md', '有 空格', 'D:/Other Project/说明.md'])
+    for (const mode of ['unavailable', 'failed']) {
+      await page.evaluate(mode => window.richInputFixture.previewMode(mode), mode)
+      await page.evaluate(() => getSelection()?.removeAllRanges())
+      await page.locator('[data-path="a/same.md"]').click()
+      await page.locator('[data-preview-notice]').filter({ hasText: mode === 'failed' ? '打开引用失败' : '不支持打开' }).waitFor()
+      assert.equal(await text(), original)
+    }
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    await page.evaluate(() => window.richInputFixture.previewMode('ready'))
+    await replaceAll('选择文字 /tdd 后文'); await selectText('/tdd')
+    const word = await input.evaluate(() => { const rect = getSelection().getRangeAt(0).getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } })
+    await page.mouse.dblclick(word.x, word.y)
+    assert.equal(await text(), '选择文字 /tdd 后文')
+    assert.equal(await input.evaluate(() => !getSelection().isCollapsed), true)
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+    await replaceAll('拖选 @a/same.md 后文')
+    const chip = await page.locator('[data-path="a/same.md"]').boundingBox()
+    const opened = await page.evaluate(() => window.richInputFixture.openedFiles.length)
+    await page.mouse.move(chip.x + 3, chip.y + chip.height / 2)
+    await page.mouse.down(); await page.mouse.move(chip.x + chip.width + 28, chip.y + chip.height / 2, { steps: 8 }); await page.mouse.up()
+    assert.equal(await page.evaluate(() => window.richInputFixture.openedFiles.length), opened)
+    assert.equal(await text(), '拖选 @a/same.md 后文')
+  })
+  await check('两个浏览器页面的相同目标草稿、候选和撤销互不影响', async () => {
+    await open(); await replaceAll('窗口一 @same')
+    const other = await browser.newPage()
+    other.on('pageerror', error => errors.push(error.message))
+    other.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    try {
+      await other.goto(url); await other.getByRole('button', { name: '编辑', exact: true }).click()
+      const otherInput = other.getByRole('textbox', { name: '编辑消息' })
+      await otherInput.press('Control+a'); await other.keyboard.insertText('窗口二 /td')
+      await other.getByRole('option', { name: '选择技能 /tdd', exact: true }).waitFor()
+      await otherInput.press('Tab')
+      assert.equal(await text(), '窗口一 @same')
+      await input.press('Tab'); assert.equal(await text(), '窗口一 @a/same.md ')
+      assert.equal(await otherInput.innerText(), '窗口二 /tdd ')
+      await input.press('Control+z'); assert.equal(await text(), '窗口一 @same')
+      assert.equal(await otherInput.innerText(), '窗口二 /tdd ')
+      await otherInput.press('Control+z'); assert.equal(await otherInput.innerText(), '窗口二 /td')
+      assert.equal(await text(), '窗口一 @same')
+      assert.equal(await other.evaluate(() => window.richInputFixture.calls.length), 0)
+    } finally { await other.close() }
+  })
+  for (const width of [1100, 360]) for (const dark of [false, true]) {
+    await page.setViewportSize({ width, height: 1000 })
+    await check(`${dark ? '深色' : '浅色'} ${width}px：三行高度、内容伸缩、长标签和菜单、焦点及发送按钮`, async () => {
+      await open(); await replaceAll('一行正文')
+      const minimum = await input.evaluate(element => ({ height: element.getBoundingClientRect().height, line: parseFloat(getComputedStyle(element).lineHeight) }))
+      assert.equal(minimum.height, minimum.line * 3)
+      await replaceAll(Array.from({ length: 8 }, (_, i) => '第' + i + '行').join('\n'))
+      assert.ok((await input.boundingBox()).height >= minimum.line * 8)
+      await replaceAll('阅读 @long')
+      const option = page.getByRole('option', { name: /^引用文件 D:\/Other Project\//u })
+      await option.waitFor()
+      const assertLayout = async () => {
+        const layout = await page.evaluate(() => {
+          const controls = [...document.querySelectorAll('.dsh-resend-editor-surface button')]
+          return { viewport: innerWidth, scroll: document.documentElement.scrollWidth,
+            visible: controls.every(button => {
+              const rect = button.getBoundingClientRect()
+              if (!rect.width || !rect.height) return true
+              const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
+              return rect.left >= 0 && rect.right <= innerWidth && button.contains(document.elementFromPoint(x, y))
+            }) }
+        })
+        assert.ok(layout.scroll <= layout.viewport, JSON.stringify(layout))
+        assert.equal(layout.visible, true, JSON.stringify(layout))
+      }
+      await assertLayout()
+      await page.screenshot({ path: path.join(root, 'output/playwright', `rich-input-menu-${dark ? 'dark' : 'light'}-${width}-${channel}.png`), fullPage: true })
+      assert.equal(await input.evaluate(element => document.activeElement === element), true)
+      assert.equal(await page.getByRole('listbox', { name: '文件与目录候选' }).count(), 1)
+      assert.equal(await input.evaluate(element => {
+        const active = document.getElementById(element.getAttribute('aria-activedescendant'))
+        return document.getElementById(element.getAttribute('aria-controls'))?.contains(active) && active?.getAttribute('aria-selected') === 'true'
+      }), true)
+      await input.press('Tab')
+      assert.equal(await input.getAttribute('aria-expanded'), 'false')
+      assert.equal(await input.evaluate(element => document.activeElement === element), true)
+      await page.getByRole('button', { name: '发送', exact: true }).scrollIntoViewIfNeeded()
+      await assertLayout()
+      await page.screenshot({ path: path.join(root, 'output/playwright', `rich-input-${dark ? 'dark' : 'light'}-${width}-${channel}.png`), fullPage: true })
+      await page.keyboard.insertText('/td')
+      await page.getByRole('option', { name: '选择技能 /tdd', exact: true }).waitFor()
+      await assertLayout(); await input.press('Enter')
+      assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+      assert.equal(await page.getByText('临时输入框', { exact: true }).count(), 1)
+      assert.ok((await page.getByRole('button', { name: '发送', exact: true }).boundingBox()).width >= 32)
+    }, dark ? '?dark' : '')
+  }
   assert.equal(network.every(request => request.startsWith(url)), true)
-  await mkdir(new URL('../output/', import.meta.url), { recursive: true })
-  await page.screenshot({ path: new URL(`../output/rich-input-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
-  await writeFile(new URL(`../output/rich-input-${channel}.json`, import.meta.url), JSON.stringify({ channel, version: browser.version(), checks, errors, network, realSessionMutations: 0, realModelRequests: 0 }, null, 2))
+  await mkdir(new URL('../output/playwright/', import.meta.url), { recursive: true })
+  await page.screenshot({ path: new URL(`../output/playwright/rich-input-${channel}.png`, import.meta.url).pathname.replace(/^\/([A-Z]:)/u, '$1'), fullPage: true })
+  await writeFile(new URL(`../output/playwright/rich-input-${channel}.json`, import.meta.url), JSON.stringify({ channel, version: browser.version(), bundlePath, bundleSha256: createHash('sha256').update(bundle).digest('hex'), installedHostUI: true, checks, errors, network, realSessionMutations: 0, realModelRequests: 0 }, null, 2))
   console.log(`${channel}: ${checks.length} groups passed, ${errors.length} browser errors`)
-} finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
+} finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); hostUI.close() }

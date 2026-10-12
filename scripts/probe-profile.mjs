@@ -29,6 +29,8 @@ import path from 'node:path'
 import { launcherFor, LAUNCHER_RELATIVE, resolveHostApp } from './host-app.mjs'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
+// Release acceptance points this at the extracted archive, instead of the checkout.
+const packageDir = path.resolve(process.env.DSH_PROBE_PACKAGE_DIR ?? rootDir)
 const pkg = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8'))
 const keep = process.argv.includes('--keep')
 const home = path.join(rootDir, '.tmp', 'probe-home')
@@ -62,7 +64,7 @@ writeFileSync(
     {
       name: 'dsh-profile-probe',
       private: true,
-      dependencies: { [pkg.name]: `file:${rootDir.replace(/\\/g, '/')}` },
+      dependencies: { [pkg.name]: `file:${packageDir.replace(/\\/g, '/')}` },
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', pkg.name] } },
     },
     null,
@@ -70,7 +72,7 @@ writeFileSync(
   )}\n`,
 )
 writeFileSync(path.join(profile, 'cordis.patch.yml'), '# Probe profile user layer: no overrides.\n[]\n')
-symlinkSync(rootDir, path.join(profile, 'node_modules', pkg.name), 'junction')
+symlinkSync(packageDir, path.join(profile, 'node_modules', pkg.name), 'junction')
 
 const runLauncher = (args) =>
   spawnSync(process.execPath, [launcher, '--profile', 'probe', ...args], {
@@ -145,7 +147,7 @@ if (url === undefined) {
   await finish(1)
 }
 
-record(true, `the host booted and served ${url}`)
+record(true, `the host booted and served ${new URL(url).origin}`)
 record(stderr.trim() === '', 'the startup audit stayed silent (no inactive or pending entry)')
 if (stderr.trim() !== '') console.log(stderr.slice(-2000))
 
@@ -160,6 +162,11 @@ record(new RegExp(`"id":"${pkg.name}"`).test(page), 'the Web boot graph lists th
 
 const rowUrl = new RegExp(`"id":"${pkg.name}"[^}]*?"url":"([^"]+)"`).exec(page)?.[1]
 const bundle = rowUrl === undefined ? '' : await (await fetch(new URL(`/${rowUrl}`, base), { headers: { cookie } })).text()
+const packagedClient = readFileSync(path.join(packageDir, 'lib/client.bundle.js'), 'utf8')
+// The host appends its own source-map URL to the served module. Validate that
+// exact trailer separately, rather than normalizing arbitrary payload changes.
+record(bundle.startsWith(packagedClient) && /^;\n\/\/# sourceMappingURL=\?\?dsh-resend\/client\.js\.map&rev=[a-f0-9]+\n$/u.test(bundle.slice(packagedClient.length)),
+  'the served module payload equals the package; only the host source-map trailer is added')
 record(
   bundle.includes('__ModuleLoader__.load') && bundle.includes(`"${pkg.name}"`),
   `the served client bundle self-registers id "${pkg.name}"`,

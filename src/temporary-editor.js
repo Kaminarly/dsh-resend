@@ -1,6 +1,6 @@
 import { Slice } from 'prosemirror-model'
 import { EditorState, TextSelection, NodeSelection } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
+import { EditorView, Decoration, DecorationSet } from 'prosemirror-view'
 import { history, undo, redo, closeHistory } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { baseKeymap } from 'prosemirror-commands'
@@ -15,6 +15,27 @@ export function createTemporaryEditor(element, options) {
   let availableSkills = new Map()
   let label = options.label, removeLabel = options.removeLabel
   const changed = () => options.onChange({ state: view.state, text: exportText(view.state.doc), candidates })
+  // Decorations keep skills editable and preserve the slash in copied/sent text.
+  function skillDecorations(state) {
+    const decorations = []
+    state.doc.descendants((node, position) => {
+      if (!node.isTextblock) return
+      const text = node.textBetween(0, node.content.size, '', leaf => leaf.type === schema.nodes.hard_break ? '\n' : '\ufffc')
+      for (const match of text.matchAll(/(?:^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/gu)) {
+        if (!availableSkills.has(match[1])) continue
+        const from = position + 1 + match.index + match[0].length - match[1].length - 1
+        decorations.push(Decoration.inline(from + 1, from + match[1].length + 1, {
+          class: 'dsh-resend-skill-reference', 'data-skill': match[1],
+        }), Decoration.inline(from, from + 1, { class: 'dsh-resend-skill-prefix', 'aria-hidden': 'true' }))
+      }
+      return false
+    })
+    return DecorationSet.create(state.doc, decorations)
+  }
+  function updateSkillCatalog(catalog) {
+    availableSkills = new Map(catalog.map(skill => [skill.name, skill]))
+    view.setProps({ decorations: skillDecorations })
+  }
   function previewSkillAt(position, event) {
     if (frozen || destroyed || event.detail > 1 || event.button !== 0) return false
     const selection = element.ownerDocument.getSelection()
@@ -57,6 +78,7 @@ export function createTemporaryEditor(element, options) {
   view = new EditorView(element, {
     state,
     editable: () => !frozen,
+    decorations: skillDecorations,
     attributes: { role: 'textbox', 'aria-label': options.label, 'aria-multiline': 'true', 'aria-disabled': String(frozen) },
     handleDOMEvents: {
       copy: syncClipboardSelection, cut: syncClipboardSelection,
@@ -78,7 +100,7 @@ export function createTemporaryEditor(element, options) {
       view.updateState(view.state.apply(transaction))
       changed()
       if (transaction.getMeta('restoreReferences')) void menu?.refreshAfterRestoration(previous)
-      else void menu?.refresh()
+      else void menu?.refresh(transaction)
       if (transaction.docChanged) void checkSkills()
     },
     handleKeyDown(_view, event) {
@@ -109,6 +131,18 @@ export function createTemporaryEditor(element, options) {
         dom.title = node.attrs.path
         dom.dataset.path = node.attrs.path
         dom.dataset.mention = node.attrs.mention
+        const icon = element.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg')
+        icon.setAttribute('viewBox', '0 0 24 24')
+        icon.setAttribute('fill', 'none')
+        icon.setAttribute('stroke', 'currentColor')
+        icon.setAttribute('stroke-width', '1.5')
+        icon.setAttribute('stroke-linecap', 'round')
+        icon.setAttribute('stroke-linejoin', 'round')
+        icon.setAttribute('aria-hidden', 'true')
+        icon.classList.add('dsh-resend-reference-icon')
+        const outline = element.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path')
+        outline.setAttribute('d', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z M14 2v6h6 M8 13h8 M8 17h6')
+        icon.append(outline)
         const label = element.ownerDocument.createElement('span')
         label.textContent = node.attrs.path
         const remove = element.ownerDocument.createElement('button')
@@ -124,7 +158,7 @@ export function createTemporaryEditor(element, options) {
           view.dispatch(closeHistory(view.state.tr.delete(position, position + node.nodeSize)).scrollIntoView())
           view.focus()
         })
-        dom.append(label, remove)
+        dom.append(icon, label, remove)
         let pointerStart
         dom.addEventListener('mousedown', event => {
           pointerStart = event.button === 0 ? { x: event.clientX, y: event.clientY } : undefined
@@ -166,6 +200,7 @@ export function createTemporaryEditor(element, options) {
 
   menu = createReferenceMenu(element, { getView: () => view, lookup: options.lookup, lookupSkills: options.lookupSkills,
     disabled: () => frozen, translate: options.translate,
+    onRender: options.onMenuChange,
     syncSelection: () => syncClipboardSelection(view, true),
     onCandidate: candidate => { candidates = [...candidates, candidate] },
   })
@@ -173,24 +208,24 @@ export function createTemporaryEditor(element, options) {
   async function checkSkills() {
     skillRequest?.abort()
     if (destroyed || frozen) return
-    availableSkills = new Map()
+    // Keep the last confirmed catalog while refreshing to avoid flickering tags.
     const tokens = skillTokens(exportText(view.state.doc))
     const invalid = tokens.filter(name => !skillName.test(name))
     const names = tokens.filter(name => skillName.test(name))
-    if (!names.length) { options.onSkillNotice?.(invalid.length ? { status: 'Invalid', names: invalid } : undefined); return }
+    if (!names.length) { updateSkillCatalog([]); options.onSkillNotice?.(invalid.length ? { status: 'Invalid', names: invalid } : undefined); return }
     const controller = new element.ownerDocument.defaultView.AbortController()
     skillRequest = controller
-    options.onSkillNotice?.({ status: 'Checking', names: [] })
+    options.onSkillNotice?.(undefined)
     let result
     try { result = await options.lookupSkills(controller.signal) } catch { result = undefined }
     if (destroyed || frozen || controller.signal.aborted || skillRequest !== controller) return
     const catalog = skillCatalog(result)
     if (!catalog) {
-      availableSkills = new Map()
+      updateSkillCatalog([])
       options.onSkillNotice?.({ status: result?.unavailable ? 'Unavailable' : 'Failed', names: [] })
       return
     }
-    availableSkills = new Map(catalog.map(skill => [skill.name, skill]))
+    updateSkillCatalog(catalog)
     const missing = names.filter(name => !catalog.some(skill => skill.name === name))
     const notices = []
     if (missing.length) notices.push({ status: 'Missing', names: missing })
@@ -256,7 +291,7 @@ export function createTemporaryEditor(element, options) {
   void checkSkills()
   return {
     getText: () => exportText(view.state.doc),
-    invalidateQueries() { request?.abort(); skillRequest?.abort(); availableSkills = new Map(); menu.invalidate(); void checkSkills() },
+    invalidateQueries() { request?.abort(); skillRequest?.abort(); updateSkillCatalog([]); menu.invalidate(); void checkSkills() },
     setLabels(nextLabel, nextRemoveLabel, translate) {
       label = nextLabel
       removeLabel = nextRemoveLabel

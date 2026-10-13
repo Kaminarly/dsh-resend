@@ -227,6 +227,11 @@ const DICTIONARIES = {
     'row.editInComposerHint': '宿主暂不支持在正式输入框中编辑重发，请使用临时输入框',
     'row.composerResendUnavailable': '宿主暂不支持在正式输入框中编辑重发，请使用临时输入框',
     'row.temporaryInput': '临时输入框',
+    'row.fileGroup': '文件',
+    'row.fileRoot': '工作区',
+    'row.fileNavigation': '目录导航',
+    'row.skillGroup': '技能',
+    'row.skillUserOnly': '仅用户',
     'row.removeReference': '删除引用',
     'row.referenceLookupUnavailable': '暂时无法确认文件引用，已保留原文，可继续编辑重发。',
     'row.referencePreviewUnavailable': '当前宿主不支持打开此引用，正文和草稿已保留。',
@@ -302,7 +307,7 @@ const DICTIONARIES = {
     'operation.error.result-invalid': 'DSH 返回的结果无法识别，请更新插件或检查版本兼容性。',
     'operation.error.unexpected': '插件处理请求时发生错误，请重新打开会话并检查诊断日志。',
     'settings.inlineEditorBeneathMessage': '消息下方的内联编辑器',
-    'settings.inlineEditorFallbackDescription': '当前宿主暂不支持正式输入框编辑重发。此设置关闭时仍使用临时输入框，并显示正式输入框入口不可用的原因。',
+    'settings.inlineEditorFallbackDescription': '当前宿主暂不支持正式输入框编辑重发。此设置关闭时仍使用临时输入框。',
     'settings.regenerateLastReply': '显示重新生成按钮',
     'settings.restrictRegenerateToLastReply': '只允许重新生成最后一条助手回复',
     'settings.restrictEditToLastUserMessage': '只允许编辑重发最后一条用户消息',
@@ -403,6 +408,11 @@ const DICTIONARIES = {
     'row.editInComposerHint': 'The host cannot edit and resend from the composer yet; use the temporary input',
     'row.composerResendUnavailable': 'The host cannot edit and resend from the composer yet; use the temporary input',
     'row.temporaryInput': 'Temporary input',
+    'row.fileGroup': 'Files',
+    'row.fileRoot': 'Workspace',
+    'row.fileNavigation': 'Folder navigation',
+    'row.skillGroup': 'Skills',
+    'row.skillUserOnly': 'user-only',
     'row.removeReference': 'Remove reference',
     'row.referenceLookupUnavailable': 'File references could not be verified. Original text is retained and can still be edited and resent.',
     'row.referencePreviewUnavailable': 'This host cannot open the reference. The text and draft are retained.',
@@ -478,7 +488,7 @@ const DICTIONARIES = {
     'operation.error.result-invalid': 'The DSH result is not recognized. Update the plugin or check compatibility.',
     'operation.error.unexpected': 'The plugin failed while processing the request. Reopen the conversation and check diagnostics.',
     'settings.inlineEditorBeneathMessage': 'Inline editor beneath the message',
-    'settings.inlineEditorFallbackDescription': 'The host does not support editing and resending from the composer yet. When this setting is off, editing still uses the temporary input and the composer entry explains why it is unavailable.',
+    'settings.inlineEditorFallbackDescription': 'The host does not support editing and resending from the composer yet. When this setting is off, editing still uses the temporary input.',
     'settings.regenerateLastReply': 'Show regenerate buttons',
     'settings.restrictRegenerateToLastReply': 'Only allow regenerating the last assistant reply',
     'settings.restrictEditToLastUserMessage': 'Only allow editing and resending the last user message',
@@ -562,8 +572,21 @@ function mountSurfaces(scope, ctx) {
   // registered option carries a THUNK, never a projected string (spec §10).
   const translate = scope.locale.bind(NS)
 
-  const operations = createResendOperations(scope.remote)
+  // Each optional namespace must be read from a context declaring that service.
+  // A missing query service must not hold up the editor or Desktop's boot audit.
+  const references = {}
+  const operations = createResendOperations(scope.remote, references)
   scope.effect(() => () => operations.dispose(), 'dsh-resend: rewind-point records')
+  for (const name of ['fileReferences', 'skills']) {
+    scope.inject(['remote.' + name], queryScope => queryScope.effect(() => {
+      references[name] = queryScope.remote[name]
+      operations.invalidateReferenceQueries()
+      return () => {
+        delete references[name]
+        operations.invalidateReferenceQueries()
+      }
+    }, 'dsh-resend: ' + name + ' queries'))
+  }
   scope.on('connection/reset', () => operations.invalidateConversations())
   scope.remote.$on?.('agent-preset/selected', sessionId => operations.invalidateReferenceQueries(sessionId))
 

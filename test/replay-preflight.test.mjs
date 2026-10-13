@@ -1,12 +1,14 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { digest } from '../src/file-snapshots.js'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { Session } from '@deepseek-ai/dsh-session'
 import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
 import { agentDoubles, appendReply, appendUser, auditCount, hostState, logOf, SESSION_ID, sessionFixture } from './helpers/host.mjs'
 
-const faults = vi.hoisted(() => ({ beforeCommit: undefined, afterCommit: undefined, failResultSave: false }))
+const faults = vi.hoisted(() => ({ beforeCommit: undefined, afterCommit: undefined, failResultSave: false, failObservationSave: false }))
 vi.mock('node:fs/promises', async original => {
   const fs = await original()
   return { ...fs, open: async (...args) => {
@@ -17,6 +19,7 @@ vi.mock('node:fs/promises', async original => {
     }
     return handle
   }, rename: async (from, to) => {
+    if (faults.failObservationSave && String(to).includes(`${path.sep}observations${path.sep}`)) throw new Error('observation-save-failed')
     if (faults.failResultSave && String(to).includes(`${path.sep}outcomes${path.sep}`) && JSON.parse(await fs.readFile(from, 'utf8')).ok) throw new Error('result-save-failed')
     await fs.rename(from, to)
     if (String(from).includes('.dsh-resend-')) await faults.afterCommit?.(to, fs)
@@ -24,15 +27,16 @@ vi.mock('node:fs/promises', async original => {
 })
 const cleanups = []
 afterEach(async () => {
-  faults.beforeCommit = undefined; faults.afterCommit = undefined; faults.failResultSave = false
+  faults.beforeCommit = undefined; faults.afterCommit = undefined; faults.failResultSave = false; faults.failObservationSave = false
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-async function workspace({ agent = 'accepting', files = true, resultFormat = 'native', config } = {}) {
+async function workspace({ agent = 'accepting', files = true, resultFormat = 'native', config, git = false } = {}) {
   const home = await mkdtemp(path.join(tmpdir(), 'resend-preflight-'))
   cleanups.push(() => rm(home, { recursive: true, force: true }))
   const cwd = path.join(home, 'workspace')
   await mkdir(cwd)
+  if (git) execFileSync('git', ['init', '-q', cwd])
   const session = Session.create(SESSION_ID, sessionFixture().snapshotEvents(), { version: 4, id: SESSION_ID, createdAt: 0, isSeeded: false, cwd })
   const state = hostState({ session, agent })
   const host = await hostComposition({ host: state, dataHome: path.join(home, 'data'), config })
@@ -45,7 +49,7 @@ async function workspace({ agent = 'accepting', files = true, resultFormat = 'na
     await host.ctx.waterfall('tools/execute', { name: 'write', callId, arguments: args, agent: { session } }, async () => {
       const before = await readFile(path.join(cwd, name), 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error })
       await writeFile(path.join(cwd, name), content)
-      return { isError: false, value: { before, after: content } }
+      return { isError: false, value: { before: before?.replace(/^\ufeff/, '').replaceAll('\r\n', '\n') ?? null, after: content } }
     })
     session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: `result-${count}`,
       ...(resultFormat === 'native' ? { toolCallId: callId, source: { kind: 'tool', callId } }
@@ -65,6 +69,122 @@ async function workspace({ agent = 'accepting', files = true, resultFormat = 'na
   const choose = (result, phase) => call({ phase, sessionId: SESSION_ID, preflightId: result.value.preflightId })
   return { home, cwd, session, state, host, write, call, start, choose }
 }
+
+async function restart(w) {
+  await w.host.ctx.fiber.dispose()
+  const session = Session.create(SESSION_ID, w.session.snapshotEvents(), w.session.header)
+  const state = hostState({ session, agent: 'accepting' })
+  const host = await hostComposition({ host: state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => host.ctx.fiber.dispose())
+  return { host, state }
+}
+
+it.each([['edit', false], ['regenerate', false], ['edit', true], ['regenerate', true]])(
+  'retains restorable created and edited files after restart before %s preflight (Git=%s)', async (op, git) => {
+  const w = await workspace({ files: false, git })
+  await writeFile(path.join(w.cwd, 'existing.txt'), '原始中文\r\n')
+  await w.write('existing.txt', '修改后的内容')
+  await w.write('EXAMPLE.md', '# 新建文件\n')
+  const request = { phase: 'start', request: { sessionId: SESSION_ID,
+    targetSeq: op === 'edit' ? 2 : 3, op, ...(op === 'edit' ? { text: '重新发送' } : {}) } }
+  const before = await w.call(request)
+  const expected = [{ path: 'existing.txt', action: 'restore' }, { path: 'EXAMPLE.md', action: 'restore' }]
+  expect(before.value.files).toEqual(expected)
+  await w.choose(before, 'cancel')
+  const { host: restarted, state } = await restart(w)
+  const after = await w.call(request, restarted)
+  expect(after.value.files).toEqual(expected)
+  const restored = await w.call({ phase: 'restore', sessionId: SESSION_ID, preflightId: after.value.preflightId }, restarted)
+  expect(restored.ok, JSON.stringify(restored)).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'existing.txt'), 'utf8')).toBe('原始中文\r\n')
+  await expect(readFile(path.join(w.cwd, 'EXAMPLE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(state.calls.followups).toBe(1)
+})
+
+it('restores a newly created file after restart without ever opening a preflight before restart', async () => {
+  const w = await workspace({ files: false })
+  await w.write('EXAMPLE.md', '项目名称\n')
+  const { host } = await restart(w)
+  const preview = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
+  expect(preview.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore' }])
+  expect((await w.call({ phase: 'restore', sessionId: SESSION_ID, preflightId: preview.value.preflightId }, host)).ok).toBe(true)
+  await expect(readFile(path.join(w.cwd, 'EXAMPLE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('combines consecutive persisted writes after restart and restores the original bytes', async () => {
+  const w = await workspace()
+  const { host } = await restart(w)
+  const preview = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'restore' }])
+  expect((await w.call({ phase: 'restore', sessionId: SESSION_ID, preflightId: preview.value.preflightId }, host)).ok).toBe(true)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('中文 A')
+})
+
+it('keeps external edits after restart and does not send before a choice', async () => {
+  const w = await workspace()
+  await writeFile(path.join(w.cwd, 'file.txt'), '用户后来修改的内容')
+  const { host, state } = await restart(w)
+  const preview = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'content-diverged' }])
+  expect(state.calls.followups).toBe(0)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('用户后来修改的内容')
+})
+
+it.each(['identity', 'signature', 'contents'])('refuses damaged persisted observation %s after restart', async damage => {
+  const w = await workspace({ files: false })
+  await writeFile(path.join(w.cwd, 'file.txt'), '原始内容')
+  await w.write('file.txt', '助手修改')
+  const home = path.join(w.home, 'data', 'plugins', 'dsh-resend')
+  const file = path.join(home, 'observations', `${digest(JSON.stringify([SESSION_ID, 'write-1']))}.json`)
+  const saved = JSON.parse(await readFile(file, 'utf8'))
+  expect(JSON.stringify(saved)).not.toContain('原始内容')
+  expect(JSON.stringify(saved)).not.toContain('助手修改')
+  if (damage === 'identity' || damage === 'signature') {
+    if (damage === 'identity') saved.callId = 'another-call'
+    else saved.signature = digest('different arguments or workspace')
+    await writeFile(file, JSON.stringify(saved))
+  }
+  else await writeFile(path.join(home, 'objects', saved.files[0].before.slice(4)), '损坏内容')
+  const { host, state } = await restart(w)
+  const preview = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
+  expect(preview.value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'snapshot-unavailable' }])
+  expect(state.calls.followups).toBe(0)
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('助手修改')
+})
+
+it('protects durable observations from residue cleanup and removes them with confirmed session cleanup', async () => {
+  const w = await workspace()
+  const cleanup = async request => {
+    const wire = await dispatchToHost(w.host, 'resend/cleanup', { request })
+    expect(wire.ok).toBe(true)
+    expect(wire.value.ok, JSON.stringify(wire)).toBe(true)
+    return wire.value.value
+  }
+  const listed = await cleanup({ phase: 'list', mode: 'sessions' })
+  expect(listed.sessions).toEqual([expect.objectContaining({ sessionId: SESSION_ID, records: 2, noSnapshots: false })])
+  const residue = await cleanup({ phase: 'preview', mode: 'residue' })
+  expect(residue.itemCount).toBe(0)
+  const selected = await cleanup({ phase: 'preview', mode: 'sessions', sessionIds: [SESSION_ID] })
+  expect((await cleanup({ phase: 'execute', mode: 'sessions', planId: selected.planId })).results[0].status).toBe('cleaned')
+  expect(await readdir(path.join(w.home, 'data', 'plugins', 'dsh-resend', 'observations'))).toEqual([])
+  expect(await readdir(path.join(w.home, 'data', 'plugins', 'dsh-resend', 'objects'))).toEqual([])
+  expect((await w.start()).value.files).toEqual([{ path: 'file.txt', action: 'refuse', reason: 'prior-state-unavailable' }])
+  expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('中文 C')
+})
+
+it('preserves a successful tool result when observation persistence fails without inventing restore data after restart', async () => {
+  const w = await workspace({ files: false })
+  faults.failObservationSave = true
+  await w.write('EXAMPLE.md', '实际成功写入的内容')
+  faults.failObservationSave = false
+  const before = await w.start()
+  expect(before.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore' }])
+  await w.choose(before, 'cancel')
+  const { host } = await restart(w)
+  const after = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
+  expect(after.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'refuse', reason: 'prior-state-unavailable' }])
+  expect(await readFile(path.join(w.cwd, 'EXAMPLE.md'), 'utf8')).toBe('实际成功写入的内容')
+})
 
 it('keeps an unassociated mutation in preflight instead of treating it as no changes', async () => {
   const w = await workspace({ resultFormat: 'missing' })

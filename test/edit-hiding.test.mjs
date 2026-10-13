@@ -79,19 +79,18 @@ describe('edit and resend at the registered action row', () => {
     } finally { await dom.cleanup() }
   })
 
-  it.each(['claimed', 'submitting', 'adjudicating'])('composer handoff is disabled in %s and rechecks a phase flip after rendering', async (phase) => {
+  it.each(['claimed', 'submitting', 'adjudicating'])('temporary editing stays independent of the ordinary composer in %s', async (phase) => {
     const dom = await editor()
     try {
       await dom.click(dom.button('Edit'))
       const composer = dom.button('Edit in the composer')
-      expect(composer.disabled).toBe(true)
+      expect(composer).toBeUndefined()
       dom.record.input = { phase }
       // Do not render: exercise the gap between the old button and live store.
-      await dom.click(composer)
       expect(dom.record.draftWrites).toEqual([])
       expect(dom.container.querySelector('[role="textbox"]')).not.toBeNull()
       await dom.render(createElement(dom.registration.component, dom.props))
-      expect(dom.button('Edit in the composer').disabled).toBe(true)
+      expect(dom.button('Edit in the composer')).toBeUndefined()
       expect(dom.calls).toHaveLength(0)
     } finally { await dom.cleanup() }
   })
@@ -101,8 +100,7 @@ describe('edit and resend at the registered action row', () => {
     try {
       await dom.click(dom.button('Edit'))
       await dom.change(dom.container.querySelector('[role="textbox"]'), '@file /skill \uFFFC\uE100正文')
-      await dom.click(dom.button('Edit in the composer'))
-      expect(dom.button('Edit in the composer').disabled).toBe(true)
+      expect(dom.button('Edit in the composer')).toBeUndefined()
       expect(dom.record.draftWrites).toEqual([])
       expect(dom.calls).toHaveLength(0)
       expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('@file /skill \uFFFC\uE100正文')

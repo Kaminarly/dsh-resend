@@ -76,17 +76,20 @@ export function createStorageCleanup(ctx, storage) {
     }
     if (corpus.length > 0 && readable === 0) throw new Error('scan-failed')
     const entries = []
-    for (const directory of ['records', 'outcomes']) for (const name of list(directory)) {
+    for (const directory of ['records', 'outcomes', 'observations']) for (const name of list(directory)) {
       if (/^[a-f0-9]{64}\.json$/.test(name)) {
-        const entry = item(`${directory}/${name}`, directory)
-        entry.sessionId = owners.get(name.slice(0, 64))
-        if (directory === 'records') {
+        const entry = item(`${directory}/${name}`, directory === 'observations' ? 'records' : directory)
+        if (directory !== 'observations') entry.sessionId = owners.get(name.slice(0, 64))
+        if (entry.kind === 'records') {
           try {
             const { record, found } = refs(entry)
             // New records carry their identity, including empty manifests and
             // the short interval before their carrier is appended to the log.
             if (!Array.isArray(record) && sessions.has(record.sessionId) && typeof record.carrierId === 'string' &&
                 digest(JSON.stringify([record.sessionId, record.carrierId])) === name.slice(0, 64)) entry.sessionId = record.sessionId
+            if (directory === 'observations' && record.kind === 'file-observation' && record.version === 1 &&
+                sessions.has(record.sessionId) && typeof record.callId === 'string' &&
+                digest(JSON.stringify([record.sessionId, record.callId])) === name.slice(0, 64)) entry.sessionId = record.sessionId
             entry.refs = found
           } catch { entry.refs = null }
         }
@@ -95,7 +98,7 @@ export function createStorageCleanup(ctx, storage) {
     }
     // An outcome has the same identity as its manifest, including new-format
     // records whose log cannot currently be read.
-    const recordOwners = new Map(entries.filter(e => e.kind === 'records').map(e => [path.basename(e.relative), e.sessionId]))
+    const recordOwners = new Map(entries.filter(e => e.relative.startsWith('records/')).map(e => [path.basename(e.relative), e.sessionId]))
     for (const entry of entries) if (entry.kind === 'outcomes') entry.sessionId ??= recordOwners.get(path.basename(entry.relative))
     for (const name of list('objects')) if (/^[a-f0-9]{64}$/.test(name)) entries.push(item(`objects/${name}`, 'objects', `cas:${name}`))
     for (const prefix of list('objects.git/objects')) {

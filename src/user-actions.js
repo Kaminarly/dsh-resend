@@ -10,6 +10,7 @@ import { operationErrorText } from './operation-error.js'
 import { useConversationEligibility } from './conversation-eligibility.js'
 import { ReplayPreflight } from './file-rollback-preview.js'
 import { createTemporaryEditor } from './temporary-editor.js'
+import { ReferenceMenuView } from './reference-menu-ui.js'
 
 export const USER_ACTIONS_KIND = 'dsh-resend-user-actions'
 const identity = (value) => value
@@ -66,7 +67,7 @@ export function userMessageSurface(original, operations, preferences, hostTransl
  */
 const control = (key, label, icon, onClick, reason, disabled) => createElement(IconAction, {
   key, label, icon, onClick, reason, disabled,
-  ...(key === 'send' ? { primary: true, 'data-primary': true } : {}),
+  ...(key === 'send' ? { primary: true, showLabel: true, 'data-primary': true } : {}),
 })
 
 /**
@@ -75,13 +76,14 @@ const control = (key, label, icon, onClick, reason, disabled) => createElement(I
  * editing — the one place this surface reads live data — fails as the editor's
  * own panel, preserving the host message and its copy action.
  */
-function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryContext, subscribeQueryInvalidation, openFile, openSkill, disabled, stopReason, composerReason, onText, onSend, onComposer, onCancel, onKeyDown }) {
+function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryContext, subscribeQueryInvalidation, openFile, openSkill, disabled, stopReason, onText, onSend, onCancel, onKeyDown, onClose }) {
   const root = useRef(null)
   const callbacks = useRef()
-  callbacks.current = { onText, onKeyDown, openFile, openSkill }
+  callbacks.current = { onText, onKeyDown, openFile, openSkill, onClose }
   const [notice, setNotice] = useState(false)
   const [previewNotice, setPreviewNotice] = useState()
   const [skillNotice, setSkillNotice] = useState()
+  const [menu, setMenu] = useState()
   const lastQueryContext = useRef(queryContext)
   useLayoutEffect(() => {
     const editor = createTemporaryEditor(root.current, { text: value, draft, disabled, lookup, lookupSkills,
@@ -92,10 +94,11 @@ function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryC
       onChange: next => callbacks.current.onText(next), onNotice: setNotice,
       onPreviewNotice: setPreviewNotice,
       onSkillNotice: setSkillNotice,
+      onMenuChange: setMenu,
       onKeyDown: event => callbacks.current.onKeyDown(event) })
     editorRef.current = editor
     const unsubscribe = subscribeQueryInvalidation?.(() => editor.invalidateQueries())
-    return () => { unsubscribe?.(); if (editorRef.current === editor) editorRef.current = null; editor.destroy() }
+    return () => { unsubscribe?.(); if (editorRef.current === editor) editorRef.current = null; editor.destroy(); callbacks.current.onClose?.() }
   }, [])
   useLayoutEffect(() => {
     if (lastQueryContext.current !== queryContext) editorRef.current?.invalidateQueries()
@@ -104,28 +107,32 @@ function InlineEditor({ t, value, draft, editorRef, lookup, lookupSkills, queryC
   useLayoutEffect(() => editorRef.current?.setDisabled(disabled), [disabled])
   const label = t('row.editInput'), removeLabel = t('row.removeReference')
   useLayoutEffect(() => editorRef.current?.setLabels(label, removeLabel, t), [label, removeLabel, t])
-  return createElement('div', { className: 'dsh-resend-editor-surface' }, [
+  const skillNotices = (skillNotice ? Array.isArray(skillNotice) ? skillNotice : [skillNotice] : [])
+    .map(entry => ['Missing', 'Invalid'].includes(entry.status) && menu?.kind === 'skill' && menu.status === 'Ready' && menu.results.length > 0
+      ? { ...entry, names: entry.names.filter(name => name !== menu.query) } : entry)
+    .filter(entry => !['Missing', 'Invalid'].includes(entry.status) || entry.names.length > 0)
+  const notices = [
+    notice && createElement('span', { key: 'notice', role: 'status', 'data-reference-notice': true }, t('row.referenceLookupUnavailable')),
+    previewNotice && createElement('span', { key: 'preview-notice', role: 'status', 'data-preview-notice': true },
+      t('row.referencePreview' + previewNotice.status)),
+    skillNotices.length > 0 && createElement('span', { key: 'skills', role: 'status', 'data-skill-notice': true },
+      skillNotices.map((entry, index) =>
+        createElement('span', { key: index }, t('row.skill' + entry.status) +
+          (entry.names.length ? ' ' + entry.names.map(name => '/' + name).join('、') : '')))),
+  ].filter(Boolean)
+  return createElement(Fragment, null, [createElement('div', { key: 'surface', className: 'dsh-resend-editor-surface' }, [
     createElement('div', { key: 'header', className: 'dsh-resend-editor-header' }, [
       createElement('span', { key: 'label', className: 'dsh-resend-editor-label' }, t('row.temporaryInput')),
       control('cancel', t('row.cancel'), IconCloseOutlineRegular, onCancel, undefined, disabled),
     ]),
     createElement('div', { key: 'editor', className: 'dsh-resend-editor' }, [
       createElement('div', { key: 'input', ref: root, className: 'dsh-resend-rich-input' }),
-      notice && createElement('span', { key: 'notice', role: 'status' }, t('row.referenceLookupUnavailable')),
-      previewNotice && createElement('span', { key: 'preview-notice', role: 'status', 'data-preview-notice': true },
-        t('row.referencePreview' + previewNotice.status)),
-      skillNotice && createElement('span', { key: 'skills', role: 'status', 'data-skill-notice': true },
-        (Array.isArray(skillNotice) ? skillNotice : [skillNotice]).map((entry, index) =>
-          createElement('span', { key: index }, t('row.skill' + entry.status) +
-            (entry.names.length ? ' ' + entry.names.map(name => '/' + name).join('、') : '')))),
+      menu && createElement(ReferenceMenuView, { key: 'menu', menu, t }),
       createElement('div', { key: 'actions', className: 'dsh-resend-editor-actions' }, [
-        createElement('span', { key: 'composer', className: 'dsh-resend-editor-composer' },
-          createElement(IconAction, { label: t('row.editInComposer'), icon: IconEditOutlineRegular,
-            tooltip: t('row.editInComposerHint'), onClick: onComposer, reason: composerReason, disabled, showLabel: true })),
         control('send', t('row.send'), IconPaperPlaneOutlineRegular, onSend, stopReason ?? (value.trim() === '' ? t('row.blankText') : undefined), disabled),
       ]),
     ]),
-  ])
+  ]), notices.length > 0 && createElement('div', { key: 'notices', className: 'dsh-resend-editor-notices' }, notices)])
 }
 
 export const InlineEditorSurface = withPanelBoundary(InlineEditor, 'panel.error.inlineEditor')
@@ -165,16 +172,17 @@ export function UserActionsRow(props) {
   const currentReason = () => reasonFor(preferences.getSnapshot(),
     operations.conversationFor(sessionId, live.current.revision), live.current)
   const stopReason = reasonFor(prefs, conversation, live.current)
-  const composerReason = stopReason ?? t('row.composerResendUnavailable')
 
   const open = () => {
     if (live.current.targetKey !== targetKey || currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
-    setText(operations.draftFor(target, data.text)?.text ?? live.current.data.text)
+    operations.clearDraft(target)
+    setText(live.current.data.text)
     setError(undefined)
     setEditing(targetKey)
   }
   const cancel = () => {
     if (inFlight.current) return
+    operations.clearDraft(target)
     setEditing(false)
     setError(undefined)
   }
@@ -202,11 +210,6 @@ export function UserActionsRow(props) {
       editorRef.current?.setDisabled(false)
       setPending(false)
     }
-  }
-  const editInComposer = () => {
-    // The host has no public submission interceptor after reference serialization.
-    // Even a retained callback must never seed an ordinary append draft as an edit.
-    return
   }
   const onKeyDown = (event) => {
     if (event.key === 'Escape') {
@@ -240,7 +243,6 @@ export function UserActionsRow(props) {
 
   // Keep editing usable for Profiles that previously selected composer-only mode.
   const idle = [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
-  if (prefs.inlineEditorBeneathMessage === false) idle.push(control('composer', t('row.editInComposer'), IconEditOutlineRegular, editInComposer, composerReason, pending || !!preflight))
   const editor = editing === targetKey && createElement(InlineEditorSurface, {
       key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
       lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),
@@ -254,13 +256,13 @@ export function UserActionsRow(props) {
       queryContext, subscribeQueryInvalidation: listener => operations.subscribeReferenceInvalidation(changedSessionId => {
         if (changedSessionId === undefined || changedSessionId === sessionId) listener()
       }),
-      disabled: pending || !!preflight, stopReason, composerReason,
+      disabled: pending || !!preflight, stopReason,
       onText: (draft) => {
         if (live.current.targetKey !== targetKey) return
         operations.saveDraft(target, { ...draft, sourceText: data.text })
         setText(draft.text)
       },
-      onSend: () => { void send() }, onComposer: editInComposer, onCancel: cancel, onKeyDown,
+      onSend: () => { void send() }, onCancel: cancel, onKeyDown, onClose: () => operations.clearDraft(target),
     })
   const actions = createElement('span', { className: 'dsh-resend-user-actions' }, idle)
   return createElement('div', { className: props.renderMessage ? 'dsh-resend-user-message' : undefined }, [

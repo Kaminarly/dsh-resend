@@ -1,5 +1,6 @@
 // Seed an isolated page with the installed Desktop's actual React, controls and theme.
 import { resolveHostApp } from '../host-app.mjs'
+import { nativeTriggerMenuFixture } from './native-trigger-menu.mjs'
 
 export function createHostBrowserFixture() {
   const app = resolveHostApp()
@@ -15,6 +16,7 @@ export function createHostBrowserFixture() {
     .replace('return module.exports;', 'exports.installFixtureTheme = installThemeStyles; return module.exports;')
   const runtime = `${boot.slice(0, cut)}
 globalThis.__UI_SEEDS__ = rM();
+${nativeTriggerMenuFixture(app)}
 let themeEntry;
 window.__ModuleLoader__ = { load: entry => { themeEntry = entry } };
 await new Promise((resolve, reject) => {

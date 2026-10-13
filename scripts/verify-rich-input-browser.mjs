@@ -64,17 +64,23 @@ try {
     element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
   }, value)
   const replaceAll = async value => { await input.focus(); await page.keyboard.press('Control+a'); await paste(value) }
-  const open = async () => { await edit.click(); await input.waitFor(); await page.waitForFunction(() => document.querySelectorAll('.dsh-resend-file-reference').length === 5) }
+  const open = async () => { await edit.click(); await page.mouse.move(0, 0); await input.waitFor(); await page.waitForFunction(() => document.querySelectorAll('.dsh-resend-file-reference').length === 5) }
   async function selectText(value) {
     await input.evaluate(async (element, value) => {
       element.focus()
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-      let node
+      const nodes = []
+      let node, content = ''
       while ((node = walker.nextNode())) {
         if (node.parentElement.closest('[data-path]')) continue
-        const index = node.textContent.indexOf(value)
-        if (index < 0) continue
-        const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + value.length)
+        nodes.push({ node, start: content.length })
+        content += node.textContent
+      }
+      const index = content.indexOf(value)
+      if (index >= 0) {
+        const first = nodes.find(entry => entry.start + entry.node.textContent.length > index)
+        const last = nodes.find(entry => entry.start + entry.node.textContent.length >= index + value.length)
+        const range = document.createRange(); range.setStart(first.node, index - first.start); range.setEnd(last.node, index + value.length - last.start)
         const selection = document.getSelection(); selection.removeAllRanges(); selection.addRange(range)
         document.dispatchEvent(new Event('selectionchange'))
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
@@ -84,6 +90,7 @@ try {
     }, value)
   }
   async function check(name, run, query = '') {
+    if (process.env.EDITOR_TAG_ALIGNMENT_ONLY && !name.includes('标签对齐')) return
     await page.goto(url + query)
     await edit.waitFor({ timeout: 5000 }).catch(async cause => {
       console.error(JSON.stringify({ errors, body: await page.locator('body').innerText() }, null, 2)); throw cause
@@ -92,13 +99,138 @@ try {
     assert.deepEqual(errors, [])
     checks.push(name); console.log('PASS ' + name)
   }
+  for (const fontSize of [14, 18, 24]) for (const dark of [false, true]) {
+    await check(`标签对齐：${dark ? '深色' : '浅色'} ${fontSize}px 字号`, async () => {
+      await open(); await replaceAll('中文 English @a/same.md /tdd 后文 Text')
+      await input.locator('[data-skill="tdd"]').waitFor()
+      await page.locator('.dsh-resend-editor-surface').evaluate((element, size) => {
+        element.style.setProperty('--dsh-content-font-size', size + 'px')
+        element.style.setProperty('--dsh-content-font-delta', size - 14 + 'px')
+      }, fontSize)
+      const bounds = await input.evaluate(element => {
+        const file = element.querySelector('[data-path]'), skill = element.querySelector('[data-skill]'), prefix = element.querySelector('.dsh-resend-skill-prefix')
+        const ordinary = [...element.querySelector('p').childNodes].find(node => node.nodeType === 3 && node.textContent.includes('中文 English'))
+        const rect = element => { const box = element.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: box.height } }
+        const text = element => { const range = document.createRange(); range.selectNodeContents(element); return rect({ getBoundingClientRect: () => range.getBoundingClientRect() }) }
+        const pseudo = getComputedStyle(prefix, '::after')
+        const skillIconCenter = prefix.getBoundingClientRect().top + parseFloat(pseudo.top) + new DOMMatrix(pseudo.transform).f + parseFloat(pseudo.height) / 2
+        const fileIcon = file.querySelector('svg').getBoundingClientRect()
+        return { file: rect(file), skill: rect(skill), prefix: rect(prefix), fileText: text(file.querySelector('span')), skillText: text(skill), ordinaryText: text(ordinary), fileIconCenter: fileIcon.top + fileIcon.height / 2, skillIconCenter }
+      })
+      await page.locator('.dsh-resend-editor-surface').screenshot({ path: path.join(root, 'output/playwright', `tag-alignment-${dark ? 'dark' : 'light'}-${fontSize}.png`) })
+      for (const key of ['top', 'bottom']) {
+        assert.ok(Math.abs(bounds.file[key] - bounds.skill[key]) <= 0.5, JSON.stringify(bounds))
+        assert.ok(Math.abs(bounds.prefix[key] - bounds.skill[key]) <= 0.5, JSON.stringify(bounds))
+        assert.ok(Math.abs(bounds.fileText[key] - bounds.skillText[key]) <= 0.5, JSON.stringify(bounds))
+        assert.ok(Math.abs(bounds.fileText[key] - bounds.ordinaryText[key]) <= 0.5, JSON.stringify(bounds))
+      }
+      assert.ok(Math.abs(bounds.fileIconCenter - bounds.skillIconCenter) <= 0.5, JSON.stringify(bounds))
+    }, dark ? '?dark' : '')
+  }
+  await check('连续输入英文字母时技能确认静默进行，不显示提示或改变输入框高度', async () => {
+    await open(); await replaceAll('阅读 @a/same.md /tdd 正文 ')
+    await input.locator('[data-skill="tdd"]').waitFor()
+    const height = (await page.locator('.dsh-resend-editor-surface').boundingBox()).height
+    await page.evaluate(() => {
+      window.skillCheckingFlashes = []
+      window.skillCheckingObserver = new MutationObserver(records => {
+        for (const record of records) for (const node of record.addedNodes) {
+          if (node.textContent.includes('正在确认文本中的技能')) window.skillCheckingFlashes.push(node.textContent)
+        }
+      })
+      window.skillCheckingObserver.observe(document.querySelector('.dsh-resend-editor-surface'), { childList: true, subtree: true })
+      window.richInputFixture.skillMode('delayed')
+    })
+    for (const letter of 'EnglishText') {
+      await page.keyboard.insertText(letter)
+      assert.equal(await page.locator('[data-skill-notice]').count(), 0)
+      assert.equal((await page.locator('.dsh-resend-editor-surface').boundingBox()).height, height)
+    }
+    assert.deepEqual(await page.evaluate(() => window.skillCheckingFlashes), [])
+    await page.evaluate(() => { window.skillCheckingObserver.disconnect(); window.richInputFixture.skillMode('ready'); window.richInputFixture.resetConnection() })
+    await input.locator('[data-skill="tdd"]').waitFor()
+    assert.equal(await text(), '阅读 @a/same.md /tdd 正文 EnglishText')
+    await page.getByRole('button', { name: '发送', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls[0].request.text), '阅读 @a/same.md /tdd 正文 EnglishText')
+  })
+  for (const width of [1100, 360]) for (const dark of [false, true]) {
+    await page.setViewportSize({ width, height: 1000 })
+    await check(`框外提示自查：${dark ? '深色' : '浅色'} ${width}px 的格式、失效技能、查询、预览与发送异常`, async () => {
+      await open(); await replaceAll('正文')
+      await page.locator('.dsh-resend-editor-surface').evaluate(element => {
+        element.style.setProperty('--dsh-content-font-size', '24px')
+        element.style.setProperty('--dsh-content-font-delta', '10px')
+      })
+      const baseline = (await page.locator('.dsh-resend-editor-surface').boundingBox()).height
+      async function verify(selector) {
+        await page.locator(selector).waitFor()
+        const measured = await page.locator(selector).evaluate(element => {
+          const surface = document.querySelector('.dsh-resend-editor-surface'), box = element.getBoundingClientRect(), outer = surface.getBoundingClientRect()
+          const style = getComputedStyle(element)
+          const colorProbe = document.createElement('span'); colorProbe.style.color = 'var(--dsw-alias-state-error-primary)'; element.append(colorProbe)
+          const red = getComputedStyle(colorProbe).color; colorProbe.remove()
+          return { below: box.top >= outer.bottom + 5, outside: !surface.contains(element), font: parseFloat(style.fontSize), color: style.color, red,
+            scroll: document.documentElement.scrollWidth, viewport: innerWidth, height: outer.height }
+        })
+        assert.equal(measured.below, true, JSON.stringify(measured))
+        assert.equal(measured.outside, true, JSON.stringify(measured))
+        assert.equal(measured.font, 12)
+        assert.equal(measured.color, measured.red)
+        assert.equal(measured.height, baseline)
+        assert.ok(measured.scroll <= measured.viewport)
+        assert.equal(await page.locator('.dsh-resend-editor-surface [role="status"]').count(), 0)
+      }
+      await replaceAll('使用 /code-')
+      await page.getByRole('option', { name: '选择技能 /code-review', exact: true }).waitFor()
+      assert.equal(await page.locator('[data-skill-notice]').count(), 0)
+      await input.press('Escape'); await verify('[data-skill-notice]')
+      await page.locator('#row').screenshot({ path: path.join(root, 'output/playwright', `editor-notices-${dark ? 'dark' : 'light'}-${width}.png`) })
+      await replaceAll('使用 /missing 正文'); await verify('[data-skill-notice]')
+      await page.evaluate(() => window.richInputFixture.skillMode('failed'))
+      await replaceAll('使用 /tdd 正文'); await verify('[data-skill-notice]')
+      await page.evaluate(() => window.richInputFixture.skillMode('ready'))
+      await page.evaluate(() => window.richInputFixture.lookupMode('failed'))
+      await replaceAll('阅读 @unknown 正文'); await verify('[data-reference-notice]')
+      await page.evaluate(() => window.richInputFixture.lookupMode('ready'))
+      for (const previewMode of ['failed', 'unavailable']) {
+        await page.evaluate(mode => window.richInputFixture.previewMode(mode), previewMode)
+        await replaceAll('阅读 @a/same.md 正文')
+        await page.locator('[data-path="a/same.md"]').waitFor()
+        await page.locator('[data-path="a/same.md"]').evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, button: 0 })))
+        await verify('[data-preview-notice]')
+      }
+      await replaceAll('正文')
+      await page.evaluate(() => window.richInputFixture.mode('throw'))
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      await verify('.dsh-resend-operation-error')
+      assert.equal(await text(), '正文')
+    }, dark ? '?dark' : '')
+  }
+  await page.setViewportSize({ width: 1100, height: 1000 })
   await check('原文全文、同名完整路径、目录与多个 skill 恢复', async () => {
     await open()
+    assert.equal(await page.locator('[data-path] > svg[aria-hidden="true"]').count(), 5)
+    assert.deepEqual(await input.locator('[data-skill]').allTextContents(), ['tdd', 'code-review'])
+    assert.equal(await input.locator('.dsh-resend-skill-prefix').evaluateAll(nodes => nodes.every(node => getComputedStyle(node).color === 'rgba(0, 0, 0, 0)')), true)
+    assert.equal(await page.getByRole('button', { name: '发送', exact: true }).innerText(), '发送')
+    await page.screenshot({ path: path.join(root, 'output/playwright', 'composer-tags-preview.png'), fullPage: true })
     assert.equal(await text(), await source())
     assert.deepEqual(await page.locator('[data-path]').evaluateAll(nodes => nodes.map(node => node.dataset.path)),
       ['a/same.md', 'b/same.md', '资料/中文 说明.md', '有 空格', 'D:/Other Project/说明.md'])
     assert.equal(await page.locator('[data-path="unknown"]').count(), 0)
     assert.equal(await input.evaluate(element => { const selection = getSelection(); return selection.isCollapsed && selection.focusOffset === selection.focusNode.textContent.length }), true)
+  })
+  await check('换行后的技能标签保留名称，复制及发送仍使用完整调用文本', async () => {
+    await open()
+    const value = '阅读 @a/same.md\n/tdd /code-review'
+    await replaceAll(value)
+    await input.locator('[data-skill="code-review"]').waitFor()
+    assert.deepEqual(await input.locator('[data-skill]').allTextContents(), ['tdd', 'code-review'])
+    await input.press('Escape')
+    await input.press('Control+a'); await input.press('Control+c')
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), value)
+    await page.getByRole('button', { name: '发送', exact: true }).click()
+    assert.equal(await page.evaluate(() => window.richInputFixture.calls[0].request.text), value)
   })
   await check('点击已确认文件和当前技能只打开预览，不发送或改写草稿', async () => {
     await open()
@@ -134,12 +266,26 @@ try {
     assert.equal(await text(), edited)
     assert.equal(await page.evaluate(() => window.richInputFixture.calls[0].request.text), edited)
   })
-  await check('取消、Escape、重开与卸载重挂恢复草稿和撤销', async () => {
+  await check('取消、Escape 与卸载后重开均恢复原文，清空撤销、候选、选区和提示', async () => {
     await open(); await selectText('/tdd'); await page.keyboard.insertText('/research')
-    const edited = (await source()).replace('/tdd', '/research')
-    await page.keyboard.press('Escape'); await edit.click(); assert.equal(await text(), edited)
-    await page.getByRole('button', { name: '取消', exact: true }).click(); await edit.click(); assert.equal(await text(), edited)
-    await page.evaluate(() => window.richInputFixture.remount()); await edit.click(); assert.equal(await text(), edited)
+    await page.keyboard.press('Escape')
+    if (await input.count()) await page.keyboard.press('Escape')
+    assert.equal(await input.count(), 0)
+    await edit.click(); assert.equal(await text(), await source())
+    await replaceAll('待清空的内容 /code-')
+    await page.getByRole('option', { name: '选择技能 /code-review', exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '取消', exact: true }).evaluate(button => {
+      const box = button.getBoundingClientRect()
+      return document.querySelector('.dsh-resend-menu-surface').contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
+    }), true)
+    await input.press('Escape')
+    assert.equal(await input.count(), 1)
+    await page.getByRole('button', { name: '取消', exact: true }).click(); await edit.click(); assert.equal(await text(), await source())
+    assert.equal(await page.getByRole('listbox').count(), 0)
+    assert.equal(await page.getByText('/code-', { exact: true }).count(), 0)
+    assert.equal(await input.evaluate(element => { const selection = getSelection(); return selection.isCollapsed && element.contains(selection.focusNode) && selection.focusOffset === selection.focusNode.textContent.length }), true)
+    await replaceAll('卸载前的编辑文字')
+    await page.evaluate(() => window.richInputFixture.remount()); await edit.click(); assert.equal(await text(), await source())
     await page.keyboard.press('Control+z'); assert.equal(await text(), await source())
   })
   await check('预检冻结正文和标签，取消恢复编辑，确认只发送固定全文', async () => {
@@ -166,7 +312,7 @@ try {
     await open(); await replaceAll('失败补发 @a/same.md /tdd\n完整中文')
     await page.evaluate(() => window.richInputFixture.mode('owed'))
     await input.press('Enter'); await page.waitForFunction(() => window.richInputFixture.received.length === 1)
-    await edit.click(); assert.equal(await text(), '失败补发 @a/same.md /tdd\n完整中文')
+    await edit.click(); assert.equal(await text(), await source())
     await replaceAll('后续本地编辑不会改写待补发文本')
     await page.evaluate(() => window.richInputFixture.retry())
     assert.deepEqual(await page.evaluate(() => window.richInputFixture.received.map(request => request.text)),
@@ -191,15 +337,15 @@ try {
     assert.equal(await text(), '发送异常也保留的中文 /skill')
     assert.equal(await input.getAttribute('contenteditable'), 'true')
   })
-  await check('草稿按 Session 和 seq 隔离；普通正文、附件、选区与撤销不变', async () => {
+  await check('切换 Session 或消息后重开使用各自原文；普通正文、附件、选区与撤销不变', async () => {
     const ordinary = page.locator('#ordinary')
     await ordinary.focus(); await ordinary.press('End'); await page.keyboard.insertText('追加')
     await ordinary.evaluate(element => element.setSelectionRange(2, 4))
     await open(); await replaceAll('s0 的草稿')
     await page.evaluate(() => window.richInputFixture.switchTarget('s', 2)); await open(); await replaceAll('s2 的草稿')
     await page.evaluate(() => window.richInputFixture.switchTarget('other', 0)); await open(); await replaceAll('other0 的草稿')
-    for (const [sessionId, seq, expected] of [['s', 0, 's0 的草稿'], ['s', 2, 's2 的草稿'], ['other', 0, 'other0 的草稿']]) {
-      await page.evaluate(([sessionId, seq]) => window.richInputFixture.switchTarget(sessionId, seq), [sessionId, seq]); await edit.click(); assert.equal(await text(), expected)
+    for (const [sessionId, seq] of [['s', 0], ['s', 2], ['other', 0]]) {
+      await page.evaluate(([sessionId, seq]) => window.richInputFixture.switchTarget(sessionId, seq), [sessionId, seq]); await edit.click(); assert.equal(await text(), await source())
     }
     assert.equal(await ordinary.inputValue(), '普通正文 /skill @keep追加')
     assert.deepEqual(await ordinary.evaluate(element => [element.selectionStart, element.selectionEnd]), [2, 4])
@@ -276,7 +422,7 @@ try {
     assert.equal(copied, '外部 @"D:/Other Project/说明.md" ')
     await replaceAll(copied); await page.waitForFunction(() => document.querySelectorAll('[data-path]').length === 1)
     assert.equal(await page.locator('[data-path]').getAttribute('data-path'), 'D:/Other Project/说明.md')
-    await input.press('Escape'); await edit.click(); assert.equal(await text(), copied)
+    await input.press('Escape'); await edit.click(); assert.equal(await text(), await source())
   })
   await check('选区替换仅影响当前触发词，邮箱中的 @ 不触发', async () => {
     await open(); await replaceAll('前文 @same 后文')
@@ -304,7 +450,7 @@ try {
     await page.evaluate(() => window.richInputFixture.release())
     assert.equal(await page.locator('[data-path]').count(), 0)
     assert.equal(await text(), '正文 @same')
-    await replaceAll('关闭 @same'); await page.getByRole('button', { name: '取消', exact: true }).click()
+    await replaceAll('关闭 @same'); await input.press('Escape'); await page.getByRole('button', { name: '取消', exact: true }).click()
     await page.evaluate(() => window.richInputFixture.release())
     assert.equal(await input.count(), 0)
   })
@@ -403,7 +549,7 @@ try {
     await input.press('Control+z'); assert.equal(await text(), '前文 /td后文')
     await replaceAll('前文 /code-review 后文')
     await selectText('/code-review')
-    await input.evaluate(() => { const selection = getSelection(); selection.collapse(selection.anchorNode, selection.anchorOffset + 3) })
+    await input.evaluate(element => { const node = element.querySelector('[data-skill="code-review"]').firstChild; getSelection().collapse(node, 2) })
     await page.getByRole('option', { name: '选择技能 /code-review', exact: true }).waitFor()
     await input.press('Tab')
     assert.equal(await text(), '前文 /code-review 后文')
@@ -458,7 +604,7 @@ try {
     assert.equal(await text(), '使用 /td')
     await page.getByRole('button', { name: '取消', exact: true }).click()
     assert.equal(await page.evaluate(() => window.richInputFixture.skillLookups.every(call => call.signal.aborted)), true)
-    await edit.click(); assert.equal(await text(), '使用 /td')
+    await edit.click(); assert.equal(await text(), await source())
   })
   await check('目标预设事件重新确认技能可用性，其他会话事件不影响当前菜单', async () => {
     await open(); await replaceAll('使用 /tdd')
@@ -586,7 +732,9 @@ try {
       await option.waitFor()
       const assertLayout = async () => {
         const layout = await page.evaluate(() => {
-          const controls = [...document.querySelectorAll('.dsh-resend-editor-surface button')]
+          const selectors = '.dsh-resend-editor-actions button, .dsh-resend-reference-menu [aria-selected="true"]' +
+            (document.querySelector('[data-trigger-menu]') ? '' : ', .dsh-resend-editor-header button')
+          const controls = [...document.querySelectorAll(selectors)]
           return { viewport: innerWidth, scroll: document.documentElement.scrollWidth,
             visible: controls.every(button => {
               const rect = button.getBoundingClientRect()
@@ -618,6 +766,68 @@ try {
       assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
       assert.equal(await page.getByText('临时输入框', { exact: true }).count(), 1)
       assert.ok((await page.getByRole('button', { name: '发送', exact: true }).boundingBox()).width >= 32)
+      await replaceAll('阅读 @a/same.md 使用 /tdd')
+      await input.locator('[data-skill="tdd"]').waitFor()
+      await input.press('Escape')
+      assert.equal(await text(), '阅读 @a/same.md 使用 /tdd')
+      await assertLayout()
+      const prefix = await input.locator('.dsh-resend-skill-prefix').boundingBox()
+      assert.ok(prefix.width >= 14 && prefix.height >= 14)
+      await page.locator('.dsh-resend-editor-surface').screenshot({ path: path.join(root, 'output/playwright', `composer-tags-${dark ? 'dark' : 'light'}-${width}.png`) })
+    }, dark ? '?dark' : '')
+  }
+  for (const dark of [false, true]) {
+    await page.setViewportSize({ width: 1100, height: 1000 })
+    await check(`${dark ? '深色' : '浅色'}原生菜单对照：蓝色边框上方浮层、同款样式、鼠标高亮、目录 Tab 与模糊技能查询`, async () => {
+      await open(); await replaceAll('阅读 @same')
+      await page.getByRole('option', { name: '引用文件 a/same.md', exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: '在正式输入框中编辑', exact: true }).count(), 0)
+      const compare = async kind => {
+        const comparison = await page.evaluate(async kind => {
+          const plugin = document.querySelector('.dsh-resend-menu-surface')
+          const card = document.querySelector('.dsh-resend-editor')
+          const input = document.querySelector('[role="textbox"]')
+          const rect = plugin.getBoundingClientRect(), cardRect = card.getBoundingClientRect()
+          const names = [...plugin.querySelectorAll('.dsh-resend-menu-name')].map(node => node.textContent)
+          const descriptions = [...plugin.querySelectorAll('.dsh-resend-menu-description')].map(node => node.textContent)
+          window.renderNativeTriggerMenu(kind, names.map((name, index) => ({ name, description: descriptions[index],
+            ...(kind === 'reference' ? { icon: 'file', section: '文件' } : {}) })), rect.width)
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+          const native = document.querySelector('#native-menu-comparison [data-trigger-menu]')
+          const read = (node, keys) => Object.fromEntries(keys.map(key => [key, getComputedStyle(node)[key]]))
+          const rowKeys = ['minHeight', 'padding', 'gap', 'fontSize', 'lineHeight', 'borderRadius', 'color', 'backgroundColor']
+          const surfaceKeys = ['padding', 'borderRadius', 'boxShadow', 'overflow']
+          const materialKeys = ['backgroundColor', 'backdropFilter']
+          return { aboveBlueFrame: Math.abs(rect.bottom - (cardRect.top - 4)) <= 1 && Math.abs(rect.left - cardRect.left) <= 1 && Math.abs(rect.right - cardRect.right) <= 1,
+            plugin: read(plugin, surfaceKeys), native: read(native, surfaceKeys),
+            pluginRow: read(plugin.querySelector('[role="option"]'), rowKeys), nativeRow: read(native.querySelector('[role="option"]'), rowKeys),
+            pluginMaterial: read(plugin.firstElementChild, materialKeys), nativeMaterial: read(native.firstElementChild, materialKeys) }
+        }, kind)
+        assert.equal(comparison.aboveBlueFrame, true)
+        assert.deepEqual(comparison.plugin, comparison.native)
+        assert.deepEqual(comparison.pluginRow, comparison.nativeRow)
+        assert.deepEqual(comparison.pluginMaterial, comparison.nativeMaterial)
+        await page.evaluate(() => document.getElementById('native-menu-comparison')?.remove())
+      }
+      await compare('reference')
+      await page.getByRole('option', { name: '引用文件 b/same.md', exact: true }).hover()
+      assert.equal(await page.getByRole('option', { name: '引用文件 b/same.md', exact: true }).getAttribute('aria-selected'), 'true')
+      assert.equal(await input.evaluate(element => document.activeElement === element), true)
+      await page.screenshot({ path: path.join(root, 'output/playwright', `reference-menu-${dark ? 'dark' : 'light'}-${channel}.png`), fullPage: true })
+      await replaceAll('浏览 @有'); await page.getByRole('option', { name: '引用目录 有 空格', exact: true }).waitFor()
+      await input.press('Tab'); assert.equal(await text(), '浏览 @"有 空格/')
+      await page.getByRole('navigation', { name: '目录导航' }).waitFor()
+      await page.getByRole('button', { name: '返回上级', exact: true }).click()
+      assert.equal(await text(), '浏览 @')
+      await replaceAll('使用 /cr'); await page.getByRole('option', { name: '选择技能 /code-review', exact: true }).waitFor()
+      await page.waitForFunction(() => !document.querySelector('[data-skill-notice]'))
+      await compare('skill')
+      await page.screenshot({ path: path.join(root, 'output/playwright', `skill-menu-${dark ? 'dark' : 'light'}-${channel}.png`), fullPage: true })
+      await input.press('Shift+Tab'); assert.equal(await page.getByRole('listbox').count(), 0)
+      assert.equal(await page.evaluate(() => window.richInputFixture.calls.length), 0)
+      await replaceAll('使用 /td'); await page.getByRole('option', { name: '选择技能 /tdd', exact: true }).waitFor()
+      await page.locator('#ordinary').click(); assert.equal(await page.getByRole('listbox').count(), 0)
+      assert.equal(await text(), '使用 /td')
     }, dark ? '?dark' : '')
   }
   assert.equal(network.every(request => request.startsWith(url)), true)

@@ -9,6 +9,7 @@ import { createPrivateStorage, safePrivatePath } from './private-storage.js'
 import { createStorageCleanup } from './storage-cleanup.js'
 import { contents, fileTarget, sameContents as equal } from './rollback-files.js'
 import { createFileRollback } from './file-rollback.js'
+import { createObservationStore } from './file-observations.js'
 
 const refused = (code) => ({ ok: false, error: { code } })
 const normalizedText = (bytes, keepBom = false) => bytes === null ? null : new TextDecoder('utf-8', { fatal: true, ignoreBOM: keepBom }).decode(bytes).replaceAll('\r\n', '\n')
@@ -50,8 +51,9 @@ export function createFileVersions(ctx) {
   const storage = createPrivateStorage(ctx)
   const { home } = storage
   const snapshots = createSnapshotStore(home)
-  // Observations are not versions: they stay private in memory until a rewind.
+  // Cache durable tool observations; a rewind combines them into its manifest.
   const observations = new Map()
+  const observationStore = createObservationStore(home, snapshots)
   const rollback = createFileRollback(ctx, { home, snapshots })
   const generations = new Map()
   const recordPath = (sessionId, id) => safePrivatePath(home, `records/${digest(JSON.stringify([sessionId, id]))}.json`)
@@ -98,7 +100,10 @@ export function createFileVersions(ctx) {
         }
       }
     } catch { reason ??= 'unreadable-file' }
-    observations.set(observationKey(session.id, exec.callId), { path: normalized, before, after, reason })
+    const observation = { path: normalized, before, after, reason }
+    observations.set(observationKey(session.id, exec.callId), observation)
+    try { await storage.exclusive(() => observationStore.put(session, exec, observation)) }
+    catch (error) { logWarning(ctx, `file observation could not be saved: ${describeError(error)}`) }
     return result
     })
   })
@@ -147,7 +152,14 @@ export function createFileVersions(ctx) {
       }
       const associationReason = candidates.length === 0 ? 'tool-result-unavailable'
         : candidates.length !== 1 || resultCallIds(candidates[0]).some(id => id !== rootCallId) ? 'tool-result-ambiguous' : undefined
-      const observed = observations.get(observationKey(session.id, callId))
+      let observed = observations.get(observationKey(session.id, callId))
+      if (observed === undefined) {
+        try { observed = await observationStore.get(session, callId, event.data.name, args) }
+        catch (error) {
+          logWarning(ctx, `file observation could not be read: ${describeError(error)}`)
+          observed = { path: name, reason: 'snapshot-unavailable' }
+        }
+      }
       let normalized = observed?.path ?? name
       let pathReason
       if (!observed) {

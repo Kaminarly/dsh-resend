@@ -34,6 +34,10 @@ import { fileURLToPath } from 'node:url'
 export const CLIENT_BUNDLE = fileURLToPath(new URL('../lib/client.bundle.js', import.meta.url))
 
 const require_ = createRequire(new URL('../package.json', import.meta.url))
+// Exercise the host's actual pure ranking algorithm; no browser CSS import needed.
+const primitivesSource = readFileSync(require_.resolve('@deepseek-ai/dsh-client-ui-primitives'), 'utf8')
+const rankByName = vm.runInNewContext(primitivesSource.slice(primitivesSource.indexOf('function boundaryBonus('),
+  primitivesSource.indexOf('//#endregion', primitivesSource.indexOf('function rankByName('))) + '\nrankByName')
 
 /**
  * The module-table entries the bundle legitimately asks for, and NOTHING else.
@@ -73,6 +77,11 @@ export const MODULE_TABLE = Object.freeze({
     IconCheckOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'check-outline', ...props }),
     IconShieldOutlineRegular: (props) => require_('react').createElement('svg', { 'data-icon': 'shield-outline', ...props }),
     FileTypeIcon: ({ path, size }) => require_('react').createElement('svg', { 'data-file-icon': path, width: size, height: size }),
+    MenuSurface: require_('react').forwardRef(({ children, ...props }, ref) => require_('react').createElement('div', { ...props, ref }, children)),
+    ReferenceIconRegular: ({ kind }) => require_('react').createElement('svg', { 'data-reference-icon': kind }),
+    IconChevronRightOutlineRegular: () => require_('react').createElement('svg', { 'data-icon': 'chevron-right' }),
+    useAnchoredMaxHeight: () => 400,
+    rankByName,
   }),
 })
 

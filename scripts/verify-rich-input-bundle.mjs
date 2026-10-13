@@ -52,7 +52,7 @@ const screenshots = []
 const evidenceDir = path.join(runDir, 'browser-evidence')
 await mkdir(evidenceDir)
 for (const name of await readdir(path.join(root, 'output/playwright'))) {
-  if (!/^(?:rich-input|skill-menu)-/u.test(name) || !name.endsWith(`-${channel}.png`)) continue
+  if (!/^(?:rich-input|skill-menu|reference-menu)-/u.test(name) || !name.endsWith(`-${channel}.png`)) continue
   await copyFile(path.join(root, 'output/playwright', name), path.join(evidenceDir, name))
   screenshots.push(name)
 }

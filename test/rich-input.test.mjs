@@ -31,6 +31,28 @@ async function editor({ text = '原文 @a/same.md /tdd', lookup, skills, replay,
   }
 }
 
+it('places skill validation beneath the entire temporary input surface', async () => {
+  const dom = await editor({ text: '使用 /missing', skills: async () => ({ ok: true, value: { skills: [] } }) })
+  await dom.click(dom.button('edit'))
+  const notice = dom.container.querySelector('[data-skill-notice]')
+  expect(notice.textContent).toContain('row.skillMissing')
+  expect(notice.closest('.dsh-resend-editor-surface') === null).toBe(true)
+  expect(notice.closest('.dsh-resend-editor-notices') !== null).toBe(true)
+  expect(dom.container.querySelector('.dsh-resend-editor-surface').nextElementSibling === notice.parentElement).toBe(true)
+  await dom.key(dom.input(), 'Enter')
+  expect(dom.calls[0].request.text).toBe('使用 /missing')
+})
+
+it('does not warn about an unfinished skill name while its matching candidates are open', async () => {
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills: [{ name: 'code-review' }] } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /code-')
+  expect(dom.container.querySelector('[role="option"]')).not.toBeNull()
+  expect(dom.container.querySelector('[data-skill-notice]') === null).toBe(true)
+  await dom.key(dom.input(), 'Escape')
+  expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('row.skillInvalid')
+})
+
 it('previews a confirmed file path without sending or changing the draft', async () => {
   const opened = []
   const dom = await editor({
@@ -112,7 +134,7 @@ it('selects only target-session skills as editable text before resending', async
   } })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '请使用 /td')
-  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['/tdd'])
+  expect([...dom.container.querySelectorAll('.dsh-resend-menu-name')].map(option => option.textContent)).toEqual(['tdd'])
   await dom.key(dom.input(), 'Tab')
   expect(editorText(dom.input())).toBe('请使用 /tdd ')
   expect(dom.container.querySelector('[data-path]')).toBeNull()
@@ -129,10 +151,24 @@ it('restoring a pasted file reference retains the active skill query and lets th
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '阅读 @file.md 使用 /td')
   expect(dom.container.querySelector('[data-path]')).not.toBeNull()
-  expect(dom.container.querySelector('[role="option"]')?.textContent).toBe('/tdd')
+  expect(dom.container.querySelector('.dsh-resend-menu-name')?.textContent).toBe('tdd')
   await dom.key(dom.input(), 'Tab')
   await dom.key(dom.input(), 'Enter')
   expect(dom.calls[0].request.text).toBe('阅读 @file.md 使用 /tdd ')
+})
+
+it('does not label a matching unfinished skill query as missing, while preserving historical warnings', async () => {
+  const dom = await editor({ text: '正文', skills: async () => ({ ok: true, value: { skills: [{ name: 'code-review' }] } }) })
+  await dom.click(dom.button('edit'))
+  await dom.change(dom.input(), '使用 /cr')
+  expect(dom.container.querySelector('[role="option"]')?.getAttribute('aria-label')).toBe('row.skillSelect /code-review')
+  expect(dom.container.querySelector('[data-skill-notice]') === null).toBe(true)
+  await dom.change(dom.input(), '先 /missing 使用 /cr')
+  const notice = dom.container.querySelector('[data-skill-notice]')
+  expect(notice.textContent).toContain('/missing')
+  expect(notice.textContent).not.toContain('/cr')
+  await dom.key(dom.input(), 'Escape')
+  expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('/cr')
 })
 
 it.each([
@@ -186,7 +222,7 @@ it('rejects explicit model-only candidates and deduplicates names, retaining use
   await dom.click(dom.button('edit'))
   expect(dom.container.querySelector('[data-skill-notice]').textContent).toContain('/model-only')
   await dom.change(dom.input(), '使用 /')
-  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['/tdd'])
+  expect([...dom.container.querySelectorAll('.dsh-resend-menu-name')].map(option => option.textContent)).toEqual(['tdd'])
   await dom.key(dom.input(), 'Enter')
   expect(editorText(dom.input())).toBe('使用 /tdd ')
 })
@@ -200,7 +236,7 @@ it.each([
   const dom = await editor({ text: '正文', skills })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '使用 /missing')
-  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.skill' + status)
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').getAttribute('aria-label')).toBe('row.skill' + status)
   await dom.key(dom.input(), 'Enter', { isComposing: true })
   await dom.key(dom.input(), 'Enter', { keyCode: 229 })
   await dom.key(dom.input(), 'Enter')
@@ -224,7 +260,7 @@ it('ignores reversed skill replies, stale buttons and obsolete warnings after dr
   await dom.act(async () => newest.forEach(reply => reply.resolve({ ok: true, value: { skills: [{ name: 'new' }] } })))
   const button = dom.container.querySelector('[role="option"]')
   await dom.act(async () => old.forEach(reply => reply.resolve({ ok: true, value: { skills: [] } })))
-  expect(button.textContent).toBe('/new')
+  expect(button.textContent).toBe('new')
   expect(dom.container.querySelector('[data-skill-notice]')).toBeNull()
   await dom.change(dom.input(), '新草稿不含技能')
   await dom.click(button)
@@ -263,7 +299,7 @@ it('freezes selected skill text for preflight and retry even when the later loca
   expect(editorText(dom.input())).toBe('使用 /tdd ')
   await dom.act(async () => dom.operations.chooseReplay('s', 'keep'))
   await dom.click(dom.button('edit'))
-  expect(editorText(dom.input())).toBe('使用 /tdd ')
+  expect(editorText(dom.input())).toBe(dom.props.node.data.text)
   await dom.change(dom.input(), '后续编辑 /missing')
   await dom.act(async () => dom.operations.sendAgain({ sessionId: 's', carrierSeq: 5 }))
   expect(dom.calls.map(call => call.phase ?? 'retry')).toEqual(['start', 'keep', 'retry'])
@@ -372,7 +408,7 @@ it.each([
   const dom = await editor({ text: '原文', lookup })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '原文 @not-found')
-  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.file' + status)
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').getAttribute('aria-label')).toBe('row.file' + status)
   await dom.key(dom.input(), 'Enter')
   expect(dom.calls).toHaveLength(0)
   expect(editorText(dom.input())).toBe('原文 @not-found')
@@ -393,7 +429,7 @@ it('newer candidate replies win and closed editors abort their remaining queries
     reply.resolve({ ok: true, value: [{ path: 'new/second.md', kind: 'file' }] }) })
   await dom.act(async () => { for (const reply of replies.filter(item => item.query === 'first'))
     reply.resolve({ ok: true, value: [{ path: 'old/first.md', kind: 'file' }] }) })
-  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.textContent)).toEqual(['new/second.md'])
+  expect([...dom.container.querySelectorAll('[role="option"]')].map(option => option.title)).toEqual(['new/second.md'])
   await dom.click(dom.button('cancel'))
   expect(replies.every(reply => reply.signal.aborted)).toBe(true)
   expect(dom.input()).toBeNull()
@@ -403,7 +439,7 @@ it('only opens at the current token, including a new line, without swallowing fo
   const dom = await editor({ text: '原文', lookup: async () => ({ ok: true, value: [{ path: 'file.md', kind: 'file' }] }) })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '正文 @file /skill')
-  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').textContent).toBe('row.skillUnavailable')
+  expect(dom.container.querySelector('.dsh-resend-reference-menu [role="status"]').getAttribute('aria-label')).toBe('row.skillUnavailable')
   await dom.key(dom.input(), 'Escape')
   await dom.key(dom.input(), 'Enter')
   expect(dom.calls[0].request.text).toBe('正文 @file /skill')
@@ -415,9 +451,10 @@ it('only opens at the current token, including a new line, without swallowing fo
 
 it('old directory controls cannot replace a newer query even if a delayed click reaches them', async () => {
   const dom = await editor({ text: '原文', lookup: async (_sessionId, query) => ({ ok: true, value:
-    [{ path: query === 'first/' ? 'first/sub' : 'second/sub', kind: 'directory' }] }) })
+    [{ path: query.startsWith('first/') ? 'first/sub' : 'second/sub', kind: 'directory' }] }) })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '原文 @first/')
+  await dom.click(dom.container.querySelector('[aria-label="row.fileDrill first/sub"]'))
   const oldDrill = dom.container.querySelector('[aria-label="row.fileDrill first/sub"]')
   const oldParent = dom.container.querySelector('[aria-label="row.fileParent"]')
   await dom.change(dom.input(), '原文 @second/')
@@ -455,16 +492,22 @@ it('changing the target preset retires its old file choices without clearing the
   expect(editorText(dom.input())).toBe('正文 @file')
 })
 
-it('retains the edited draft after Escape and reopening the same message', async () => {
+it.each(['Escape', 'cancel'])('discards the draft, selection and undo history after closing with %s', async close => {
   const dom = await editor()
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '本次编辑 @b/same.md /research')
   expect(editorText(dom.input())).toBe('本次编辑 @b/same.md /research')
   expect(dom.operations.draftFor({ sessionId: 's', targetSeq: 0 }, dom.props.node.data.text)?.text).toBe('本次编辑 @b/same.md /research')
-  await dom.key(dom.input(), 'Escape')
-  expect(dom.operations.draftFor({ sessionId: 's', targetSeq: 0 }, dom.props.node.data.text)?.text).toBe('本次编辑 @b/same.md /research')
+  if (close === 'Escape') {
+    await dom.key(dom.input(), 'Escape')
+    if (dom.input()) await dom.key(dom.input(), 'Escape')
+  }
+  else await dom.click(dom.button('cancel'))
+  expect(dom.operations.draftFor({ sessionId: 's', targetSeq: 0 }, dom.props.node.data.text)).toBeUndefined()
   await dom.click(dom.button('edit'))
-  expect(editorText(dom.input())).toBe('本次编辑 @b/same.md /research')
+  expect(editorText(dom.input())).toBe(dom.props.node.data.text)
+  await dom.key(dom.input(), 'z', { ctrlKey: true })
+  expect(editorText(dom.input())).toBe(dom.props.node.data.text)
 })
 
 it('restores complete paths, preserves skill text and never guesses unknown mentions', async () => {
@@ -526,14 +569,15 @@ it('switching locale updates all open editor labels without replacing its draft 
   expect(after.state.selection.eq(saved.state.selection)).toBe(true)
 })
 
-it('remounting the row restores its independent draft and successful resend clears it', async () => {
+it('unmounting the row discards its draft and reopening starts from the message source', async () => {
   const dom = await editor({ replay: () => ({ ok: true, value: { carrierSeq: 5, shadowedSeqs: [0], resendMessageId: 'accepted' } }) })
   await dom.click(dom.button('edit'))
   await dom.change(dom.input(), '保留的草稿 /tdd')
   await dom.render(null)
+  expect(dom.operations.draftFor({ sessionId: 's', targetSeq: 0 }, dom.props.node.data.text)).toBeUndefined()
   await dom.render(dom.element())
   await dom.click(dom.button('edit'))
-  expect(editorText(dom.input())).toBe('保留的草稿 /tdd')
+  expect(editorText(dom.input())).toBe(dom.props.node.data.text)
   await dom.key(dom.input(), 'Enter')
   expect(dom.input()).toBeNull()
   expect(dom.operations.draftFor({ sessionId: 's', targetSeq: 0 }, dom.props.node.data.text)).toBeUndefined()

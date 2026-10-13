@@ -51,7 +51,7 @@ export function unwrapRemoteResult(result) {
  * @returns the page's operations: `run`, `outcomeOf`, `sendAgain`, `subscribe`
  *   and `dispose`.
  */
-export function createResendOperations(remote) {
+export function createResendOperations(remote, references = remote) {
   /** `sessionId` → `carrierSeq` → the frozen record of that rewind point. */
   const bySession = new Map()
   const recordsBySession = new Map()
@@ -143,12 +143,12 @@ export function createResendOperations(remote) {
       if (drafts.get(sessionId)?.size === 0) drafts.delete(sessionId)
     },
     async referenceCandidates(sessionId, query, signal) {
-      if (typeof remote.fileReferences?.list !== 'function') return { ok: false, unavailable: true }
-      return remote.fileReferences.list(sessionId, query, signal)
+      if (typeof references.fileReferences?.list !== 'function') return { ok: false, unavailable: true }
+      return references.fileReferences.list(sessionId, query, signal)
     },
     async skillCandidates(sessionId, signal) {
-      if (typeof remote.skills?.list !== 'function') return { ok: false, unavailable: true }
-      return remote.skills.list({ sessionId }, signal)
+      if (typeof references.skills?.list !== 'function') return { ok: false, unavailable: true }
+      return references.skills.list({ sessionId }, signal)
     },
     subscribeReferenceInvalidation(listener) {
       referenceInvalidationListeners.add(listener)

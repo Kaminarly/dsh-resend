@@ -175,10 +175,9 @@ describe('saved display preferences', () => {
       disconnected = true
       await dom.act(async () => { await client.forms.describe().load() })
       expect(button('Send').disabled).toBe(true)
-      expect(button('Edit in the composer').disabled).toBe(true)
+      expect(button('Edit in the composer')).toBeNull()
       expect((textarea.getAttribute('aria-disabled') === 'true')).toBe(false)
       await dom.key(textarea, 'Enter')
-      await dom.click(button('Edit in the composer'))
       expect(composition.calls).toEqual([])
       expect(composition.record.draftWrites).toEqual([])
       await dom.change(textarea, '读取失败后仍可修改')

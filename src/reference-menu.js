@@ -1,6 +1,7 @@
 import { closeHistory } from 'prosemirror-history'
 import { schema, finalMention } from './reference-text.js'
 import { skillCatalog } from './skill-text.js'
+import { rankByName } from '@deepseek-ai/dsh-client-ui-primitives'
 
 let menuId = 0
 
@@ -48,14 +49,14 @@ function validCandidates(value) {
 }
 
 /** One local menu for files and skills, independent of the host's Composer controller. */
-export function createReferenceMenu(element, { getView, lookup, lookupSkills, disabled, translate, onCandidate, syncSelection }) {
+export function createReferenceMenu(element, { getView, lookup, lookupSkills, disabled, translate, onCandidate, syncSelection, onRender }) {
   const document = element.ownerDocument
   const menu = document.createElement('div')
   menu.className = 'dsh-resend-reference-menu'
   menu.id = 'dsh-resend-reference-menu-' + ++menuId
   menu.hidden = true
   element.append(menu)
-  let current, request, dismissed, results = [], active = 0, status, destroyed = false
+  let current, request, dismissed, results = [], active = 0, status, destroyed = false, drilled = false
   let t = translate
 
   function close() {
@@ -63,7 +64,7 @@ export function createReferenceMenu(element, { getView, lookup, lookupSkills, di
     request = undefined
     current = undefined
     menu.hidden = true
-    menu.replaceChildren()
+    onRender(undefined)
     const view = getView()
     view.dom.removeAttribute('aria-controls')
     view.dom.removeAttribute('aria-activedescendant')
@@ -80,7 +81,7 @@ export function createReferenceMenu(element, { getView, lookup, lookupSkills, di
     const { from, to } = current.trigger
     const text = /\s/u.test(query) ? '@"' + query : '@' + query
     const view = getView()
-    view.dispatch(closeHistory(view.state.tr.insertText(text, from, to)).scrollIntoView())
+    view.dispatch(closeHistory(view.state.tr.insertText(text, from, to)).setMeta('referenceDrill', true).scrollIntoView())
     view.focus()
   }
 
@@ -114,80 +115,46 @@ export function createReferenceMenu(element, { getView, lookup, lookupSkills, di
     view.focus()
   }
 
-  function button(text, action, attributes = {}) {
-    const node = document.createElement('button')
-    node.type = 'button'
-    node.textContent = text
-    node.setAttribute('aria-label', text)
-    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value)
-    node.addEventListener('mousedown', event => event.preventDefault())
-    node.addEventListener('click', action)
-    return node
-  }
-
   function render() {
     const context = current
-    menu.replaceChildren()
     menu.hidden = false
     const view = getView()
     const kind = current.trigger.kind
     view.dom.setAttribute('aria-expanded', 'true')
-    const header = document.createElement('div')
-    header.className = 'dsh-resend-reference-menu-header'
     const normalized = current.trigger.query.replaceAll('\\', '/')
     const slash = normalized.lastIndexOf('/')
-    if (kind === 'file' && slash >= 0) {
-      const directory = normalized.slice(0, slash).replace(/\/$/u, '')
-      const parentSlash = directory.lastIndexOf('/')
-      let parent = parentSlash < 0 ? '' : directory.slice(0, parentSlash + 1)
-      if (/^[A-Za-z]:$/u.test(directory)) parent = directory + '/'
-      if (normalized.startsWith('/') && parent === '') parent = '/'
-      header.append(button(t('row.fileParent'), () => replaceQuery(parent, context)))
+    const crumbs = []
+    if (kind === 'file' && drilled && slash >= 0) {
+      const segments = normalized.slice(0, slash).split('/').filter(Boolean)
+      const root = normalized.startsWith('/') ? '/' : ''
+      crumbs.push({ label: t('row.fileRoot'), query: root })
+      segments.forEach((label, index) => crumbs.push({ label, query: root + segments.slice(0, index + 1).join('/') + '/' }))
     }
-    header.append(button(t('row.' + kind + 'Close'), () => {
-      if (current !== context) return
-      dismissed = view.state; close(); view.focus()
-    }))
-    menu.append(header)
-    const message = document.createElement('div')
-    message.setAttribute('role', 'status')
-    message.textContent = t('row.' + kind + status)
-    menu.append(message)
-    const list = document.createElement('div')
-    list.id = menu.id + '-list'
-    list.setAttribute('role', 'listbox')
-    list.setAttribute('aria-label', t('row.' + kind + 'Candidates'))
-    view.dom.setAttribute('aria-controls', list.id)
-    view.dom.removeAttribute('aria-activedescendant')
-    results.forEach((candidate, index) => {
-      const row = document.createElement('div')
-      row.className = 'dsh-resend-reference-candidate'
-      const name = kind === 'skill' ? '/' + candidate.name : candidate.path
-      const option = button(name, () => choose(candidate, context), {
-        role: 'option', id: menu.id + '-option-' + index, 'aria-selected': String(index === active),
-        'aria-label': t(kind === 'skill' ? 'row.skillSelect' : candidate.kind === 'directory' ? 'row.fileSelectDirectory' : 'row.fileSelect') + ' ' + name,
-      })
-      row.append(option)
-      if (kind === 'skill' && typeof candidate.description === 'string') {
-        const description = document.createElement('span')
-        description.textContent = candidate.description
-        row.append(description)
-      }
-      if (index === active) view.dom.setAttribute('aria-activedescendant', option.id)
-      if (candidate.kind === 'directory') row.append(button(t('row.fileDrill'), () => {
-        if (results.includes(candidate)) replaceQuery(candidate.path.replace(/\/$/u, '') + '/', context)
-      }, { 'aria-label': t('row.fileDrill') + ' ' + candidate.path }))
-      list.append(row)
+    const listId = menu.id + '-list'
+    const optionId = index => menu.id + '-option-' + index
+    view.dom.setAttribute('aria-controls', listId)
+    if (results[active]) view.dom.setAttribute('aria-activedescendant', optionId(active))
+    else view.dom.removeAttribute('aria-activedescendant')
+    onRender({ element: menu, kind, query: current.trigger.query, status, active, results, crumbs, listId, optionId,
+      onPick: index => { if (current === context) choose(results[index], context) },
+      onDrill: index => {
+        if (current === context && results[index]?.kind === 'directory') replaceQuery(results[index].path.replace(/\/$/u, '') + '/', context)
+      },
+      onCrumb: index => { if (current === context && crumbs[index]) replaceQuery(crumbs[index].query, context) },
+      onHover: index => {
+        if (current !== context || !live() || active === index || !results[index]) return
+        active = index; render()
+      },
+      onDismiss: (focus = true) => { if (current === context) { dismissed = view.state; close(); if (focus) view.focus() } },
     })
-    menu.append(list)
-    list.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' })
   }
 
-  async function refresh() {
+  async function refresh(transaction) {
     const view = getView()
     if (destroyed || disabled() || view.composing || dismissed === view.state) { close(); return }
     if (current?.state === view.state) return
     close()
+    if (transaction?.docChanged) drilled = transaction.getMeta('referenceDrill') === true
     const trigger = triggerAt(view.state)
     if (!trigger) return
     const state = view.state
@@ -202,7 +169,7 @@ export function createReferenceMenu(element, { getView, lookup, lookupSkills, di
       const values = trigger.kind === 'skill' ? skillCatalog(result) : result?.ok === true && Array.isArray(result.value) ? validCandidates(result.value) : undefined
       if (!values) status = result?.unavailable ? 'Unavailable' : 'Failed'
       else {
-        results = trigger.kind === 'skill' ? values.filter(skill => skill.name.includes(trigger.query)) : values
+        results = trigger.kind === 'skill' ? rankByName(values, trigger.query) : values
         status = results.length ? 'Ready' : 'Empty'
       }
     } catch {
@@ -224,11 +191,12 @@ export function createReferenceMenu(element, { getView, lookup, lookupSkills, di
     setLabels(next) { t = next; if (current) render() },
     handleKey(event) {
       if (!current || menu.hidden) return false
-      if (event.key === 'Escape') { dismissed = getView().state; close() }
+      if (event.key === 'Escape' || event.key === 'Tab' && event.shiftKey) { dismissed = getView().state; close() }
       else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
         if (results.length) { active = (active + (event.key === 'ArrowDown' ? 1 : results.length - 1)) % results.length; render() }
       } else if (['Enter', 'Tab'].includes(event.key) && !event.shiftKey) {
-        if (results[active]) choose(results[active])
+        if (event.key === 'Tab' && results[active]?.kind === 'directory') replaceQuery(results[active].path.replace(/\/$/u, '') + '/')
+        else if (results[active]) choose(results[active])
       } else if (event.key === 'ArrowRight' && results[active]?.kind === 'directory') {
         replaceQuery(results[active].path.replace(/\/$/u, '') + '/')
       } else return false

@@ -290,7 +290,7 @@ export const EXPORTS = [
     file: 'node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js',
     specifier: '@deepseek-ai/dsh-client-ui-primitives',
     usedBy: 'src/user-actions.js, src/regenerate.js, src/rewind-row.js',
-    names: ['Button', 'Tooltip', 'Switch', 'IconEditOutlineRegular', 'IconPaperPlaneOutlineRegular', 'IconCloseOutlineRegular', 'IconRefreshOutlineRegular', 'IconWarningOutlineRegular'],
+    names: ['Button', 'Tooltip', 'Switch', 'IconEditOutlineRegular', 'IconPaperPlaneOutlineRegular', 'IconCloseOutlineRegular', 'IconRefreshOutlineRegular', 'IconWarningOutlineRegular', 'MenuSurface', 'ReferenceIconRegular', 'IconChevronRightOutlineRegular', 'useAnchoredMaxHeight', 'rankByName'],
   },
 ]
 

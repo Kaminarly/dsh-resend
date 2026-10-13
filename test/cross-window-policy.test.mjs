@@ -90,7 +90,7 @@ it('re-reads Host eligibility after reconnect even before the old Chat window is
   expect(b.dom.container.querySelector('[role="textbox"]')).toBe(textarea)
   expect(editorText(textarea)).toBe('断线期间保留的编辑草稿')
   await b.dom.key(textarea, 'Enter')
-  await b.dom.click(b.button(6, 'Edit in the composer'))
+  expect(b.button(6, 'Edit in the composer')).toBeNull()
   expect(b.answers).toEqual([])
   expect(b.record.draftWrites).toEqual([])
   expect(auditCount(state.session)).toBe(0)
@@ -145,7 +145,7 @@ it('synchronizes all four switches and open controls between two durable Profile
     expect(editorText(textarea)).toBe('跨窗口同步仍保留的文字')
   }
   expect(b.button(3, 'Regenerate', 'reply')).toBeNull()
-  expect(b.button(0, 'Edit in the composer').disabled).toBe(true)
+  expect(b.button(0, 'Edit in the composer')).toBeNull()
   expect(b.button(0, 'Edit').disabled).toBe(false)
   await a.dom.act(async () => { await a.face.preferences.set('regenerateLastReply', true) })
   expect(b.button(3, 'Regenerate', 'reply').disabled).toBe(false)

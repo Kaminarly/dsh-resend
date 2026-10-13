@@ -212,7 +212,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     expect(() => preferences.set('hideReplacedMessages', true)).toThrow('unknown preference')
   })
 
-  it('composer-only preference retains a working inline fallback and explains the disabled handoff', async () => {
+  it('composer-only preference retains a working temporary input without a composer handoff', async () => {
     const composition = await activated()
     const settingsDom = await renderDom(createElement(settingsOf(composition).component))
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
@@ -227,8 +227,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
       await chatDom.act(async () => {})
       expect(chatDom.container.querySelector('[role="textbox"]')).toBeNull()
       const composer = buttonIn(chatDom.container, 'Edit in the composer')
-      expect(composer).not.toBeNull()
-      expect(composer.disabled).toBe(true)
+      expect(composer).toBeNull()
       expect(buttonIn(chatDom.container, 'Edit').disabled).toBe(false)
       await chatDom.click(buttonIn(chatDom.container, 'Edit'))
       expect(chatDom.container.querySelector('[role="textbox"]')).not.toBeNull()

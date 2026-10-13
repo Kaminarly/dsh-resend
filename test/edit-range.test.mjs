@@ -40,7 +40,8 @@ async function editor({ restrict = true, inline = true } = {}) {
 
 it.each([true, false])('disables the earlier edit entry with a focusable range reason (inline=%s)', async inline => {
   const dom = await editor({ inline })
-  const button = dom.button(inline ? 'Edit' : 'Edit in the composer')
+  const button = dom.button('Edit')
+  expect(dom.button('Edit in the composer')).toBeNull()
   expect(button.disabled).toBe(true)
   expect(button.parentElement.getAttribute('aria-label')).toBe('Only the last user message can be edited and resent')
   expect(button.parentElement.tabIndex).toBe(0)
@@ -51,7 +52,7 @@ it.each([true, false])('disables the earlier edit entry with a focusable range r
   expect(dom.container.querySelector('[role="textbox"]')).toBeNull()
 })
 
-it('guards old callbacks against current policy and current conversation, including Enter and Composer handoff', async () => {
+it('guards old callbacks against current policy and current conversation, including Enter', async () => {
   const face = clientHalf().exports
   const preferences = face.createPreferences()
   preferences.connect(memoryConfigForms({ restrictEditToLastUserMessage: false }))
@@ -87,7 +88,7 @@ it('guards old callbacks against current policy and current conversation, includ
   eligibility = { assistantSeqs: [], userSeqs: [0, 2], lastUserSeq: 2 }
   await dom.act(async () => operations.refreshConversation('s', revision, true))
   await dom.act(async () => {
-    oldEditor.onSend(); oldEditor.onComposer(); oldEditor.onKeyDown({ key: 'Enter', shiftKey: false, nativeEvent: {}, preventDefault() {} }); oldOpen()
+    oldEditor.onSend(); oldEditor.onKeyDown({ key: 'Enter', shiftKey: false, nativeEvent: {}, preventDefault() {} }); oldOpen()
   })
   expect(calls).toEqual([])
   expect(drafts).toEqual([])
@@ -104,11 +105,10 @@ it('retains editable text across policy changes and newly appended users; restor
   expect(editorText(textarea)).toBe('修改的草稿\n保留中文')
   expect((textarea.getAttribute('aria-disabled') === 'true')).toBe(false)
   expect(dom.button('Send').disabled).toBe(true)
-  expect(dom.button('Edit in the composer').disabled).toBe(true)
+  expect(dom.button('Edit in the composer')).toBeNull()
   expect(dom.button('Cancel').disabled).toBe(false)
   await dom.key(textarea, 'Enter')
   await dom.click(dom.button('Send'))
-  await dom.click(dom.button('Edit in the composer'))
   expect(dom.calls).toEqual([])
   expect(dom.record.draftWrites).toEqual([])
   await dom.change(textarea, '还可以修改和复制')
@@ -124,8 +124,7 @@ it('retains editable text across policy changes and newly appended users; restor
 
 it('keeps editing available in composer-only Profiles without overwriting an ordinary draft', async () => {
   const dom = await editor({ restrict: false, inline: false })
-  expect(dom.button('Edit in the composer').disabled).toBe(true)
-  await dom.click(dom.button('Edit in the composer'))
+  expect(dom.button('Edit in the composer')).toBeNull()
   expect(dom.record.draftWrites).toEqual([])
   await dom.click(dom.button('Edit'))
   expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('原文 0')
@@ -134,7 +133,7 @@ it('keeps editing available in composer-only Profiles without overwriting an ord
   expect(dom.record.draftWrites).toEqual([])
   expect(editorText(dom.container.querySelector('[role="textbox"]'))).toBe('编辑草稿保留')
   expect(dom.button('Send').disabled).toBe(true)
-  expect(dom.button('Edit in the composer').disabled).toBe(true)
+  expect(dom.button('Edit in the composer')).toBeNull()
   const copy = dom.container.querySelector('button[aria-label="Copy"]')
   if (copy) expect(copy.disabled).toBe(false)
   expect(dom.calls).toEqual([])

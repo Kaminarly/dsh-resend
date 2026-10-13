@@ -140,7 +140,10 @@ export function createFileRollback(ctx, { home, snapshots }) {
   async function rollback(request, preparedId) {
     const { sessionId, carrierSeq, phase, planId } = request
     // Keep omitted/artifacts requests compatible; removed scopes cannot write.
-    if ((request.scope !== undefined && request.scope !== 'artifacts') || !['status', 'preview', 'execute', 'cancel'].includes(phase)) return refused('bad-request')
+    // 'keep' is the preflight-only 保留当前文件并继续／保留剩余文件并继续 choice:
+    // the gateway's rollback descriptor never exposes it, only the replay flow
+    // calls it internally.
+    if ((request.scope !== undefined && request.scope !== 'artifacts') || !['status', 'preview', 'execute', 'cancel', 'keep'].includes(phase)) return refused('bad-request')
     if (typeof sessionId !== 'string' || sessionId === '' || !Number.isSafeInteger(carrierSeq) || carrierSeq < 0) return refused('bad-request')
     const session = hostService(ctx, 'sessions')?.get(sessionId)
     if (session === undefined) return refused('session-not-found')
@@ -178,6 +181,31 @@ export function createFileRollback(ctx, { home, snapshots }) {
     }
     if (phase !== 'preview') {
       const plan = plans.get(planId)
+      // The keep wrap-up of a run that has already landed something (spec §8):
+      // finalize from the journal, not from a plan. Still-unprocessed members
+      // become the user's own kept decision; a landed change stands; an
+      // uncertain member keeps the point open — never promoted, never re-run.
+      if (phase === 'keep' && progress.get(outcome)?.states.some((entry) =>
+          entry.state === 'restored' || entry.state === 'uncertain')) {
+        const interrupted = progress.get(outcome)
+        if (plan !== undefined && plan.sessionId === sessionId && plan.carrierSeq === carrierSeq) plans.delete(planId)
+        for (const entry of interrupted.states) if (entry.state === 'pending') { entry.state = 'kept'; delete entry.reason }
+        const states = new Map(interrupted.states.map((entry) => [entry.path, entry]))
+        const files = selectionReport(interrupted.value.files, states)
+        if (interrupted.states.some((entry) => entry.state === 'uncertain')) {
+          try { await save(outcome, interrupted) } catch (error) {
+            logWarning(ctx, `file rollback progress could not be saved: ${describeError(error)}`)
+            return { ok: false, error: { code: 'progress-save-failed', files } }
+          }
+          progress.set(outcome, structuredClone(interrupted))
+          return { ok: false, error: { code: 'execution-stopped', files } }
+        }
+        const answer = { ok: true, value: { ...interrupted.value, completed: true, files } }
+        completed.set(outcome, answer)
+        owners.set(outcome, sessionId)
+        versioned.add(outcome)
+        return await saveCompletion(outcome, answer, { kind: 'file-rollback-result', version: 2, value: answer })
+      }
       if (plan === undefined || plan.sessionId !== sessionId || plan.carrierSeq !== carrierSeq) return refused('plan-not-found')
       // An explicit selection is validated BEFORE the plan is consumed, so a
       // forged, duplicate, cross-plan, disabled or empty set writes nothing and
@@ -188,7 +216,9 @@ export function createFileRollback(ctx, { home, snapshots }) {
             request.selected.some(member => !restorable.has(member))) return refused('invalid-selection')
       }
       plans.delete(planId)
-      if (phase === 'cancel') return { ok: true, value: plan.preview }
+      // A keep before anything processed is the normal keep flow: consume the
+      // plan, write nothing, claim no restore happened (spec §9).
+      if (phase === 'cancel' || phase === 'keep') return { ok: true, value: plan.preview }
       if (phase !== 'execute') return refused('bad-request')
       if (request.selected !== undefined) {
         // Revalidate the SAME plan, never silently calculate a new one. Only the

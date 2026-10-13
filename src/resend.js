@@ -286,12 +286,23 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request, repla
         return replayPreview(pending)
       }
       if (replay.phase === 'restore' && !pending.restored) {
-        const restored = await versions.rollback({ phase: 'execute', planId: pending.preview.value.planId })
+        // Only the confirmed subset is processed; an omitted selection is the
+        // legacy full-restore call (spec §10).
+        const restored = await versions.rollback({ phase: 'execute', planId: pending.preview.value.planId,
+          ...(replay.selected === undefined ? {} : { selected: replay.selected }) })
         if (!restored.ok) return restored
         pending.restored = true
-        pending.preview = { ok: true, value: { ...pending.preview.value, completed: true } }
+        // The real per-member result — restored and kept alike — is what every
+        // later failure report must keep using (spec §8): never re-derive it.
+        pending.preview = { ok: true, value: { ...pending.preview.value, ...restored.value } }
       } else if (replay.phase === 'keep' && !pending.restored) {
-        await versions.rollback({ phase: 'cancel', planId: pending.preview.value.planId })
+        // 保留当前文件并继续 / 保留剩余文件并继续 (spec §7, §8): files stay as
+        // they are, a processed run finalizes from its journal with the real
+        // results, and a save that fails stops here — generation cannot outrun
+        // the truth. An expired plan is the unprocessed keep the cancel already
+        // described, so it keeps following the normal retention flow.
+        const kept = await versions.rollback({ phase: 'keep', planId: pending.preview.value.planId })
+        if (!kept.ok && kept.error.code !== 'plan-not-found') return kept
       }
       if (agent.status !== 'idle') return pending.restored ? stoppedAfterRestore(pending, 'agent-busy') : replayFailure('agent-busy')
       // File I/O may have yielded to another window's normal send.
@@ -459,7 +470,7 @@ export class ResendService extends Service {
         await saved.versions.discardUnlessWritten()
         return { ok: true, value: { canceled: true } }
       }))
-    return this.apply(saved.request, { phase: request.phase, saved })
+    return this.apply(saved.request, { phase: request.phase, saved, selected: request.selected })
   }
 
   async rollback(request) {

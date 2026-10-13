@@ -264,7 +264,10 @@ descriptors.push({
 export function replayRequestSchema() {
   return z.union([
     z.strictObject({ phase: z.literal('start'), request: resendApplyRequestSchema() }),
-    z.strictObject({ phase: z.enum(['preview', 'restore', 'keep', 'cancel']), sessionId: z.string(), preflightId: z.string() }),
+    z.strictObject({ phase: z.enum(['preview', 'restore', 'keep', 'cancel']), sessionId: z.string(), preflightId: z.string(),
+      // The confirmed restore subset for `restore` (spec §10): the business layer
+      // validates it against the plan before anything is consumed.
+      selected: z.optional(z.array(z.string())) }),
   ])
 }
 
@@ -275,7 +278,10 @@ export function replayResultSchema() {
     z.strictObject({ ok: z.literal(true), value: z.strictObject({
       preflight: z.literal(true), preflightId: z.string(), userSeq: z.number(), op: z.enum(['edit', 'regenerate']),
       planId: z.string(), completed: z.optional(z.boolean()), scope: z.optional(z.literal('artifacts')),
-      files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse']), reason: z.optional(z.string()) })),
+      // The same real per-member outcomes the history entry reports (spec §9),
+      // and the selection identity an interrupted run recorded (spec §8).
+      selected: z.optional(z.array(z.string())),
+      files: z.array(z.strictObject({ path: z.string(), action: z.enum(['restore', 'refuse', 'kept', 'restored']), reason: z.optional(z.string()) })),
     }) }),
   ])
 }

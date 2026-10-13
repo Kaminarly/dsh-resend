@@ -158,15 +158,18 @@ export function createResendOperations(remote, references = remote) {
       for (const listener of Array.from(referenceInvalidationListeners)) listener(sessionId)
     },
     preflightFor: sessionId => preflights.get(sessionId),
-    async chooseReplay(sessionId, phase) {
+    async chooseReplay(sessionId, phase, selected) {
       const entry = preflights.get(sessionId)
       if (!entry || entry.pending) return
       preflights.set(sessionId, { ...entry, pending: phase })
       notify()
       let result
       try {
+        // `selected` rides only on a restore; keep and cancel ignore the
+        // checkboxes by carrying nothing (spec §7).
         result = unwrapRemoteResult(await remote.resend.replay({ sessionId, phase,
-          preflightId: entry.result.value?.preflightId ?? entry.preflightId }))
+          preflightId: entry.result.value?.preflightId ?? entry.preflightId,
+          ...(selected === undefined ? {} : { selected }) }))
       } catch { result = { ok: false, error: { code: 'internal' } } }
       if (phase === 'cancel' && result.error?.code === 'plan-not-found') result = { ok: true, value: { canceled: true } }
       // Plugin teardown retires this promise; late replies cannot recreate UI.

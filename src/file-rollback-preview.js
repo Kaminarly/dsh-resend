@@ -6,9 +6,12 @@ import { UIStyles } from './ui.js'
 /**
  * File-only restore: a compact entry expands into the exact approved plan.
  *
- * The history entry carries a checkbox per restorable file (ticket 01): the
+ * Both entries carry a checkbox per restorable file (tickets 01 and 02): the
  * first list checks everything, a re-check reuses the selection an interrupted
- * run recorded, and zero selection leaves only the close that cancels.
+ * run recorded, and zero selection hides the restore action. The history entry
+ * then leaves only the close that cancels; the replay preflight keeps its
+ * 保留当前文件并继续／保留剩余文件并继续 path, which ignores the checkboxes
+ * by design.
  */
 export function FileRollbackPreview({ operations, point, t, preflight }) {
   const [result, setResult] = useState()
@@ -50,7 +53,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
   }, [operations, point.sessionId, point.carrierSeq, preflight])
   const preview = result?.ok ? result.value : undefined
   const files = preview?.files ?? result?.error?.files ?? []
-  const selectable = !preflight && !terminal && !completed && preview !== undefined
+  const selectable = !terminal && !completed && preview !== undefined
   const restorablePaths = selectable ? files.filter((file) => file.action === 'restore').map((file) => file.path) : []
   const checkedPaths = selectable && checked.planId === preview?.planId ? checked.paths.filter((path) => restorablePaths.includes(path)) : []
   useEffect(() => {
@@ -67,11 +70,15 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
   const keptByChoice = files.filter((file) => file.action === 'kept').length
   const unavailable = files.filter((file) => file.action === 'refuse').length
   const expanded = preflight || (result !== undefined && !collapsed) || (busy && pending !== 'status')
-  const canExecute = preview !== undefined && !terminal && !completed && (preflight ? restorable > 0 : selectedCount > 0)
+  const canExecute = preview !== undefined && !terminal && !completed && selectedCount > 0
   // Legacy completions spell restored files as 'restore'; their refusals stay
   // "not restored". New results say exactly why each file is undone.
   const legacyCompleted = completed && result?.ok === true && result.value.files.some((entry) => entry.action === 'restore')
   const showRestored = completed || (preflight && restored > 0)
+  // A re-checked list still says 保留剩余 when this point already processed
+  // something: the landed and unknown members are present by their reasons.
+  const processed = restored > 0 || files.some((file) =>
+    file.reason === 'already-restored' || file.reason === 'restore-outcome-unavailable')
   const allSelected = restorablePaths.length > 0 && selectedCount === restorablePaths.length
   const countText = (key, count) => String(t(key)).replace('{count}', String(count))
   const renderIcon = (Icon) => createElement(Icon, { key: 'icon', size: 16, 'aria-hidden': true })
@@ -87,9 +94,12 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     planId: state.planId, paths: allSelected ? [] : restorablePaths,
   })
   async function run(phase) {
-    if (preflight) return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase)
-    if (running.current || terminal) return
+    // An empty selection is never sent: the button is hidden, and a stale click
+    // must not become an invalid host request (spec §10).
     if (phase === 'execute' && selectedCount === 0) return
+    if (preflight) return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase,
+      phase === 'execute' ? checkedPaths : undefined)
+    if (running.current || terminal) return
     running.current = true
     setPending(phase)
     if (phase === 'preview') { setResult(undefined); setCompleted(false); setCollapsed(false) }
@@ -186,7 +196,8 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
       createElement('p', { key: 'hint', className: 'dsh-resend-rollback-hint' }, [renderIcon(IconShieldOutlineRegular), t(canExecute ? 'files.confirmHint' : 'files.recordedOnly')]),
       createElement('div', { key: 'actions', className: 'dsh-resend-rollback-actions' }, [
         button('close', close, t(completed ? 'files.closeResult' : result?.ok && restorable ? 'files.cancel' : 'files.close')),
-        preflight && button('keep', () => { void operations.chooseReplay(point.sessionId, 'keep') }, t('replay.keep'), 'outline'),
+        preflight && button('keep', () => { void operations.chooseReplay(point.sessionId, 'keep') },
+          t(processed ? 'replay.keepRemaining' : 'replay.keep'), 'outline'),
         canExecute && button('execute', () => { void run('execute') }, countText('files.executeCount', selectedCount), 'primary'),
         result?.ok === false && button('retry', () => { void run('preview') }, t('files.retry'), 'outline'),
       ]),

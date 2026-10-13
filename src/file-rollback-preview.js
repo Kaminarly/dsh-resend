@@ -3,12 +3,20 @@ import { Button, FileTypeIcon, IconCheckOutlineRegular, IconRefreshOutlineRegula
 import { createPortal } from 'react-dom'
 import { UIStyles } from './ui.js'
 
-/** File-only restore: a compact entry expands into the exact approved plan. */
+/**
+ * File-only restore: a compact entry expands into the exact approved plan.
+ *
+ * The history entry carries a checkbox per restorable file (ticket 01): the
+ * first list checks everything, a re-check reuses the selection an interrupted
+ * run recorded, and zero selection leaves only the close that cancels.
+ */
 export function FileRollbackPreview({ operations, point, t, preflight }) {
   const [result, setResult] = useState()
   const [pending, setPending] = useState('status')
   const [completed, setCompleted] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
+  // Keyed by the plan the checkboxes belong to, so a fresh preview resets them.
+  const [checked, setChecked] = useState({ planId: undefined, paths: [] })
   const running = useRef(false)
   const busy = pending !== null
   const terminal = result?.ok === true && (completed || result.value.completed === true)
@@ -40,14 +48,54 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     })
     return () => { alive = false }
   }, [operations, point.sessionId, point.carrierSeq, preflight])
+  const preview = result?.ok ? result.value : undefined
+  const files = preview?.files ?? result?.error?.files ?? []
+  const selectable = !preflight && !terminal && !completed && preview !== undefined
+  const restorablePaths = selectable ? files.filter((file) => file.action === 'restore').map((file) => file.path) : []
+  const checkedPaths = selectable && checked.planId === preview?.planId ? checked.paths.filter((path) => restorablePaths.includes(path)) : []
+  useEffect(() => {
+    // The FIRST list defaults to everything; a re-check after an interruption
+    // reuses the recorded selection instead of defaulting to everything.
+    // The plan's identity is the reset key: every preview mints a fresh plan.
+    if (!selectable) return
+    const recorded = Array.isArray(preview.selected) ? new Set(preview.selected) : undefined
+    setChecked({ planId: preview.planId, paths: recorded ? restorablePaths.filter((path) => recorded.has(path)) : restorablePaths })
+  }, [selectable, preview?.planId])
+  const selectedCount = checkedPaths.length
+  const restorable = completed ? 0 : files.filter((file) => file.action === 'restore').length
+  const restored = files.filter((file) => file.action === 'restored' || (completed && result?.ok && file.action === 'restore')).length
+  const keptByChoice = files.filter((file) => file.action === 'kept').length
+  const unavailable = files.filter((file) => file.action === 'refuse').length
+  const expanded = preflight || (result !== undefined && !collapsed) || (busy && pending !== 'status')
+  const canExecute = preview !== undefined && !terminal && !completed && (preflight ? restorable > 0 : selectedCount > 0)
+  // Legacy completions spell restored files as 'restore'; their refusals stay
+  // "not restored". New results say exactly why each file is undone.
+  const legacyCompleted = completed && result?.ok === true && result.value.files.some((entry) => entry.action === 'restore')
+  const showRestored = completed || (preflight && restored > 0)
+  const allSelected = restorablePaths.length > 0 && selectedCount === restorablePaths.length
+  const countText = (key, count) => String(t(key)).replace('{count}', String(count))
+  const renderIcon = (Icon) => createElement(Icon, { key: 'icon', size: 16, 'aria-hidden': true })
+  const button = (key, onClick, label, variant = 'ghost') => createElement(Button, {
+    key, type: 'button', size: 'sm', variant, disabled: busy, onClick,
+    className: `dsh-resend-rollback-button${key === 'preview' ? ' dsh-resend-rollback-preview-button' : key === 'execute' ? ' dsh-resend-rollback-confirm-button' : ''}`,
+  }, label)
+  const toggle = (path) => setChecked((state) => state.planId !== preview?.planId ? state : {
+    planId: state.planId,
+    paths: state.paths.includes(path) ? state.paths.filter((entry) => entry !== path) : [...state.paths, path],
+  })
+  const toggleAll = () => setChecked((state) => state.planId !== preview?.planId ? state : {
+    planId: state.planId, paths: allSelected ? [] : restorablePaths,
+  })
   async function run(phase) {
     if (preflight) return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase)
     if (running.current || terminal) return
+    if (phase === 'execute' && selectedCount === 0) return
     running.current = true
     setPending(phase)
     if (phase === 'preview') { setResult(undefined); setCompleted(false); setCollapsed(false) }
     try {
-      const answer = await operations.rollback({ ...point, scope: 'artifacts', phase, ...(phase === 'preview' ? {} : { planId: result?.value?.planId }) })
+      const answer = await operations.rollback({ ...point, scope: 'artifacts', phase,
+        ...(phase === 'preview' ? {} : { planId: result?.value?.planId, ...(phase === 'execute' ? { selected: checkedPaths } : {}) }) })
       setResult(phase === 'cancel' && answer.ok ? undefined : answer)
       setCompleted(phase === 'execute' || answer.value?.completed === true)
     } catch {
@@ -61,19 +109,6 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     else if (!completed && result?.ok && result.value.planId) void run('cancel')
     else { setResult(undefined); setCompleted(false) }
   }
-  const preview = result?.ok ? result.value : undefined
-  const files = preview?.files ?? result?.error?.files ?? []
-  const restorable = completed ? 0 : files.filter((file) => file.action === 'restore').length
-  const restored = files.filter((file) => file.action === 'restored' || (completed && result?.ok && file.action === 'restore')).length
-  const kept = files.filter((file) => file.action === 'refuse').length
-  const expanded = preflight || (result !== undefined && !collapsed) || (busy && pending !== 'status')
-  const canExecute = preview !== undefined && !terminal && !completed && restorable > 0
-  const countText = (key, count) => String(t(key)).replace('{count}', String(count))
-  const renderIcon = (Icon) => createElement(Icon, { key: 'icon', size: 16, 'aria-hidden': true })
-  const button = (key, onClick, label, variant = 'ghost') => createElement(Button, {
-    key, type: 'button', size: 'sm', variant, disabled: busy, onClick,
-    className: `dsh-resend-rollback-button${key === 'preview' ? ' dsh-resend-rollback-preview-button' : key === 'execute' ? ' dsh-resend-rollback-confirm-button' : ''}`,
-  }, label)
   if (!preflight && (pending === 'status' || result?.value?.empty === true)) return null
   return createElement('section', { className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
     createElement(UIStyles, { key: 'ui' }),
@@ -101,16 +136,40 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
       preflight && restored > 0 && createElement('p', { key: 'cancel-hint', className: 'dsh-resend-rollback-notice' }, t('replay.cancelHint')),
       preview?.files.length === 0 && createElement('p', { key: 'empty', className: 'dsh-resend-rollback-notice' }, t('files.empty')),
       files.length > 0 && createElement('div', { key: 'summary', className: 'dsh-resend-rollback-summary' }, [
-        createElement('strong', { key: 'count' }, countText(completed || (preflight && restored > 0) ? 'files.restoredCount' : 'files.restoreCount', completed || (preflight && restored > 0) ? restored : restorable)),
-        createElement('span', { key: 'kept' }, countText(completed ? 'files.keptCount' : 'files.keepCount', kept)),
+        createElement('strong', { key: 'count' }, countText(showRestored ? 'files.restoredCount' : selectable ? 'files.selectedCount' : 'files.restoreCount', showRestored ? restored : selectable ? selectedCount : restorable)),
+        createElement('span', { key: 'kept' }, showRestored || selectable
+          ? `${countText('files.userKeptCount', selectable ? restorable - selectedCount : keptByChoice)} · ${countText('files.unavailableCount', unavailable)}`
+          : countText('files.keepCount', unavailable)),
+      ]),
+      selectable && restorablePaths.length > 0 && createElement('label', { key: 'select-all', className: 'dsh-resend-rollback-select-all' }, [
+        createElement('input', {
+          key: 'check', type: 'checkbox',
+          checked: allSelected,
+          // React has no indeterminate prop; the ref is where it belongs.
+          ref: (node) => { if (node) node.indeterminate = selectedCount > 0 && !allSelected },
+          disabled: busy,
+          onChange: toggleAll,
+          'aria-label': t(allSelected ? 'files.deselectAll' : 'files.selectAll'),
+        }),
+        createElement('span', { key: 'label' }, t(allSelected ? 'files.deselectAll' : 'files.selectAll')),
       ]),
       files.length > 0 && createElement('ul', { key: 'files', className: 'dsh-resend-rollback-files', 'aria-label': t('files.list') }, files.map((file, index) => {
         const normalized = file.path.replaceAll('\\', '/')
         const split = normalized.lastIndexOf('/')
         const action = completed && file.action === 'restore' ? 'restored' : file.action
         const refused = action === 'refuse'
-        const Icon = action === 'restored' ? IconCheckOutlineRegular : refused ? IconWarningOutlineRegular : IconRefreshOutlineRegular
-        return createElement('li', { key: `${index}:${file.path}`, className: 'dsh-resend-rollback-file' }, [
+        const chosen = selectable && file.action === 'restore' && checkedPaths.includes(file.path)
+        const statusKey = action === 'kept' ? 'files.userKept' : refused ? completed && legacyCompleted ? 'files.kept' : 'files.unavailable'
+          : selectable && file.action === 'restore' ? chosen ? 'files.restore' : 'files.restorable' : `files.${action}`
+        const Icon = action === 'restored' ? IconCheckOutlineRegular : refused ? IconWarningOutlineRegular : action === 'kept' ? undefined : IconRefreshOutlineRegular
+        return createElement('li', { key: `${index}:${file.path}`, 'data-path': file.path, className: 'dsh-resend-rollback-file' }, [
+          selectable && createElement('input', {
+            key: 'check', type: 'checkbox', className: 'dsh-resend-rollback-check',
+            checked: chosen,
+            disabled: busy || file.action !== 'restore',
+            onChange: () => { toggle(file.path) },
+            'aria-label': String(t('files.selectFile')).replace('{path}', file.path),
+          }),
           createElement('span', { key: 'icon', className: 'dsh-resend-rollback-file-icon', 'aria-hidden': true }, createElement(FileTypeIcon, { path: file.path, size: 20 })),
           createElement('div', { key: 'info', className: 'dsh-resend-rollback-file-info', title: file.path }, [
             createElement('span', { key: 'name', className: 'dsh-resend-rollback-filename' }, normalized.slice(split + 1)),
@@ -118,7 +177,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
             file.reason !== undefined && createElement('span', { key: 'reason', className: 'dsh-resend-rollback-reason' }, t(`files.reason.${file.reason}`)),
           ]),
           createElement('span', { key: 'status', className: `dsh-resend-rollback-file-status dsh-resend-rollback-${action}` }, [
-            renderIcon(Icon), t(refused ? completed ? 'files.kept' : 'files.unavailable' : `files.${action}`),
+            Icon !== undefined ? renderIcon(Icon) : null, t(statusKey),
           ]),
         ])
       })),
@@ -128,7 +187,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
       createElement('div', { key: 'actions', className: 'dsh-resend-rollback-actions' }, [
         button('close', close, t(completed ? 'files.closeResult' : result?.ok && restorable ? 'files.cancel' : 'files.close')),
         preflight && button('keep', () => { void operations.chooseReplay(point.sessionId, 'keep') }, t('replay.keep'), 'outline'),
-        canExecute && button('execute', () => { void run('execute') }, countText('files.executeCount', restorable), 'primary'),
+        canExecute && button('execute', () => { void run('execute') }, countText('files.executeCount', selectedCount), 'primary'),
         result?.ok === false && button('retry', () => { void run('preview') }, t('files.retry'), 'outline'),
       ]),
     ]),

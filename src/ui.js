@@ -174,6 +174,12 @@ nav button:has(.dsh-resend-settings-nav-label) > svg{display:none}
 .dsh-resend-rollback-summary strong{font-weight:600;color:var(--dsh-resend-rollback-accent)}
 .dsh-resend-rollback-summary>span{color:var(--dsw-alias-label-secondary);text-align:right}
 .dsh-resend-rollback-files{list-style:none;padding:0;margin:0}
+.dsh-resend-rollback-select-all{display:flex;align-items:center;gap:9px;margin:14px 0 2px;padding:6px 0;font-size:var(--dsh-content-font-size-secondary,13px);color:var(--dsw-alias-label-secondary);cursor:pointer}
+.dsh-resend-rollback-select-all:has(input:disabled){cursor:default;opacity:.55}
+.dsh-resend-rollback-select-all span{overflow-wrap:anywhere}
+.dsh-resend-rollback-check,.dsh-resend-rollback-select-all input{width:16px;height:16px;flex:none;margin:0;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}
+.dsh-resend-rollback-check:focus-visible,.dsh-resend-rollback-select-all input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dsh-resend-rollback-check:disabled{cursor:default;opacity:.45}
 .dsh-resend-rollback-file{display:flex;align-items:center;gap:12px;padding:14px 0}
 .dsh-resend-rollback-file+.dsh-resend-rollback-file{border-top:.5px solid var(--dsw-alias-border-l4)}
 .dsh-resend-rollback-file-icon{flex:none;display:flex;align-items:center;justify-content:center;width:32px;height:36px;border:.5px solid var(--dsw-alias-border-l4);border-radius:6px;background:var(--dsw-alias-interactive-bg-hover)}
@@ -183,6 +189,7 @@ nav button:has(.dsh-resend-settings-nav-label) > svg{display:none}
 .dsh-resend-rollback-file-status{display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;color:var(--dsh-resend-rollback-accent);font-size:var(--dsh-content-font-size-secondary,13px)}
 .dsh-resend-rollback-file-status svg{width:14px;height:14px;flex:none}
 .dsh-resend-rollback-refuse,.dsh-resend-rollback-reason,.dsh-resend-rollback-warning{color:var(--dsh-resend-rollback-warning)}
+.dsh-resend-rollback-kept{color:var(--dsw-alias-label-secondary)}
 .dsh-resend-rollback-restored{color:var(--dsw-alias-state-success-primary,var(--dsw-alias-state-business-primary))}
 .dsh-resend-rollback-notice{margin:16px 0;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover);font-size:var(--dsh-content-font-size-secondary,13px);overflow-wrap:anywhere}
 .dsh-resend-rollback-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;border-top:.5px solid var(--dsw-alias-border-l4)}

@@ -16,12 +16,33 @@ const refusedFiles = (files, reasons = new Map()) => files.map(file => ({
   path: file.path, action: 'refuse', reason: file.reason ?? reasons.get(file.path) ?? 'execution-stopped',
 }))
 
+/**
+ * Per-member outcomes of one run, as the client sees them.
+ *
+ * `kept` is always the user's own confirmed choice; every other non-restored
+ * member is `refuse` with the reason the run actually observed (spec §9: the
+ * two are never guessed into each other).
+ * @param files - the plan's file list, in plan order.
+ * @param states - member path → its journal state record.
+ */
+const selectionReport = (files, states) => files.map(file => {
+  const state = states.get(file.path)
+  if (state === undefined) return { path: file.path, action: 'refuse', reason: file.reason ?? 'execution-stopped' }
+  if (state.state === 'restored') return { path: file.path, action: 'restored' }
+  if (state.state === 'kept') return { path: file.path, action: 'kept' }
+  return { path: file.path, action: 'refuse',
+    reason: state.state === 'uncertain' ? 'restore-outcome-unavailable' : state.reason ?? file.reason ?? 'execution-stopped' }
+})
+
 export function createFileRollback(ctx, { home, snapshots }) {
   const plans = new Map()
   const completed = new Map()
   const progress = new Map()
   const owners = new Map()
   const persisted = new Set()
+  // Completions whose disk record uses the versioned shape (spec §9). A legacy
+  // full-restore keeps writing the legacy record so old readers stay honest.
+  const versioned = new Set()
   const resultSchema = rollbackResultSchema()
   const recordPath = (sessionId, id) => safePrivatePath(home, `records/${digest(JSON.stringify([sessionId, id]))}.json`)
   const outcomePath = (sessionId, id) => safePrivatePath(home, `outcomes/${digest(JSON.stringify([sessionId, id]))}.json`)
@@ -29,13 +50,13 @@ export function createFileRollback(ctx, { home, snapshots }) {
   function invalidate(sessionId) {
     for (const [id, plan] of plans) if (plan.sessionId === sessionId) plans.delete(id)
     for (const [target, owner] of owners) if (owner === sessionId) {
-      completed.delete(target); progress.delete(target); persisted.delete(target); owners.delete(target)
+      completed.delete(target); progress.delete(target); persisted.delete(target); versioned.delete(target); owners.delete(target)
     }
   }
   ctx.on('session/disposed', session => {
     for (const [id, plan] of plans) if (plan.sessionId === session.id) plans.delete(id)
   })
-  ctx.effect(() => () => { plans.clear(); completed.clear(); progress.clear(); owners.clear(); persisted.clear() })
+  ctx.effect(() => () => { plans.clear(); completed.clear(); progress.clear(); owners.clear(); persisted.clear(); versioned.clear() })
 
   async function save(target, value) {
     const staging = `${target}.${randomUUID()}.pending`
@@ -59,17 +80,22 @@ export function createFileRollback(ctx, { home, snapshots }) {
     ? { path: file.path, action: 'restored' }
     : { path: file.path, action: 'refuse', reason: file.reason ?? (file.path === failedPath ? reason : 'execution-stopped') })
 
-  async function saveCompletion(target, answer) {
+  async function saveCompletion(target, answer, record = answer) {
     try {
-      await save(target, answer)
+      await save(target, record)
       persisted.add(target); progress.delete(target)
       return answer
     } catch (error) {
       logWarning(ctx, `file rollback result could not be saved: ${describeError(error)}`)
       return { ok: false, error: { code: 'result-save-failed', files: answer.value.files.map(file => file.action === 'restore'
-        ? { path: file.path, action: 'restored' } : { path: file.path, action: 'refuse', reason: file.reason }) } }
+        ? { path: file.path, action: 'restored' } : file.action === 'refuse'
+          ? { path: file.path, action: 'refuse', reason: file.reason } : { path: file.path, action: file.action }) } }
     }
   }
+
+  /** Whether one journal state entry is a legal member of a progress record. */
+  const legalState = (entry) => ['pending', 'kept', 'refused', 'uncertain', 'restored'].includes(entry.state) &&
+      (entry.reason === undefined || typeof entry.reason === 'string')
 
   async function loadOutcome(target, sessionId) {
     // Progress changes in other Host plugins under the same session lock.
@@ -77,14 +103,32 @@ export function createFileRollback(ctx, { home, snapshots }) {
     if (completed.has(target)) return
     try {
       const saved = JSON.parse(await readFile(target, 'utf8'))
-      if (saved.kind === 'file-rollback-progress' && saved.version === 1) {
+      if (saved.kind === 'file-rollback-progress' && (saved.version === 1 || saved.version === 2)) {
         const { value } = resultSchema.parse({ ok: true, value: saved.value })
         if (!Array.isArray(saved.states) || saved.states.length !== value.files.length || saved.states.some((entry, index) =>
-          entry.path !== value.files[index].path || !['pending', 'refused', 'uncertain', 'restored'].includes(entry.state))) throw new Error('invalid rollback progress')
-        if (saved.states.every(file => ['restored', 'refused'].includes(file.state))) {
+          entry.path !== value.files[index].path || !legalState(entry))) throw new Error('invalid rollback progress')
+        if (saved.version === 2 && (!Array.isArray(saved.selected) || new Set(saved.selected).size !== saved.selected.length ||
+            saved.selected.some(member => typeof member !== 'string' || !value.files.some(file => file.path === member)))) throw new Error('invalid rollback progress')
+        // v1 semantics stand: an uncertain member is never promoted to a
+        // completion, and the derived answer keeps the LEGACY file spelling so
+        // a re-save stays a record old readers can parse. v2 ends with kept
+        // members, but an uncertain member is still a partial failure — the
+        // point stays open with its uncertain result, never a success
+        // (docs/adr/0002-selective-rollback-finalizes-point.md).
+        const terminal = saved.version === 2 ? ['restored', 'kept', 'refused'] : ['restored', 'refused']
+        if (saved.states.every(file => terminal.includes(file.state))) {
           // The last checkpoint landed; only the final result was interrupted.
-          completed.set(target, { ok: true, value: { ...value, completed: true } }); progress.delete(target)
+          if (saved.version === 2) {
+            completed.set(target, { ok: true, value: { ...value, completed: true,
+              files: selectionReport(value.files, new Map(saved.states.map(entry => [entry.path, entry]))) } })
+            versioned.add(target)
+          } else completed.set(target, { ok: true, value: { ...value, completed: true } })
+          progress.delete(target)
         } else progress.set(target, { ...saved, value })
+      } else if (saved.kind === 'file-rollback-result' && saved.version === 2) {
+        const answer = resultSchema.parse(saved.value)
+        if (!answer.ok || answer.value.completed !== true) throw new Error('invalid completion record')
+        completed.set(target, answer); persisted.add(target); versioned.add(target); progress.delete(target)
       } else {
         const answer = resultSchema.parse(saved)
         if (!answer.ok || answer.value.completed !== true) throw new Error('invalid completion record')
@@ -118,13 +162,15 @@ export function createFileRollback(ctx, { home, snapshots }) {
     await loadOutcome(outcome, sessionId)
     // Completion is permanent for this point. Return its historical result;
     // never create a second restore plan, even if current files match again.
-    if (completed.has(outcome)) return persisted.has(outcome) ? completed.get(outcome) : saveCompletion(outcome, completed.get(outcome))
+    if (completed.has(outcome)) {
+      const answer = completed.get(outcome)
+      return persisted.has(outcome) ? answer : saveCompletion(outcome, answer,
+        versioned.has(outcome) ? { kind: 'file-rollback-result', version: 2, value: answer } : answer)
+    }
     if (phase === 'status') {
       const interrupted = progress.get(outcome)
-      if (interrupted) return { ok: false, error: { code: 'execution-stopped', files: interrupted.states.map(file =>
-        file.state === 'restored' ? { path: file.path, action: 'restored' }
-          : { path: file.path, action: 'refuse', reason: file.state === 'uncertain' ? 'restore-outcome-unavailable' :
-            interrupted.value.files.find(entry => entry.path === file.path)?.reason ?? 'execution-stopped' }) } }
+      if (interrupted) return { ok: false, error: { code: 'execution-stopped', files: selectionReport(interrupted.value.files,
+        new Map((interrupted.states ?? []).map(entry => [entry.path, entry]))) } }
       let empty = false
       try { empty = filesInRecord(JSON.parse(await readFile(recordPath(sessionId, carrier.data.id), 'utf8'))).length === 0 }
       catch (error) { if (error.code !== 'ENOENT') throw error }
@@ -133,9 +179,88 @@ export function createFileRollback(ctx, { home, snapshots }) {
     if (phase !== 'preview') {
       const plan = plans.get(planId)
       if (plan === undefined || plan.sessionId !== sessionId || plan.carrierSeq !== carrierSeq) return refused('plan-not-found')
+      // An explicit selection is validated BEFORE the plan is consumed, so a
+      // forged, duplicate, cross-plan, disabled or empty set writes nothing and
+      // leaves the valid plan usable (spec §10).
+      if (request.selected !== undefined && phase === 'execute') {
+        const restorable = new Set(plan.files.filter(file => file.action === 'restore').map(file => file.path))
+        if (request.selected.length === 0 || new Set(request.selected).size !== request.selected.length ||
+            request.selected.some(member => !restorable.has(member))) return refused('invalid-selection')
+      }
       plans.delete(planId)
       if (phase === 'cancel') return { ok: true, value: plan.preview }
       if (phase !== 'execute') return refused('bad-request')
+      if (request.selected !== undefined) {
+        // Revalidate the SAME plan, never silently calculate a new one. Only the
+        // confirmed subset is revalidated: an unselected file changing does not
+        // block the members the user chose (spec §8).
+        const selected = new Set(request.selected)
+        const previous = new Map((progress.get(outcome)?.states ?? []).map(entry => [entry.path, entry]))
+        const stateOf = (file) => {
+          const state = previous.get(file.path)?.state
+          // A member whose earlier attempt already landed — or whose outcome is
+          // unknown — is never written again, whatever the plan still claims.
+          if (state === 'restored' || state === 'uncertain') return { state }
+          if (file.action === 'refuse') return { state: 'refused' }
+          return selected.has(file.path) ? { state: 'pending' } : { state: 'kept' }
+        }
+        // The journal's own entries are the loop's state records, so every
+        // checkpoint writes the progress the run has actually reached.
+        const stateEntries = plan.files.map(file => ({ path: file.path, ...stateOf(file) }))
+        const states = new Map(stateEntries.map(entry => [entry.path, entry]))
+        const divergences = new Map()
+        for (const file of plan.files) {
+          if (states.get(file.path).state !== 'pending') continue
+          try { if (!equal(await contents(session.header.cwd, file.path), file.after)) divergences.set(file.path, 'content-diverged') }
+          catch (error) { divergences.set(file.path, error.message === 'unsafe-path' ? 'unsafe-path' : 'unreadable-file') }
+        }
+        if (divergences.size > 0) return { ok: false, error: { code: 'preview-stale', files: plan.files.map(file =>
+          file.action === 'restore' && !selected.has(file.path) ? { path: file.path, action: 'kept' }
+          : { path: file.path, action: 'refuse', reason: file.reason ?? divergences.get(file.path) ?? 'execution-stopped' }) } }
+        if (agent.status !== 'idle') return { ok: false, error: { code: 'agent-busy', files: selectionReport(plan.files, states) } }
+        // The durable intent — the confirmed selection identity and every
+        // member's real progress — survives a crash between mutation and result.
+        const journal = { kind: 'file-rollback-progress', version: 2, selected: [...request.selected], value: plan.preview,
+          states: stateEntries }
+        const checkpoint = async () => { await save(outcome, journal); progress.set(outcome, structuredClone(journal)); owners.set(outcome, sessionId) }
+        /** One checkpoint, or the progress-save failure to report instead. */
+        const savedProgress = async () => {
+          try { await checkpoint() } catch (error) {
+            logWarning(ctx, `file rollback progress could not be saved: ${describeError(error)}`)
+            return { ok: false, error: { code: 'progress-save-failed', files: selectionReport(plan.files, states) } }
+          }
+        }
+        let failed = await savedProgress()
+        if (failed) return failed
+        for (const file of plan.files) {
+          if (states.get(file.path).state !== 'pending') continue
+          const state = states.get(file.path)
+          state.state = 'uncertain'; delete state.reason
+          failed = await savedProgress()
+          if (failed) return failed
+          try {
+            await restoreFile(session.header.cwd, file, () => agent.status === 'idle')
+          } catch (error) {
+            // A committed replacement whose verification failed is uncertain;
+            // do not promote it to successful completion on the next read.
+            state.state = error.restored ? 'uncertain' : 'pending'
+            state.reason = ['content-diverged', 'unsafe-path', 'agent-busy'].includes(error.message) ? error.message : 'restore-failed'
+            try { await checkpoint() } catch (saving) { logWarning(ctx, `file rollback progress could not be saved: ${describeError(saving)}`) }
+            return { ok: false, error: { code: 'execution-stopped', files: selectionReport(plan.files, states) } }
+          }
+          state.state = 'restored'; delete state.reason
+          failed = await savedProgress()
+          if (failed) return failed
+        }
+        // The confirmed subset succeeded, so the whole point is finalized: the
+        // unselected members are recorded as the user's own kept choice
+        // (docs/adr/0002-selective-rollback-finalizes-point.md).
+        const answer = { ok: true, value: { ...plan.preview, completed: true, files: selectionReport(plan.files, states) } }
+        completed.set(outcome, answer)
+        owners.set(outcome, sessionId)
+        versioned.add(outcome)
+        return await saveCompletion(outcome, answer, { kind: 'file-rollback-result', version: 2, value: answer })
+      }
       // Revalidate the SAME plan, never silently calculate a new one.
       const divergences = new Map()
       for (const file of plan.files) {
@@ -220,7 +345,10 @@ export function createFileRollback(ctx, { home, snapshots }) {
     const preview = { planId: id, ...(request.scope === undefined ? {} : { scope: 'artifacts' }),
       files: files.map(({ path, action, reason }) => ({ path, action, ...(reason === undefined ? {} : { reason }) })) }
     plans.set(id, { sessionId, carrierSeq, files, preview })
-    return { ok: true, value: preview }
+    // A recorded selection identity travels with the preview, so a re-check
+    // after an interruption reuses it instead of defaulting to everything.
+    const recorded = progress.get(outcome)
+    return { ok: true, value: { ...preview, ...(recorded?.version === 2 ? { selected: recorded.selected } : {}) } }
   }
   async function guardedRollback(request, preparedId) {
     try { return await rollback(request, preparedId) }

@@ -195,6 +195,7 @@ export function createFileVersions(ctx) {
     return {
       preview: () => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, phase: 'preview' }, carrierId),
       rollback: request => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, ...request }, carrierId),
+      content: request => rollback.content(request, carrierId),
       async discardUnlessWritten() {
         const read = await readCoveringLog(ctx, session.id)
         if (read.status === 'ok' && !read.log.some((event) => event.type === 'user/message' && event.data.id === carrierId)) {
@@ -219,6 +220,10 @@ export function createFileVersions(ctx) {
     async rollback(request) {
       synchronizeGeneration(request.sessionId)
       return rollback.rollback(request)
+    },
+    async content(request) {
+      synchronizeGeneration(request.sessionId)
+      return rollback.content(request)
     },
   }
 }

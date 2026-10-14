@@ -30,6 +30,7 @@ import { createElement } from 'react'
 import { SettingsNavigationLabel } from './settings-navigation.js'
 import { UIStyles } from './ui.js'
 import { CLEANUP_DICTIONARIES } from './storage-cleanup-ui.js'
+import { CONTENT_DICTIONARIES } from './content-preview.js'
 export { StorageCleanup } from './storage-cleanup-ui.js'
 import { createPreferences } from './preferences.js'
 import { createResendOperations } from './resend-operations.js'
@@ -142,6 +143,7 @@ const preferences = createPreferences()
 const DICTIONARIES = {
   zh: {
     ...CLEANUP_DICTIONARIES['zh-CN'],
+    ...CONTENT_DICTIONARIES['zh-CN'],
     'replay.editDescription': '先处理文件，再发送编辑后的消息',
     'replay.regenerateDescription': '先处理文件，再重新生成回复',
     'replay.awaiting': '等待选择 · 助手尚未生成',
@@ -348,6 +350,7 @@ const DICTIONARIES = {
     'replay.failed': 'Replay did not finish. Refresh the preview to continue, or cancel replay.',
     'files.error.rewind-failed': 'Files were restored, but the conversation could not be rewound and the message was not sent. Retry to continue; canceling keeps the restored files.',
     ...CLEANUP_DICTIONARIES.en,
+    ...CONTENT_DICTIONARIES.en,
     'files.title': 'File rollback',
     'files.description': 'Restore file changes recorded for this rewind',
     'files.previewShort': 'Preview rollback',

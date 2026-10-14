@@ -88,7 +88,7 @@ it.each([['edit', false], ['regenerate', false], ['edit', true], ['regenerate', 
   const request = { phase: 'start', request: { sessionId: SESSION_ID,
     targetSeq: op === 'edit' ? 2 : 3, op, ...(op === 'edit' ? { text: '重新发送' } : {}) } }
   const before = await w.call(request)
-  const expected = [{ path: 'existing.txt', action: 'restore' }, { path: 'EXAMPLE.md', action: 'restore' }]
+  const expected = [{ path: 'existing.txt', action: 'restore' }, { path: 'EXAMPLE.md', action: 'restore', operation: 'delete' }]
   expect(before.value.files).toEqual(expected)
   await w.choose(before, 'cancel')
   const { host: restarted, state } = await restart(w)
@@ -106,7 +106,7 @@ it('restores a newly created file after restart without ever opening a preflight
   await w.write('EXAMPLE.md', '项目名称\n')
   const { host } = await restart(w)
   const preview = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)
-  expect(preview.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore' }])
+  expect(preview.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore', operation: 'delete' }])
   expect((await w.call({ phase: 'restore', sessionId: SESSION_ID, preflightId: preview.value.preflightId }, host)).ok).toBe(true)
   await expect(readFile(path.join(w.cwd, 'EXAMPLE.md'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
@@ -178,7 +178,7 @@ it('preserves a successful tool result when observation persistence fails withou
   await w.write('EXAMPLE.md', '实际成功写入的内容')
   faults.failObservationSave = false
   const before = await w.start()
-  expect(before.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore' }])
+  expect(before.value.files).toEqual([{ path: 'EXAMPLE.md', action: 'restore', operation: 'delete' }])
   await w.choose(before, 'cancel')
   const { host } = await restart(w)
   const after = await w.call({ phase: 'start', request: { sessionId: SESSION_ID, targetSeq: 3, op: 'regenerate' } }, host)

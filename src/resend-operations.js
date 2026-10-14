@@ -58,6 +58,7 @@ export function createResendOperations(remote, references = remote) {
   const emptyRecords = Object.freeze([])
   const listeners = new Set()
   const referenceInvalidationListeners = new Set()
+  const contentInvalidationListeners = new Set()
   const conversations = new Map()
   const preflights = new Map()
   const retrying = new Set()
@@ -154,6 +155,10 @@ export function createResendOperations(remote, references = remote) {
       referenceInvalidationListeners.add(listener)
       return () => referenceInvalidationListeners.delete(listener)
     },
+    subscribeContentInvalidation(listener) {
+      contentInvalidationListeners.add(listener)
+      return () => contentInvalidationListeners.delete(listener)
+    },
     invalidateReferenceQueries(sessionId) {
       for (const listener of Array.from(referenceInvalidationListeners)) listener(sessionId)
     },
@@ -189,6 +194,7 @@ export function createResendOperations(remote, references = remote) {
     // Reconnection may precede Chat refill. Re-read every observed session and
     // retire in-flight replies so old neighbours cannot reopen an invalid target.
     invalidateConversations() {
+      for (const listener of Array.from(contentInvalidationListeners)) listener()
       for (const listener of Array.from(referenceInvalidationListeners)) listener()
       for (const [sessionId, entry] of conversations) {
         void this.refreshConversation(sessionId, entry.revision, true)
@@ -225,9 +231,16 @@ export function createResendOperations(remote, references = remote) {
       return entry.promise
     },
     async rollback(request) {
+      if (request.phase !== 'status') for (const listener of Array.from(contentInvalidationListeners)) listener(request.sessionId)
       return unwrapRemoteResult(await remote.resend.rollback(request))
     },
+    async content(request) {
+      if (disposed) return { ok: false, error: { code: 'plan-not-found' } }
+      const result = unwrapRemoteResult(await remote.resend.content(request))
+      return disposed ? { ok: false, error: { code: 'plan-not-found' } } : result
+    },
     async cleanup(request) {
+      if (request.phase === 'execute') for (const listener of Array.from(contentInvalidationListeners)) listener()
       return unwrapRemoteResult(await remote.resend.cleanup(request))
     },
     outcomeOf,
@@ -267,6 +280,8 @@ export function createResendOperations(remote, references = remote) {
     },
     /** Drop this page's records and listeners when the plugin unloads. */
     dispose() {
+      for (const listener of Array.from(contentInvalidationListeners)) listener()
+      contentInvalidationListeners.clear()
       for (const listener of Array.from(referenceInvalidationListeners)) listener()
       referenceInvalidationListeners.clear()
       disposed = true

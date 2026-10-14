@@ -180,7 +180,35 @@ nav button:has(.dsh-resend-settings-nav-label) > svg{display:none}
 .dsh-resend-rollback-check,.dsh-resend-rollback-select-all input{width:16px;height:16px;flex:none;margin:0;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}
 .dsh-resend-rollback-check:focus-visible,.dsh-resend-rollback-select-all input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dsh-resend-rollback-check:disabled{cursor:default;opacity:.45}
-.dsh-resend-rollback-file{display:flex;align-items:center;gap:12px;padding:14px 0}
+.dsh-resend-rollback-file{display:flex;align-items:center;gap:12px;padding:14px 0;flex-wrap:wrap}
+.dsh-resend-rollback-file-info{min-width:min(160px,100%)}
+.dsh-resend-content-view{flex:none}
+.dsh-resend-content-dialog{box-sizing:border-box;width:min(960px,calc(100vw - 32px))!important;max-width:100%!important;height:min(820px,calc(100dvh - 48px));max-height:100%!important;display:flex;flex-direction:column;gap:0!important;padding:0!important;overflow:hidden;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+div[role="presentation"]:has(>.dsh-resend-content-dialog){z-index:1100}
+div[role="presentation"]:has(>.dsh-resend-content-stacked)>div[aria-hidden="true"]{backdrop-filter:none}
+div[role="presentation"]:has(>.dsh-resend-content-stacked)>div[aria-hidden="true"]::after{background:transparent}
+.dsh-resend-content-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:20px 24px 14px;flex:none;border-bottom:.5px solid var(--dsw-alias-border-l4)}
+.dsh-resend-content-header>div{min-width:0;flex:1}
+.dsh-resend-content-header h2{margin:0 0 8px;font:inherit;font-size:var(--dsh-content-font-size,14px);font-weight:600}
+.dsh-resend-content-header p{margin:4px 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size-secondary,13px);overflow-wrap:anywhere}
+.dsh-resend-content-path{color:var(--dsw-alias-label-primary)!important}
+.dsh-resend-content-header button{flex:none;white-space:normal;max-width:120px}
+.dsh-resend-content-meta{padding:14px 24px;flex:none;font-size:var(--dsh-content-font-size-secondary,13px);overflow-wrap:anywhere}
+.dsh-resend-content-meta strong{font-weight:500}
+.dsh-resend-content-version{margin:4px 0;color:var(--dsw-alias-label-secondary)}
+.dsh-resend-content-legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:10px}
+.dsh-resend-content-body{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;border-top:.5px solid var(--dsw-alias-border-l4);padding:12px 0;font-size:var(--dsh-content-font-size-secondary,13px)}
+.dsh-resend-content-body:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+.dsh-resend-content-body>p,.dsh-resend-content-message{margin:0;padding:16px 24px;overflow-wrap:anywhere;white-space:normal}
+.dsh-resend-content-lines{width:max-content;min-width:100%;font-family:var(--dsw-font-markdown-code-block);font-size:var(--dsh-content-font-size-secondary,13px);line-height:24px}
+.dsh-resend-content-line{display:flex;min-height:24px;padding-right:20px}
+.dsh-resend-content-line code{font:inherit;white-space:pre;tab-size:4}
+.dsh-resend-content-number{box-sizing:border-box;width:5ch;flex:none;text-align:right;padding-right:1ch;color:var(--dsw-alias-label-secondary);user-select:none}
+.dsh-resend-content-mark{width:3ch;flex:none;text-align:center}
+.dsh-resend-content-delete{background:var(--dsw-alias-code-diff-deleted)}
+.dsh-resend-content-add{background:var(--dsw-alias-code-diff-added)}
+.dsh-resend-content-mark,.dsh-resend-content-legend{color:var(--dsw-alias-label-primary)}
+@media(max-width:480px){div[role="presentation"]:has(>.dsh-resend-content-dialog){padding: max(12px,var(--dsh-frame-overlay-top,12px)) 8px}.dsh-resend-content-header{padding:16px 14px;gap:8px}.dsh-resend-content-meta{padding:12px 14px}.dsh-resend-content-dialog{width:calc(100vw - 16px)!important;height:calc(100dvh - 24px)}.dsh-resend-content-header button{max-width:90px;min-height:44px}.dsh-resend-content-view{min-height:44px!important}.dsh-resend-content-number{width:4ch}}
 .dsh-resend-rollback-file+.dsh-resend-rollback-file{border-top:.5px solid var(--dsw-alias-border-l4)}
 .dsh-resend-rollback-file-icon{flex:none;display:flex;align-items:center;justify-content:center;width:32px;height:36px;border:.5px solid var(--dsw-alias-border-l4);border-radius:6px;background:var(--dsw-alias-interactive-bg-hover)}
 .dsh-resend-rollback-file-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}

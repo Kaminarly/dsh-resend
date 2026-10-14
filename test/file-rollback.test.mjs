@@ -56,7 +56,7 @@ it('does not write cached completion back after cleanup and still records subseq
     targetSeq: w.session.snapshotEvents().find(e => e.type === 'user/message' && e.data.id === 'new-user').seq, op: 'edit', text: 'modified next user' } })
   expect(result.value.ok, JSON.stringify(result)).toBe(true)
   const files = await w.call({ carrierSeq: result.value.value.carrierSeq, phase: 'preview' })
-  expect(files.value.files).toEqual([{ path: 'new.txt', action: 'restore' }])
+  expect(files.value.files).toEqual([{ path: 'new.txt', action: 'restore', operation: 'delete' }])
 })
 
 it('rejects path parameters at the cleanup gateway and does not clean before confirmation', async () => {
@@ -168,7 +168,7 @@ it('names divergent and missing-prior-state files and executes exactly the previ
   const preview = await w.call({ carrierSeq, phase: 'preview' })
   expect(preview.value.files).toEqual([
     { path: 'changed.txt', action: 'refuse', reason: 'content-diverged' },
-    { path: 'safe.txt', action: 'restore' },
+    { path: 'safe.txt', action: 'restore', operation: 'delete' },
     { path: 'historic.txt', action: 'refuse', reason: 'prior-state-unavailable' },
   ])
   expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual(preview)
@@ -309,7 +309,7 @@ it('retains the private record across plugin restart without publishing contents
   expect(result.value).toEqual(preview.value)
   expect(await readFile(path.join(w.cwd, 'file.txt'), 'utf8')).toBe('before restart 中文')
   expect(JSON.stringify(preview)).not.toContain('before restart')
-  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback', 'conversation', 'cleanup', 'replay'])
+  expect(restarted.ctx.typert.local.list().map((d) => d.method)).toEqual(['apply', 'rollback', 'conversation', 'cleanup', 'replay', 'content'])
   const forged = await dispatchToHost(restarted, 'resend/rollback', { request: { sessionId: SESSION_ID, carrierSeq, phase: 'preview', recordId: 'secret' } })
   expect(forged.ok).toBe(false)
 })
@@ -332,7 +332,7 @@ it('does not include previously shadowed tool writes in a later rewind', async (
   const result = await dispatchToHost(w.host, 'resend/apply', { request: { sessionId: SESSION_ID, targetSeq: prompt.seq, op: 'edit', text: 'again' } })
   expect(result.value.ok, JSON.stringify(result)).toBe(true)
   const preview = await w.call({ carrierSeq: result.value.value.carrierSeq, phase: 'preview' })
-  expect(preview.value.files).toEqual([{ path: 'current.txt', action: 'restore' }])
+  expect(preview.value.files).toEqual([{ path: 'current.txt', action: 'restore', operation: 'delete' }])
 })
 
 it('combines absolute and relative spellings of the same file into one restore', async () => {
@@ -423,7 +423,7 @@ it('includes first-party child tool writes whose root result is in the undone sp
   w.session.append('tool/result', { turn: 2, step: 1, message: { role: 'tool', id: 'root-result', toolCallId: 'root', source: { kind: 'tool', callId: 'root' }, content: [{ type: 'text', text: 'done' }], isError: false } }, { surfaceOp: 'append', sourceEventSeqs: [root.seq] })
   const carrierSeq = await w.rewind()
   const preview = await w.call({ carrierSeq, phase: 'preview' })
-  expect(preview.value.files).toEqual([{ path: 'child.txt', action: 'restore' }])
+  expect(preview.value.files).toEqual([{ path: 'child.txt', action: 'restore', operation: 'delete' }])
   expect(await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })).toEqual(preview)
   await expect(readFile(path.join(w.cwd, 'child.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
@@ -496,7 +496,7 @@ it('records the pre-tool bytes and previews then restores only the files written
   expect(preview.ok, JSON.stringify(preview)).toBe(true)
   expect(preview.value.files).toEqual([
     { path: '中文.txt', action: 'restore' },
-    { path: 'created.txt', action: 'restore' },
+    { path: 'created.txt', action: 'restore', operation: 'delete' },
   ])
   expect(await readFile(path.join(w.cwd, '中文.txt'), 'utf8')).toBe('\ufeffsecond edit\r\n')
   const executed = await w.call({ carrierSeq, phase: 'execute', planId: preview.value.planId })
@@ -553,6 +553,6 @@ it('reads completion while the agent is busy and keeps a later rewind point inde
   const next = await dispatchToHost(w.host, 'resend/apply', { request: { sessionId: SESSION_ID, targetSeq: prompt.seq, op: 'edit', text: 'next edit' } })
   const nextSeq = next.value.value.carrierSeq
   expect((await w.call({ carrierSeq: nextSeq, phase: 'status' })).value.completed).toBe(false)
-  expect((await w.call({ carrierSeq: nextSeq, phase: 'preview' })).value.files).toEqual([{ path: 'second.txt', action: 'restore' }])
+  expect((await w.call({ carrierSeq: nextSeq, phase: 'preview' })).value.files).toEqual([{ path: 'second.txt', action: 'restore', operation: 'delete' }])
   expect((await w.call({ carrierSeq, phase: 'status' })).value.completed).toBe(true)
 })

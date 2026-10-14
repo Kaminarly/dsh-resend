@@ -43,7 +43,7 @@ describe('the Host half registers one strict definition and serves it', () => {
     // Same registration, not a re-registration per call: one package record, one
     // endpoint, and the disposer that owns it is still the plugin fiber's.
     expect(host.ctx.typert.listPackages().map((record) => record.key)).toEqual(['dsh-resend#host'])
-    expect(host.ctx.typert.local.list().filter((descriptor) => descriptor.service === 'resend').map((descriptor) => descriptor.method)).toEqual(['apply', 'rollback', 'conversation', 'cleanup', 'replay'])
+    expect(host.ctx.typert.local.list().filter((descriptor) => descriptor.service === 'resend').map((descriptor) => descriptor.method)).toEqual(['apply', 'rollback', 'conversation', 'cleanup', 'replay', 'content'])
   })
 
   it('answers a real call with an envelope its own strict result codec accepts', async () => {

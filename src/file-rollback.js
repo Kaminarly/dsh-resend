@@ -10,6 +10,7 @@ import { hasMarkerPrefix } from './marker.js'
 import { rollbackResultSchema } from './typert.js'
 import { safePrivatePath } from './private-storage.js'
 import { filesInRecord } from './storage-cleanup.js'
+import { contentDiff } from './content-diff.js'
 
 const refused = code => ({ ok: false, error: { code } })
 const refusedFiles = (files, reasons = new Map()) => files.map(file => ({
@@ -373,8 +374,9 @@ export function createFileRollback(ctx, { home, snapshots }) {
     for (const [id, plan] of plans) if (plan.sessionId === sessionId && plan.carrierSeq === carrierSeq) plans.delete(id)
     const id = randomUUID()
     const preview = { planId: id, ...(request.scope === undefined ? {} : { scope: 'artifacts' }),
-      files: files.map(({ path, action, reason }) => ({ path, action, ...(reason === undefined ? {} : { reason }) })) }
-    plans.set(id, { sessionId, carrierSeq, files, preview })
+      files: files.map(({ path, action, reason, before }) => ({ path, action, ...(reason === undefined ? {} : { reason }),
+        ...(action === 'restore' && before === null ? { operation: 'delete' } : {}) })) }
+    plans.set(id, { sessionId, carrierSeq, files, preview, preparedId, outcome })
     // A recorded selection identity travels with the preview, so a re-check
     // after an interruption reuses it instead of defaulting to everything.
     const recorded = progress.get(outcome)
@@ -384,5 +386,27 @@ export function createFileRollback(ctx, { home, snapshots }) {
     try { return await rollback(request, preparedId) }
     catch (error) { logWarning(ctx, `file rollback failed: ${describeError(error)}`); return refused('internal') }
   }
-  return { invalidate, rollback: guardedRollback, prepared: guardedRollback }
+  async function content(request, preparedId) {
+    try {
+      const plan = plans.get(request.planId)
+      if (!plan || plan.sessionId !== request.sessionId || plan.preparedId !== preparedId ||
+          (preparedId === undefined && plan.carrierSeq !== request.carrierSeq)) return refused('plan-not-found')
+      const file = plan.files.find(file => file.path === request.path && file.action === 'restore')
+      if (!file) return refused('invalid-member')
+      const session = hostService(ctx, 'sessions')?.get(request.sessionId)
+      if (!session) return refused('plan-not-found')
+      if (hostService(ctx, 'agents')?.get(request.sessionId)?.status !== 'idle') return refused('agent-busy')
+      await loadOutcome(plan.outcome, request.sessionId)
+      const state = progress.get(plan.outcome)?.states.find(entry => entry.path === file.path)?.state
+      if (completed.has(plan.outcome) || ['restored', 'uncertain'].includes(state)) return refused('plan-not-found')
+      const current = await contents(session.header.cwd, file.path)
+      if (!equal(current, file.after)) return refused('preview-stale')
+      // A dispose/cleanup/cancel during a read must retire the answer as well.
+      if (plans.get(request.planId) !== plan) return refused('plan-not-found')
+      return { ok: true, value: contentDiff(current, file.before) }
+    } catch (error) {
+      return refused(error.message === 'unsafe-path' || error.message === 'content-diverged' ? 'preview-stale' : 'read-failed')
+    }
+  }
+  return { invalidate, rollback: guardedRollback, prepared: guardedRollback, content }
 }

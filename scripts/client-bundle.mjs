@@ -39,6 +39,20 @@ const primitivesSource = readFileSync(require_.resolve('@deepseek-ai/dsh-client-
 const rankByName = vm.runInNewContext(primitivesSource.slice(primitivesSource.indexOf('function boundaryBonus('),
   primitivesSource.indexOf('//#endregion', primitivesSource.indexOf('function rankByName('))) + '\nrankByName')
 
+// Exercise the installed Modal's actual focus/layer code, leaving only CSS
+// class names out of the Node harness. Browser acceptance uses its real CSS.
+const modalStart = primitivesSource.indexOf('function Modal(')
+const modalCode = primitivesSource.slice(primitivesSource.indexOf('function observeComposition('),
+  primitivesSource.indexOf('//#endregion', primitivesSource.indexOf('function useModalLayer('))) +
+  primitivesSource.slice(modalStart, primitivesSource.indexOf('//#endregion', modalStart))
+const HostModal = vm.runInNewContext(`${modalCode}\nModal`, {
+  ...require_('react'), ...require_('react/jsx-runtime'), createPortal: require_('react-dom').createPortal,
+  clsx: (...values) => values.filter(Boolean).join(' '),
+  css$18: { root: 'host-modal-root', mask: 'host-modal-mask', dialog: 'host-modal-dialog' },
+  get document() { return globalThis.document },
+  get HTMLElement() { return globalThis.window?.HTMLElement },
+})
+
 /**
  * The module-table entries the bundle legitimately asks for, and NOTHING else.
  *
@@ -64,6 +78,7 @@ export const MODULE_TABLE = Object.freeze({
   react: require_('react'),
   'react-dom': Object.freeze({ createPortal: (...args) => require_('react-dom').createPortal(...args) }),
   '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
+    Modal: HostModal,
     Button: require_('react').forwardRef(({ variant, size, icon, children, ...props }, ref) => require_('react').createElement('button', { ...props, ref, 'data-variant': variant }, icon, children)),
     Tooltip: ({ children }) => children,
     Switch: ({ checked, onChange, label, className, disabled }) => require_('react').createElement('button', {

@@ -114,7 +114,7 @@ it('rejects empty, forged, duplicate, cross-plan and disabled selections without
   await w.write('c.txt', 'agent-c')
   const next = await dispatchToHost(w.host, 'resend/apply', { request: { sessionId: SESSION_ID, targetSeq: prompt.seq, op: 'edit', text: 'again' } })
   const otherPreview = await w.call({ carrierSeq: next.value.value.carrierSeq, phase: 'preview' })
-  expect(otherPreview.value.files).toEqual([{ path: 'c.txt', action: 'restore' }])
+  expect(otherPreview.value.files).toEqual([{ path: 'c.txt', action: 'restore', operation: 'delete' }])
   const invalid = [
     [],                                  // an explicit empty set is not an omitted selection
     ['missing.txt'],                     // forged member

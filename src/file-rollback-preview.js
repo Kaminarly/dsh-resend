@@ -2,6 +2,7 @@ import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExt
 import { Button, FileTypeIcon, IconCheckOutlineRegular, IconRefreshOutlineRegular, IconShieldOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createPortal } from 'react-dom'
 import { UIStyles } from './ui.js'
+import { ContentPreview } from './content-preview.js'
 
 /**
  * File-only restore: a compact entry expands into the exact approved plan.
@@ -20,9 +21,16 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
   const [collapsed, setCollapsed] = useState(false)
   // Keyed by the plan the checkboxes belong to, so a fresh preview resets them.
   const [checked, setChecked] = useState({ planId: undefined, paths: [] })
+  const [viewer, setViewer] = useState()
   const running = useRef(false)
+  const panel = useRef(null)
+  const opener = useRef(null)
   const busy = pending !== null
   const terminal = result?.ok === true && (completed || result.value.completed === true)
+  useEffect(() => { setViewer(undefined) }, [operations, point.sessionId, point.carrierSeq, result?.value?.planId, busy])
+  useEffect(() => operations.subscribeContentInvalidation?.(sessionId => {
+    if (sessionId === undefined || sessionId === point.sessionId) setViewer(undefined)
+  }), [operations, point.sessionId])
   useEffect(() => {
     if (preflight) {
       setResult(preflight.result)
@@ -97,6 +105,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     // An empty selection is never sent: the button is hidden, and a stale click
     // must not become an invalid host request (spec §10).
     if (phase === 'execute' && selectedCount === 0) return
+    setViewer(undefined)
     if (preflight) return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase,
       phase === 'execute' ? checkedPaths : undefined)
     if (running.current || terminal) return
@@ -114,14 +123,21 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     } finally { running.current = false; setPending(null) }
   }
   function close() {
+    setViewer(undefined)
     if (preflight) { void operations.chooseReplay(point.sessionId, 'cancel'); return }
     if (terminal) setCollapsed(true)
     else if (!completed && result?.ok && result.value.planId) void run('cancel')
     else { setResult(undefined); setCompleted(false) }
   }
   if (!preflight && (pending === 'status' || result?.value?.empty === true)) return null
-  return createElement('section', { className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
+  return createElement('section', { ref: panel, tabIndex: -1, className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
     createElement(UIStyles, { key: 'ui' }),
+    viewer && selectable && !busy && viewer.planId === preview?.planId && viewer.sessionId === point.sessionId &&
+      createElement(ContentPreview, { key: `${viewer.sessionId}:${viewer.planId}:${viewer.path}`, operations, request: viewer,
+        stacked: !!preflight, t, onClose: () => {
+          setViewer(undefined)
+          if (!opener.current?.isConnected) panel.current?.focus({ preventScroll: true })
+        } }),
     createElement('header', { key: 'header', className: 'dsh-resend-rollback-header' }, [
       createElement('div', { key: 'title', className: 'dsh-resend-rollback-title' }, [
         renderIcon(IconRefreshOutlineRegular),
@@ -185,10 +201,17 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
             createElement('span', { key: 'name', className: 'dsh-resend-rollback-filename' }, normalized.slice(split + 1)),
             createElement('span', { key: 'path', className: 'dsh-resend-rollback-path' }, split < 0 ? t('files.root') : normalized.slice(0, split + 1)),
             file.reason !== undefined && createElement('span', { key: 'reason', className: 'dsh-resend-rollback-reason' }, t(`files.reason.${file.reason}`)),
+            selectable && file.operation === 'delete' && createElement('span', { key: 'delete', className: 'dsh-resend-rollback-path' }, t('content.delete')),
           ]),
           createElement('span', { key: 'status', className: `dsh-resend-rollback-file-status dsh-resend-rollback-${action}` }, [
             Icon !== undefined ? renderIcon(Icon) : null, t(statusKey),
           ]),
+          selectable && file.action === 'restore' && createElement(Button, { key: 'view', type: 'button', size: 'sm', variant: 'ghost',
+            disabled: busy, className: 'dsh-resend-rollback-button dsh-resend-content-view',
+            onClick: event => { opener.current = event.currentTarget; setViewer({ sessionId: point.sessionId, planId: preview.planId, path: file.path,
+              ...(preflight ? { source: 'preflight', preflightId: preview.preflightId ?? preflight.preflightId }
+                : { source: 'history', carrierSeq: point.carrierSeq }) }) },
+          }, t('content.view')),
         ])
       })),
     ]),
@@ -227,7 +250,8 @@ export function ReplayPreflight({ operations, sessionId, userSeq, targetSeq, vis
     'files.closeResult': 'replay.cancel', 'files.confirmHint': 'replay.restoreHint', 'files.recordedOnly': 'replay.waitingHint',
   }
   const panel = createElement('div', { ref: anchor, tabIndex: -1, onKeyDown: event => {
-    if (event.key === 'Escape' && !entry.pending) { event.preventDefault(); void operations.chooseReplay(sessionId, 'cancel') }
+    if (event.defaultPrevented || !anchor.current?.contains(event.target)) return
+    if (event.key === 'Escape' && !event.repeat && !event.isComposing && !entry.pending) { event.preventDefault(); void operations.chooseReplay(sessionId, 'cancel') }
     if (event.key !== 'Tab' || (!portal && !visibleUserSeqs)) return
     const buttons = [...anchor.current.querySelectorAll('button:not(:disabled)')]
     if (!buttons.length) { event.preventDefault(); return }

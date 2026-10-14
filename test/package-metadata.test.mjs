@@ -218,7 +218,7 @@ describe('the three gates are wired into check, in order (ticket 01)', () => {
     // and the gate printed VACUOUS. Ticket 02 fills the table, so an empty table
     // — or a leftover concession on the command line — is a failure now.
     expect(pkg.scripts.check).not.toContain('--allow-empty-descriptors')
-    expect(read('README.md')).toContain('--allow-empty-descriptors')
+    expect(read('GUIDE.md')).toContain('--allow-empty-descriptors')
   })
 
   it('build and test scripts exist', () => {
@@ -228,7 +228,7 @@ describe('the three gates are wired into check, in order (ticket 01)', () => {
 
   it('the probe is a first-class script, since it is the only Desktop-required check', () => {
     expect(pkg.scripts.probe).toContain('scripts/probe-profile.mjs')
-    expect(read('README.md')).toContain('npm run probe')
+    expect(read('GUIDE.md')).toContain('npm run probe')
   })
 })
 
@@ -244,13 +244,13 @@ describe('cordis.patch.yml mounts the bundle as one normal Loader row', () => {
   })
 })
 
-describe('README pins the targeted upstream versions exactly (spec §3)', () => {
-  const readme = read('README.md')
+describe('GUIDE documents the targeted upstream versions exactly (spec §3)', () => {
+  const guide = read('GUIDE.md')
 
   it('names the Desktop version, the dsh package version, and the host-surface rule', () => {
-    expect(readme).toContain(TARGET_DESKTOP_VERSION)
-    expect(readme).toContain(TARGET_DSH_VERSION)
-    expect(readme).toMatch(/host surface/i)
+    expect(guide).toContain(TARGET_DESKTOP_VERSION)
+    expect(guide).toContain(TARGET_DSH_VERSION)
+    expect(guide).toMatch(/host surface/i)
   })
 })
 
@@ -274,7 +274,7 @@ describe('the pinned target is the runtime this machine actually runs', () => {
     const desktopVersion = JSON.parse(manifest).version
     expect(
       desktopVersion,
-      `installed app is ${app.describe()}; update TARGET_DESKTOP_VERSION (and the README table) to it`,
+      `installed app is ${app.describe()}; update TARGET_DESKTOP_VERSION (and the GUIDE table) to it`,
     ).toBe(TARGET_DESKTOP_VERSION)
   })
 })

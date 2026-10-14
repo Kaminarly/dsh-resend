@@ -1,109 +1,119 @@
-# dsh-resend 项目导读
+# dsh-resend 开发指南
 
-本文说明这个仓库是什么、代码怎么组织、从哪里开始读。面向需要阅读或修改本插件的开发者。
+本文面向阅读、测试、修改或发布插件的开发者。普通使用者的功能和安装说明见 [README.md](README.md)。项目术语见 [CONTEXT.md](CONTEXT.md)，问题记录和文档布局约定见 [AGENTS.md](AGENTS.md)。
 
-## 这是什么
+## 项目定位
 
-dsh-resend 是面向 DSH Desktop（DeepSeek Harness 桌面版）的第三方插件包，为会话提供两个核心能力：
+`dsh-resend` 是一个 DSH Desktop Bundle：一个 npm 包同时提供 Host plugin 和 Client plugin，并通过 `cordis.patch.yml` 加入 Profile。
 
-- **Edit-and-resend（编辑重发）**：重新打开已发送的用户消息，编辑后再发送。
-- **Regenerate（重新生成）**：基于同一条提示再次生成助手回复。
+- Host 入口是 `package.json` 的 `main`，指向 `lib/index.js`。它注册严格 Remote 描述符并创建 `resend` 服务，负责检查请求、读取会话、准备文件记录和写入。
+- Client 入口是 `package.json` 的 `./client` 导出，指向 `lib/client.bundle.js`。它向 DSH 的 Slot 注册消息操作、临时输入框、文件面板和「DSH Resend」设置页。
+- `src/` 是手写源代码，`lib/` 是 `scripts/build.mjs` 生成并提交的发布文件。不要手动编辑 `lib/`。
 
-## 工作原理
+## 当前行为
 
-一个 npm 包即一个 Bundle，包含两侧：
+### 编辑重发与重新生成
 
-- **Host plugin**（`src/host.js`，产物 `lib/index.js`，Node ESM）：注册 Typert 描述符表并创建 `resend` 服务。
-- **Client plugin**（产物 `lib/client.bundle.js`，浏览器 JS）：通过 Slot 挂载 React UI，包括消息操作图标、内联编辑器和设置页。
+编辑重发在已发送的用户消息上打开独立的临时输入框。临时输入框与正式 Composer 的普通草稿分开，支持 `@` 文件或目录引用、`/` 技能选择、撤销和重做；不支持编辑原消息中上传的附件。
 
-`resend.apply` 是一次严格类型化的 Remote 调用。执行时写入一对事件完成 rewind：
+重新生成使用所选助手回复对应的问题。编辑重发使用用户修改后的文字。两个操作都从目标处续接有效对话：目标之后的内容会退出后续上下文，插件也会固定隐藏被替换的消息行；原始 Session log 仍保留这些记录。靠近对话开头操作可能隐藏大量后续内容。
 
-1. audit claim（`compaction/prune`），携带官方 shadow price，宿主自己的 token fold 据此扣除该范围，不会静默高估。
-2. carrier（不渲染的 `user/message`），携带 `surfaceOp` 与 `sourceEventSeqs`。
+「DSH Resend」设置包含四项：显示编辑重发按钮、显示重新生成按钮、只允许编辑重发最后一条用户消息、只允许重新生成最后一条助手回复。设置按 Profile 保存；默认显示两个操作按钮，两个范围限制默认关闭。范围判断依据当前完整有效对话，不依据当前屏幕显示的消息窗口。
 
-两者在第一次 append 前通过宿主自己的 replay 一起校验，随后相邻追加，只 flush 一次。flush 完成后，提示通过 `agent.followup` 排入 agent 队列，结果 envelope 报告已排队消息的 id。
+Host 写入 rewind 时，会把 audit claim（`compaction/prune`）与 carrier（`user/message`）作为一对事件，在首次追加前用宿主 replay 一起校验，再相邻追加并只 flush 一次。随后通过 `agent.followup` 提交提示。该调用没有返回接受结果，Host 紧接着读取 `agent.status` 判断提示是否已排队。若未排队，Client 显示「再次发送」入口；它只重试发送，不会重复 rewind。此重试状态保存在当前页面内，页面刷新后不承诺恢复。
 
-`followup` 是 fire-and-forget 调用并返回 `undefined`，唯一的接受信号是紧接调用后读取的 `agent.status`。若 agent 未接收提示，rewind 保留，envelope 省略该 id，Client 在 rewind point 渲染错误行并提供「再次发送」按钮；按下按钮重放同一个请求，Host 重新发送提示，但不会执行第二次 rewind。
+### 文件回滚
 
-## 主要功能模块
+编辑重发和重新生成先检查被替换范围内可识别的文件改动。没有文件改动时直接继续；有改动时，用户可查看清单和内容差异，选择要还原的文件、保留文件后继续，或取消。部分还原失败时会停止自动续接，显示逐文件结果；用户重新检查并决定如何处理剩余文件后才能继续。
 
-| 功能 | 说明 |
-|---|---|
-| 消息编辑与重新生成 | 内联编辑器、放入 Composer 的草稿转移、错误行重试 |
-| 范围限制策略 | 「只允许编辑重发最后一条用户消息」「只允许重新生成最后一条助手回复」等四个独立开关，按 Profile 保存 |
-| 隐藏被替换行 | 由插件自己的 CSS 隐藏计划实现；平台 Transcript 按追加来源渲染，设计上仍会显示这些行 |
-| 文件回滚预览 | 记录 agent 在被撤销跨度内写过的文件，使用插件数据目录内的私有 Git blob 存储或内容寻址快照；逐字节比较后再还原 |
-| 回滚数据清理 | 清理无法归属的残留数据、按会话清除回滚快照 |
+历史 Rewind point 也提供独立的文件回滚入口。它只处理文件，不回退对话，也不发送提示。预览与执行分离；执行前重新核验文件内容和计划。当前文件与记录的助手修改后内容不一致时，插件拒绝覆盖。已还原及结果不确定的文件不会因重试而自动重复写入。
 
-范围限制与设置项的逐项验证见 [整体验收记录](docs/action-policy-acceptance.md)，清理功能的验证边界见 [清理功能验收记录](docs/cache-cleanup-acceptance.md)。
+文件内容差异预览只展示受限文本：两个版本合计超过 3 MiB、任一版本超过 10,000 行或任一单行超过 20,000 个 Unicode 码点，以及内容不是可展示的 UTF-8 文本时，会说明不能预览；这不会单独取消文件原有的还原资格。还原完成后，可查看这次实际写回的内容；该查看不读取工作文件的后续变化。
+
+插件只记录其能可靠关联的受支持工具写入。Shell 命令和第三方工具的任意文件写入不在保证范围内；历史记录缺少可靠原始内容时会明确拒绝还原，不会用 Git HEAD 或展示用差异猜测。清理入口位于「DSH Resend」设置页，包括「清理无用残留」和「按会话清除回滚数据」。清理先预览再确认，并保护仍被其他记录引用的内容。
+
+文件清单和内容保存在插件私有数据目录：默认是 `~/.dsh/plugins/dsh-resend/`，也可由 `DSH_HOME` 指定。该目录不按 Profile 分开，同一 `DSH_HOME` 下的 Profile 共用。Git 工作区使用插件私有 Git blob；非 Git 工作区使用 SHA-256 内容对象。当前没有跨版本差分打包；相关优化仍是研究建议，不是已交付功能。
 
 ## 工程结构
 
-```
-src/       手写源代码（36 个 JavaScript 模块）
-lib/       已提交的构建产物，由 esbuild 生成，不要手动编辑
-scripts/   build.mjs、三个门禁脚本、probe-profile.mjs、preview-ui.mjs
-test/      vitest 测试套件（37 个测试文件、fixtures 与 helpers）
-docs/      验收记录、adr/、agents/
-```
-
-## 质量门禁
-
-CI 在同一个任务内依次执行：
-
-```
-check → build → git diff --exit-code -- lib/ → test
+```text
+package.json       包入口、依赖、DSH 元数据和 npm 命令
+cordis.patch.yml   将 Bundle 加入 Profile
+src/               手写 Host、Client、编辑、回滚、存储和设置模块
+lib/               可发布构建产物；由 scripts/build.mjs 生成
+scripts/           构建、契约门禁、隔离启动及浏览器验收工具
+test/              Vitest 测试、fixtures 和测试辅助工具
+docs/              验收记录、故障记录、存储研究与 ADR
+.scratch/          本地 issue/spec 记录，遵循 AGENTS.md 约定
 ```
 
-任一阶段失败即整体失败。`npm run check` 包含三道门禁：
+阅读核心路径时，可从这些文件开始：
 
-1. **`scripts/check-syntax.mjs`**：用打包器自己的解析器遍历 `src/` 与 `lib/` 下每个 JavaScript 文件，在 build 之前同时发现源码与已提交产物中的语法错误。
-2. **`scripts/check-typert.mjs`**：通过已安装的 `@deepseek-ai/dsh-typert-registry` 校验器驱动描述符两侧，逐项修改真实贡献的副本断言 §6.3 的七条规则，并读取实际运行的两个产物与两侧比较。
-3. **`scripts/check-host-contract.mjs`**：直接读取已安装的 DSH Desktop 应用（`app.asar` 或未打包的 `resources/app`），断言插件读取的每个成员仍然存在，上游已移除的成员保持消失。断言表在 `scripts/host-contract.mjs`，按声明成员的 Host 实体（类）组织。未安装应用时打印 `SKIP` 并以零退出。
+- `src/index.js`、`src/host.js`：Host half 注册与服务启动。
+- `src/resend.js`、`src/resolve.js`、`src/write.js`：请求处理、目标解析和 rewind 写入。
+- `src/log-read.js`、`src/file-versions.js`、`src/file-snapshots.js`：日志读取、文件变更记录和快照存储。
+- `src/file-rollback.js`、`src/rollback-files.js`、`src/content-preview.js`：回滚计划、文件写回和内容预览。
+- `src/client.js`、`src/ui.js`、`src/temporary-editor.js`：Client 注册、界面和临时输入框。
+- `src/typert.js`、`src/typert.host.js`、`src/typert.client.js`：Host 与 Client 共用的 Remote 描述符及两侧注册。
 
-`npm run probe` 是唯一无法在没有安装包环境运行的检查：在 `.tmp/` 下创建临时 `DSH_HOME`，把本包安装到 `probe` Profile，在操作系统分配的端口启动已发布的 Launcher，并断言 Host 审计保持静默、启动图包含 Client 行、提供的 Bundle 会自行注册。它不接触真实的 `$DSH_HOME`。
+## 开发与验收
 
-`node scripts/preview-ui.mjs` 提供本地界面验证页，使用已安装 DSH Desktop 的实际 React、消息气泡、控件和主题样式，配合示例消息与模拟操作，不读取真实会话、不发送模型请求、不改动用户文件。可用 `?dark`、`?busy` 检查深色主题与运行中禁用提示。
+环境要求：Node.js 22 或更高版本。安装依赖并运行常规检查：
 
-设置 `DSH_APP_ROOT` 可让门禁与 probe 指向指定安装，既可以是未打包的 `resources/app` 目录，也可以是 `app.asar` 路径。
+```powershell
+npm ci
+npm run check
+npm run build
+git diff --exit-code -- lib/
+npm test
+```
 
-## 目标上游版本
+CI 按 `check → build → 比较 lib/ → test` 的顺序执行。提交源码改动时，生成产物必须与源码一致；不要在 build 前比较 `lib/`。
 
-| 目标 | 版本 |
+`npm run check` 包含三项检查：
+
+1. `scripts/check-syntax.mjs` 使用 esbuild 解析器遍历 `src/` 和 `lib/` 中的 JavaScript。
+2. `scripts/check-typert.mjs` 使用安装的 DSH Typert registry 校验描述符、Host/Client 两侧贡献和拒绝路径。描述符表必须非空；旧参数 `--allow-empty-descriptors` 会作为未知参数拒绝。
+3. `scripts/check-host-contract.mjs` 检查插件实际读取的宿主成员及已移除成员。没有可读取的 DSH Desktop 安装时会显示 `SKIP`；该项只有实际运行才算完成。
+
+`npm test` 运行 Vitest 测试。测试覆盖请求拒绝、范围规则、编辑器、文件回滚、存储清理、多窗口状态及构建契约。不要在文档中固定测试文件数或通过数；测试集合会随项目变化。
+
+`npm run probe` 在 `.tmp/` 下创建隔离 `DSH_HOME` 和 `probe` Profile，使用安装的 DSH Launcher 验证 Bundle 装配、Host 启动和 Client 注册。它不会使用真实的 `$DSH_HOME` 或发送模型请求。此检查需要未打包的 DSH Desktop 安装；缺少应用或 Launcher 时会显示 `SKIP`。
+
+`node scripts/preview-ui.mjs` 启动本地界面预览，使用安装版 DSH 的 React、控件和主题，以及示例会话和模拟操作。它不读取真实会话、不请求模型，也不改动工作文件。可通过 `DSH_APP_ROOT` 指向 `resources/app` 或 `app.asar`，供宿主契约检查选择目标安装；`probe` 仍需要展开的应用目录。
+
+专项验收命令来自 `package.json`：
+
+```powershell
+npm run acceptance:browser
+npm run acceptance:bundle
+npm run acceptance:rollback:visual
+npm run acceptance:rollback:browser
+npm run acceptance:rollback:bundle
+node scripts/verify-settings-display-browser.mjs
+```
+
+这些检查覆盖临时输入框、安装包内容、隔离 Profile、文件还原交互和设置布局。Bundle 验收需要本机 DSH Desktop 测试环境；浏览器验收使用 Edge，打包验收使用 `tar`。检查输出和截图写入被忽略的 `output/`，不属于源码或发布文件。验收使用隔离数据和替身接收服务，不代表向真实用户 Profile 安装或请求外部模型。
+
+## 兼容性与依赖
+
+当前验证组合：
+
+| 组件 | 验证版本 |
 |---|---|
 | DSH Desktop | `2.0.17` |
 | `@deepseek-ai/dsh-*` | `0.2.0-rc.2` |
 | `@deepseek-ai/cordis` | `4.0.4` |
 
-兼容性由宿主表面（host surface）决定，不由 semver 决定：插件读取已安装 Host 实际暴露的成员，当断言的某个成员缺失或形状变化时 `npm run check` 会失败。`peerDependencies` 范围带有上下界并强制 `includePrerelease`；上表是本包验证过、也是开发依赖锁定的版本组合。
+`package.json` 中的 `peerDependencies` 给出允许范围；锁文件固定开发和验收所用版本。版本范围不能替代宿主契约检查：兼容性由实际宿主表面（host surface）决定，插件依赖宿主暴露的服务、导出和 Slot；宿主形状变化时 `npm run check` 应失败。
 
-## 依赖上的几个约定
+运行依赖包括 `zod` 和 ProseMirror 编辑器模块。`react`、`react-dom` 由 DSH Client 提供，因此声明为 peer，不重复打入浏览器包。`@deepseek-ai/dsh-api-gateway` 是开发依赖，用于驱动真实 Remote consumer 测试；发布代码通过注入的 Remote 调用它，不直接导入该包。`@deepseek-ai/dsh-util-crypto` 同时是 peer 和开发依赖，Host 用它生成消息标识。
 
-- **`zod` 是唯一运行时依赖**，描述符的严格 codec 需要它。schema 用 `zod/mini` 编写：两侧从同一张表派生，经典入口会把 Client 永远不会调用的函数连同约 750 KB 的 zod 打进浏览器脚本（规范 §16.5）。
-- **`@deepseek-ai/dsh-api-gateway` 是 devDependency 而非 peer**：已发布代码不导入它，Client 侧通过 `ctx.remote` 访问。锁定它是为了让 CI 驱动真实的 consumer（mount、dispatch、envelope）。
-- **`@deepseek-ai/dsh-util-crypto` 同时是 peer 与 devDependency**：Host 侧导入它的 `randomUUID` 生成 carrier 与 resend message 的标记 id，因此本包不直接调用 `crypto.randomUUID`——该 Web API 在安全上下文之外不可用。
-- **`@deepseek-ai/dsh-token-meter` 仅是 devDependency**：已发布代码通过 `ctx.get('tokenMeter')` 解析 meter 并从服务获取官方 estimator，这样 audit claim 的价格就是宿主 fold 会扣除的数值。
-- **`react` 与 `react-dom` 均为 peer**，由宿主浏览器的模块表提供；插件用 `createPortal` 把重新生成的错误提示显示在会话裁切区域之外，不打包第二份 React。`jsdom` 仅用于验证错误边界、消息操作和设置页。
-- 本包不提供 `./typert` 导出，也不使用 Typert loader 注册描述符，而是直接调用 `ctx.typert.register()`：该 loader 需要本插件不使用的完整反射图，把解析结果缓存到整个进程生命周期，失败模式是静默跳过。
+## 安装与发布
 
-## 已知限制
+### 本地安装
 
-- 用户已拒绝「最多隐藏 40% 对话」安全阀。后果是大规模重写在设计上就是视觉上破坏性的：在长 Session 顶部附近重写可能隐藏几乎整个 Transcript，重写位置的通知显示实际隐藏的行数。计数是用户与空白页面之间的唯一东西。
-- 编辑重发统一使用独立的临时输入框，「在正式输入框中编辑」入口已移除。临时输入框支持历史文件引用、文件菜单和 skill 选择；文件与 skill 查询服务通过各自的注入作用域读取，任一服务缺失不阻止插件启动或普通文本编辑。上传附件编辑和附件复制尚未实现。
-- Shell 命令与第三方工具的任意文件写入不在可识别的文件集内。日志里已有的旧调用若缺少可靠的原始内容，在预览中明确拒绝，不用 Git HEAD 或展示用差异猜测。
-- 「再次发送」按钮的重试只在记录该状态的页面加载期间有效，因为它重放的请求（含编辑后的消息文本）按设计保存在 Client 状态中。
-- 独立的对话回滚，以及同时回滚对话和文件的功能已移除。Remote 的 `rollback` 只保留省略 `scope` 或指定 `artifacts` 的文件还原调用，拒绝 `conversation` 和 `both`。
-
-## 从哪里开始读
-
-1. [README.md](README.md)：完整的行为契约与验收说明。
-2. [CONTEXT.md](CONTEXT.md)：领域术语表（Bundle、Profile、Slot、Cell、Transcript、Turn、seq 等）。平台词汇与通用工具词汇存在冲突，影响最大的是「branch」一词，改动前先对齐术语。
-3. [AGENTS.md](AGENTS.md)：issue 跟踪约定（`.scratch/<feature-slug>/`）、triage 标签与 domain docs 布局。
-4. `src/typert.js` 与 `src/host.js`：契约与写入路径的核心；`src/ui.js` 与 `src/client.js`：Client 侧挂载。
-
-## 本地安装到 Profile
-
-从源码打包（PowerShell）：
+在仓库根目录运行以下命令，生成 `.tgz` 包：
 
 ```powershell
 npm ci
@@ -113,12 +123,43 @@ New-Item -ItemType Directory -Path "D:\DSH Desktop\plugins\dsh-resend" -Force
 npm pack --pack-destination "D:\DSH Desktop\plugins\dsh-resend"
 ```
 
-随后在 DSH Desktop 侧栏选择「插件」：已安装则先卸载旧版；「添加插件」中粘贴 `.tgz` 的绝对路径，不附加引号或命令；安装后选择「立即启用」，重新打开会话确认用户消息下方出现编辑图标。界面仍显示旧版时刷新页面或重启 DSH Desktop。
+在 DSH Desktop 侧栏打开「插件」，选择「添加插件」，输入 `.tgz` 文件的绝对路径并安装，然后启用 `dsh-resend`。升级时先卸载旧版，再安装新包。不要把本机临时路径写进发布说明。
 
-通用 DSH 启动器（普通 Profile）：
+如果 dsh-resend 已发布到该 Profile 使用的 npm registry，普通 Profile 可以使用 DSH 命令：
 
 ```text
 dsh plugin --profile <name> add dsh-resend
 ```
 
-DSH Desktop 2.0.17 的 `desktop` 配置由应用管理，直接运行通用启动器会返回 `profile "desktop" is managed exclusively by the Electron application`；桌面插件优先使用应用插件页安装。
+DSH Desktop 2.0.17 的 `desktop` Profile 由应用管理；通用启动器不能管理这个 Profile，应通过桌面插件页面安装。
+
+### 通过 GitHub 安装
+
+已安装的 DSH Desktop 2.0.17 插件管理器接受 GitHub 仓库地址，例如：
+
+```text
+github:OWNER/REPOSITORY#TAG
+```
+
+这条路径不要求先发布到 npm，但需要公开可访问的仓库、可安装的根目录 `package.json`、已提交的 `lib/` 构建产物、可用的 `cordis.patch.yml`，以及本机 Git 和 GitHub 网络连接。安装器会检查 DSH 兼容性；GitHub 仓库无法访问时，切换 npm 镜像不能解决该连接问题。安装器不自动更新插件，升级需要卸载后重新安装新标签。
+
+**当前工作区尚未配置 Git remote，`package.json` 也没有 `repository` 字段，因此目前没有可供其他用户复制的真实仓库地址。** 公开仓库并确定发布标签后，再将上面的占位符替换为实际地址，并先用干净 Profile 验证安装和启用流程。
+
+## 已知限制
+
+- Rewind 会改变后续有效上下文，并隐藏被替换的 Transcript 行；原始 Session log 保留。较早位置的操作可能隐藏大量后续消息，目前没有隐藏比例上限。
+- 临时输入框不能编辑原消息的上传附件；文件引用和技能选择不等于附件复制。
+- 任意 Shell 命令和第三方工具的文件写入不保证进入回滚记录。
+- 旧会话缺少可靠原始文件内容时，插件会拒绝还原；不会从当前文件或 Git HEAD 推测历史。
+- 「再次发送」只补发未被 agent 接收的 prompt，不重新回退；其请求状态只在当前页面生命周期内保留。
+- Remote `rollback` 只支持文件范围；会话回滚和文件加会话的组合范围已移除。
+
+## 相关文档
+
+- [README.md](README.md)：普通使用者的功能与安装说明。
+- [CONTEXT.md](CONTEXT.md)：平台术语和本项目术语。
+- [docs/action-policy-acceptance.md](docs/action-policy-acceptance.md)：四项设置与操作范围验收。
+- [docs/rich-input-acceptance.md](docs/rich-input-acceptance.md)：临时输入框和交付包验收。
+- [docs/rollback-delivery-acceptance.md](docs/rollback-delivery-acceptance.md)：文件多选、差异预览和完成结果的整体交付验收。
+- [docs/cache-cleanup-acceptance.md](docs/cache-cleanup-acceptance.md)：回滚数据清理验收。
+- [docs/rollback-storage-research-20261013.md](docs/rollback-storage-research-20261013.md)：未实施的存储优化研究；其中方案不能当作当前功能。

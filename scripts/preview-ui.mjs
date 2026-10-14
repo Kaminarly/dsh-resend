@@ -135,7 +135,7 @@ if (deliveryFixture) remote = { $mount: async () => {}, resend: Object.fromEntri
 }])) };
 // This visual fixture simulates the saved document. Durable Profile behavior
 // is exercised separately against the installed SettingsForms/ConfigEditor.
-let settingsView = {status:'ready',error:null,view:{writable:true,namespaces:[{ns:'dsh-resend',value:{inlineEditorBeneathMessage:true,regenerateLastReply:true}}]}};
+let settingsView = {status:'ready',error:null,view:{writable:true,namespaces:[{ns:'dsh-resend',value:{showEditResendButton:true,regenerateLastReply:true}}]}};
 const settingsListeners = new Set();
 const settingsMirror = {getSnapshot:()=>settingsView,subscribe:(fn)=>{settingsListeners.add(fn);return()=>settingsListeners.delete(fn)},ensure:async()=>{},load:async()=>{}};
 const configForms = {describe:()=>settingsMirror,get:()=>({getSnapshot:()=>({mode:'host'}),set:async(field,value)=>{

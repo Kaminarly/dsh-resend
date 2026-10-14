@@ -22,7 +22,7 @@ import path from 'node:path'
 import { createElement } from 'react'
 import { clientHalf } from '../scripts/client-bundle.mjs'
 import { clientComposition } from './helpers/client.mjs'
-import { mount, renderDom } from './helpers/render.mjs'
+import { mount, renderDom, editorText } from './helpers/render.mjs'
 import { rootDir } from './helpers/dsh.mjs'
 import { TRACE_TEXT, traceTextNow } from '../lib/trace-text.js'
 
@@ -174,7 +174,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
       // Display preferences start on; independent range restrictions start off.
       expect(toggleIn(settingsDom.container, 'hideReplacedMessages')).toBeNull()
       expect(settingsDom.container.querySelectorAll('[role=switch]')).toHaveLength(4)
-      for (const field of ['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage']) {
+      for (const field of ['showEditResendButton', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage']) {
         const toggle = settingsDom.container.querySelector(`[data-field="${field}"] button.dsh-resend-settings-toggle`)
         expect(toggle?.getAttribute('aria-checked')).toBe(String(!field.startsWith('restrict')))
       }
@@ -212,7 +212,7 @@ describe('registration 4: editable preferences and fixed hiding', () => {
     expect(() => preferences.set('hideReplacedMessages', true)).toThrow('unknown preference')
   })
 
-  it('composer-only preference retains a working temporary input without a composer handoff', async () => {
+  it('hides and restores edit entry buttons while retaining the temporary editor', async () => {
     const composition = await activated()
     const settingsDom = await renderDom(createElement(settingsOf(composition).component))
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
@@ -222,20 +222,59 @@ describe('registration 4: editable preferences and fixed hiding', () => {
       expect(chatDom.container.querySelector('[role="textbox"]')).not.toBeNull()
       await chatDom.click(buttonIn(chatDom.container, 'Cancel'))
 
-      // Off: the old preference cannot turn edits into ordinary appended drafts.
-      await settingsDom.click(toggleIn(settingsDom.container, 'inlineEditorBeneathMessage'))
+      // Off hides the entry and does not hand an edit to the ordinary composer.
+      await settingsDom.click(toggleIn(settingsDom.container, 'showEditResendButton'))
       await chatDom.act(async () => {})
       expect(chatDom.container.querySelector('[role="textbox"]')).toBeNull()
       const composer = buttonIn(chatDom.container, 'Edit in the composer')
       expect(composer).toBeNull()
-      expect(buttonIn(chatDom.container, 'Edit').disabled).toBe(false)
+      expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
+      await settingsDom.click(toggleIn(settingsDom.container, 'showEditResendButton'))
       await chatDom.click(buttonIn(chatDom.container, 'Edit'))
       expect(chatDom.container.querySelector('[role="textbox"]')).not.toBeNull()
+      await chatDom.change(chatDom.container.querySelector('[role="textbox"]'), '保留已打开的编辑草稿')
+      await settingsDom.click(toggleIn(settingsDom.container, 'showEditResendButton'))
+      expect(buttonIn(chatDom.container, 'Edit')).toBeNull()
+      expect(editorText(chatDom.container.querySelector('[role="textbox"]'))).toBe('保留已打开的编辑草稿')
+      await chatDom.click(buttonIn(chatDom.container, 'Cancel'))
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()
     }
   })
+
+  it.each([[true, true], [true, false], [false, true], [false, false]])(
+    'gates each range toggle independently (edit=%s, regenerate=%s) and retains saved restrictions', async (edit, regenerate) => {
+      const composition = await activated()
+      const dom = await renderDom(createElement(settingsOf(composition).component))
+      try {
+        expect(toggleIn(dom.container, 'inlineEditorBeneathMessage')).toBeNull()
+        await dom.click(toggleIn(dom.container, 'restrictEditToLastUserMessage'))
+        await dom.click(toggleIn(dom.container, 'restrictRegenerateToLastReply'))
+        if (!edit) await dom.click(toggleIn(dom.container, 'showEditResendButton'))
+        if (!regenerate) await dom.click(toggleIn(dom.container, 'regenerateLastReply'))
+        const editRange = toggleIn(dom.container, 'restrictEditToLastUserMessage')
+        const regenerateRange = toggleIn(dom.container, 'restrictRegenerateToLastReply')
+        expect(editRange.disabled).toBe(!edit)
+        expect(regenerateRange.disabled).toBe(!regenerate)
+        expect(editRange.getAttribute('aria-checked')).toBe('true')
+        expect(regenerateRange.getAttribute('aria-checked')).toBe('true')
+        if (!edit) {
+          await dom.click(editRange)
+          expect(editRange.getAttribute('aria-checked')).toBe('true')
+          await dom.click(toggleIn(dom.container, 'showEditResendButton'))
+          expect(editRange.disabled).toBe(false)
+          expect(editRange.getAttribute('aria-checked')).toBe('true')
+        }
+        if (!regenerate) {
+          await dom.click(regenerateRange)
+          expect(regenerateRange.getAttribute('aria-checked')).toBe('true')
+          await dom.click(toggleIn(dom.container, 'regenerateLastReply'))
+          expect(regenerateRange.disabled).toBe(false)
+          expect(regenerateRange.getAttribute('aria-checked')).toBe('true')
+        }
+      } finally { await dom.cleanup() }
+    })
 
   it('regenerate off hides the control entirely', async () => {
     const composition = await activated()
@@ -274,7 +313,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     // And the chat surfaces are English through the slot's own translator.
     const chatDom = await renderDom(createElement(actionsOf(composition).component, actionProps(composition)))
     try {
-      expect(settingsDom.container.textContent).toContain('Inline editor beneath the message')
+      expect(settingsDom.container.textContent).toContain('Show edit and resend buttons')
       expect(settingsDom.container.textContent).toContain('Show regenerate buttons')
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
       expect(buttonIn(chatDom.container, 'Edit')).not.toBeNull()
@@ -283,7 +322,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
       locale.active = 'zh'
       await settingsDom.render(createElement(registration.component))
       await chatDom.render(createElement(actionsOf(composition).component, actionProps(composition)))
-      expect(settingsDom.container.textContent).toContain('消息下方的内联编辑器')
+      expect(settingsDom.container.textContent).toContain('显示编辑重发按钮')
       expect(settingsDom.container.textContent).toContain('显示重新生成按钮')
       expect(settingsDom.container.textContent).not.toContain('隐藏被替换的消息')
       expect(settingsDom.container.textContent).not.toContain('Hide replaced messages')
@@ -304,7 +343,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
     const entry = composition.record.dictionaries.find((item) => item.namespace === 'dsh-resend')
     expect(Object.keys(entry.dictionaries).sort()).toEqual(['en', 'zh'])
     for (const key of [
-      'settings.heading', 'settings.inlineEditorBeneathMessage', 'settings.regenerateLastReply',
+      'settings.heading', 'settings.showEditResendButton', 'settings.regenerateLastReply',
       'settings.restrictRegenerateToLastReply', 'settings.regenerateRangeDescription',
       'row.conversationUnavailable', 'operation.error.not-assistant-message',
       'settings.loading', 'settings.saving', 'settings.read-error', 'settings.save-error', 'settings.retry',

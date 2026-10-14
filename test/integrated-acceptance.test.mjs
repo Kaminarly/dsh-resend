@@ -39,7 +39,7 @@ it.each(combinations.flatMap(rules => ['edit', 'regenerate'].flatMap(op => [fals
   ('saved ranges regenerate=$restrictRegenerate edit=$restrictEdit govern $op (last=$last) in a new session', async ({ restrictRegenerate, restrictEdit, op, last }) => {
     const state = hostState({ session: measuredFixture(), agent: 'delivering' })
     const { host, face } = await durable(state)
-    expect(face.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: true,
+    expect(face.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: true,
       regenerateLastReply: true, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     await face.preferences.set('restrictRegenerateToLastReply', restrictRegenerate)
     await face.preferences.set('restrictEditToLastUserMessage', restrictEdit)
@@ -48,7 +48,7 @@ it.each(combinations.flatMap(rules => ['edit', 'regenerate'].flatMap(op => [fals
     await face.preferences.set('restrictRegenerateToLastReply', !restrictRegenerate)
     await face.preferences.set('restrictRegenerateToLastReply', restrictRegenerate)
     await face.preferences.set('regenerateLastReply', true)
-    expect(host.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true,
+    expect(host.settings.describe()[0].value).toEqual({ showEditResendButton: true,
       regenerateLastReply: true, restrictRegenerateToLastReply: restrictRegenerate, restrictEditToLastUserMessage: restrictEdit })
     // Same live Profile, freshly created conversation, same saved policy.
     state.session = measuredFixture('new-conversation')
@@ -96,7 +96,7 @@ it.each(['edit', 'regenerate'])('restores saved settings and fixed hiding from p
   resources.push(freshClient)
   const fresh = clientHalf().exports
   fresh.preferences.connect(freshClient.forms)
-  expect(fresh.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false,
+  expect(fresh.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: false,
     regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
   expect(logOf(state.session).slice(0, 12)).toEqual(original)
   expect(state.session.surface.nodes).toEqual([13, 14])

@@ -22,15 +22,18 @@ import { StorageCleanup } from './storage-cleanup-ui.js'
 
 /** One row per preference field, keyed by the field's i18n label. */
 const SETTING_KEYS = Object.freeze({
-  inlineEditorBeneathMessage: 'settings.inlineEditorBeneathMessage',
+  showEditResendButton: 'settings.showEditResendButton',
   regenerateLastReply: 'settings.regenerateLastReply',
   restrictRegenerateToLastReply: 'settings.restrictRegenerateToLastReply',
   restrictEditToLastUserMessage: 'settings.restrictEditToLastUserMessage',
 })
 const DESCRIPTIONS = Object.freeze({
-  inlineEditorBeneathMessage: 'settings.inlineEditorFallbackDescription',
   restrictRegenerateToLastReply: 'settings.regenerateRangeDescription',
   restrictEditToLastUserMessage: 'settings.editRangeDescription',
+})
+const DEPENDENCIES = Object.freeze({
+  restrictEditToLastUserMessage: 'showEditResendButton',
+  restrictRegenerateToLastReply: 'regenerateLastReply',
 })
 
 /** The id this row registers under — brand-new, never a shipped one. */
@@ -47,8 +50,10 @@ export function SettingsRow({ preferences, t, operations }) {
     }, [t('settings.' + snapshot.status), snapshot.status.endsWith('error') ? createElement(Button, {
       key: 'retry', onClick: () => { void preferences.retry() },
     }, t('settings.retry')) : null]),
-    ...PREFERENCE_FIELDS.map((field) =>
-      createElement('div', { key: field, className: 'dsh-resend-settings-row', 'data-field': field }, [
+    ...PREFERENCE_FIELDS.map((field) => {
+      const dependentDisabled = DEPENDENCIES[field] !== undefined && snapshot[DEPENDENCIES[field]] === false
+      return createElement('div', { key: field, className: 'dsh-resend-settings-row', 'data-field': field,
+        'data-dependent-disabled': dependentDisabled || undefined }, [
         createElement('div', { key: 'label', className: 'dsh-resend-settings-label' }, [
           createElement('span', { key: 'name' }, t(SETTING_KEYS[field])),
           DESCRIPTIONS[field] ? createElement('p', {
@@ -58,11 +63,12 @@ export function SettingsRow({ preferences, t, operations }) {
         createElement(Switch, {
           key: 'toggle',
           className: 'dsh-resend-settings-toggle', label: t(SETTING_KEYS[field]),
-          checked: snapshot[field], disabled: !snapshot.ready || snapshot.status === 'saving',
+          checked: snapshot[field], disabled: !snapshot.ready || snapshot.status === 'saving' || dependentDisabled,
           'aria-describedby': DESCRIPTIONS[field] ? 'dsh-resend-' + field + '-description' : undefined,
-          onChange: (next) => { void preferences.set(field, next) },
+          onChange: (next) => { if (!dependentDisabled) void preferences.set(field, next) },
         }),
-      ])),
+      ])
+    }),
     operations ? createElement(StorageCleanup, { key: 'cleanup', operations, t }) : null,
   ])
 }

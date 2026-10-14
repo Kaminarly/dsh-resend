@@ -153,6 +153,7 @@ nav button:has(.dsh-resend-settings-nav-label) > svg{display:none}
 .dsh-resend-settings-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:10px 0}
 .dsh-resend-settings-row + .dsh-resend-settings-row{border-top:.5px solid var(--dsw-alias-border-l4)}
 .dsh-resend-settings-label{min-width:0}
+.dsh-resend-settings-row[data-dependent-disabled] .dsh-resend-settings-label{color:var(--dsw-alias-label-secondary)}
 .dsh-resend-settings-description{margin:6px 0 0;color:var(--dsw-alias-label-secondary);font-size:var(--dsh-content-font-size-secondary,13px);line-height:22px;overflow-wrap:anywhere}
 .dsh-resend-settings-toggle{flex:none}
 .dsh-resend-rollback{container-type:inline-size;min-width:0;padding:0;overflow:hidden;border-radius:var(--dsw-radius-panel);--dsh-resend-rollback-accent:var(--dsw-alias-label-primary);--dsh-resend-rollback-warning:color-mix(in srgb,var(--dsw-alias-state-warn-label) 50%,var(--dsw-alias-label-primary))}

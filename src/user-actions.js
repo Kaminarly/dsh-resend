@@ -174,7 +174,7 @@ export function UserActionsRow(props) {
   const stopReason = reasonFor(prefs, conversation, live.current)
 
   const open = () => {
-    if (live.current.targetKey !== targetKey || currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
+    if (preferences.getSnapshot().showEditResendButton === false || live.current.targetKey !== targetKey || currentReason() !== undefined || inFlight.current || operations.preflightFor?.(sessionId)) return
     operations.clearDraft(target)
     setText(live.current.data.text)
     setError(undefined)
@@ -241,8 +241,8 @@ export function UserActionsRow(props) {
   if (!eligible) return createElement(Fragment, null, rules, props.renderMessage?.(null),
     createElement(ReplayPreflight, { operations, sessionId, userSeq: data.seq, portal: true, t }))
 
-  // Keep editing usable for Profiles that previously selected composer-only mode.
-  const idle = [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
+  // The display preference hides entry buttons without discarding an open draft.
+  const idle = prefs.showEditResendButton === false ? [] : [control('edit', t('row.edit'), IconEditOutlineRegular, open, stopReason, pending || !!preflight)]
   const editor = editing === targetKey && createElement(InlineEditorSurface, {
       key: targetKey, t, value: text, draft: operations.draftFor(target, data.text), editorRef,
       lookup: (query, signal) => operations.referenceCandidates(sessionId, query, signal),

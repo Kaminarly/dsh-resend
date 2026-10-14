@@ -20,7 +20,7 @@ import Schema from '@deepseek-ai/schemastery'
 
 /** Live fields update in place through the Loader; the chat client never remounts. */
 export const Config = Schema.object({
-  inlineEditorBeneathMessage: Schema.boolean().default(true).volatile(),
+  showEditResendButton: Schema.boolean().default(true).volatile(),
   regenerateLastReply: Schema.boolean().default(true).volatile(),
   restrictRegenerateToLastReply: Schema.boolean().default(false).volatile(),
   restrictEditToLastUserMessage: Schema.boolean().default(false).volatile(),

@@ -146,7 +146,12 @@ it('synchronizes all four switches and open controls between two durable Profile
   }
   expect(b.button(3, 'Regenerate', 'reply')).toBeNull()
   expect(b.button(0, 'Edit in the composer')).toBeNull()
+  expect(b.button(0, 'Edit')).toBeNull()
+  expect(b.dom.container.querySelector('[data-field="restrictEditToLastUserMessage"] [role="switch"]').disabled).toBe(true)
+  expect(b.dom.container.querySelector('[data-field="restrictRegenerateToLastReply"] [role="switch"]').disabled).toBe(true)
+  await a.dom.act(async () => { await a.face.preferences.set('showEditResendButton', true) })
   expect(b.button(0, 'Edit').disabled).toBe(false)
+  expect(b.dom.container.querySelector('[data-field="restrictEditToLastUserMessage"] [role="switch"]').disabled).toBe(false)
   await a.dom.act(async () => { await a.face.preferences.set('regenerateLastReply', true) })
   expect(b.button(3, 'Regenerate', 'reply').disabled).toBe(false)
   await a.dom.act(async () => { await a.face.preferences.set('restrictRegenerateToLastReply', true) })
@@ -154,7 +159,7 @@ it('synchronizes all four switches and open controls between two durable Profile
   // A fresh independent Profile uses its own document, rather than shared browser storage.
   const other = await settingsHost(h.profile.home, 'other')
   resources.push(other)
-  expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true,
+  expect(other.settings.describe()[0].value).toEqual({ showEditResendButton: true, regenerateLastReply: true,
     restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
 })
 

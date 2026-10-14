@@ -84,7 +84,7 @@ describe('saved display preferences', () => {
     const second = await clientFor(h)
     const fresh = clientHalf().exports
     fresh.preferences.connect(second.forms)
-    expect(fresh.preferences.getSnapshot()).toMatchObject({ restrictRegenerateToLastReply: false, regenerateLastReply: false, inlineEditorBeneathMessage: true })
+    expect(fresh.preferences.getSnapshot()).toMatchObject({ restrictRegenerateToLastReply: false, regenerateLastReply: false, showEditResendButton: true })
     expect(await fresh.preferences.set('regenerateLastReply', true)).toBe(true)
     expect(fresh.preferences.getSnapshot().restrictRegenerateToLastReply).toBe(false)
     expect(h.settings.describe()[0].value.restrictRegenerateToLastReply).toBe(false)
@@ -107,7 +107,7 @@ describe('saved display preferences', () => {
     expect((await service.apply(request)).ok).toBe(true)
     expect(state.calls.followupInputs[0].content).toEqual([{ type: 'text', text: 'first prompt' }])
   })
-  it.each(['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'])(
+  it.each(['showEditResendButton', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'])(
     'does not let a delayed successful $field response overwrite a newer save from another page', async field => {
     const h = await durable()
     let release
@@ -162,16 +162,16 @@ describe('saved display preferences', () => {
       const textarea = dom.container.querySelector('[role="textbox"]')
       await dom.change(textarea, '草稿不会丢失')
       let save
-      await dom.act(async () => { save = page.preferences.set('inlineEditorBeneathMessage', false); await tick() })
-      expect(page.preferences.getSnapshot()).toMatchObject({ status: 'saving', inlineEditorBeneathMessage: true })
+      await dom.act(async () => { save = page.preferences.set('showEditResendButton', false); await tick() })
+      expect(page.preferences.getSnapshot()).toMatchObject({ status: 'saving', showEditResendButton: true })
       // Host invalidation arrives before the write response is delivered.
       const complete = finish()
       await tick()
-      expect(page.preferences.getSnapshot().inlineEditorBeneathMessage).toBe(true)
+      expect(page.preferences.getSnapshot().showEditResendButton).toBe(true)
       await dom.act(async () => { await complete; await save })
       expect(dom.container.querySelector('[role="textbox"]')).toBe(textarea)
       expect(editorText(textarea)).toBe('草稿不会丢失')
-      expect(page.preferences.getSnapshot().inlineEditorBeneathMessage).toBe(false)
+      expect(page.preferences.getSnapshot().showEditResendButton).toBe(false)
       disconnected = true
       await dom.act(async () => { await client.forms.describe().load() })
       expect(button('Send').disabled).toBe(true)
@@ -215,9 +215,9 @@ describe('saved display preferences', () => {
     const a = clientHalf().exports
     const b = clientHalf().exports
     a.preferences.connect(first.forms); b.preferences.connect(second.forms)
-    await a.preferences.set('inlineEditorBeneathMessage', false)
+    await a.preferences.set('showEditResendButton', false)
     await second.forms.describe().load()
-    expect(b.preferences.getSnapshot().inlineEditorBeneathMessage).toBe(false)
+    expect(b.preferences.getSnapshot().showEditResendButton).toBe(false)
     disconnected = true
     await a.preferences.set('regenerateLastReply', false)
     await second.forms.describe().load()
@@ -225,10 +225,10 @@ describe('saved display preferences', () => {
     disconnected = false
     second.ctx.emit('connection/reset')
     await second.forms.describe().ensure()
-    expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false })
+    expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: false, regenerateLastReply: false })
   })
 
-  it.each(['inlineEditorBeneathMessage', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'].flatMap(field =>
+  it.each(['showEditResendButton', 'regenerateLastReply', 'restrictRegenerateToLastReply', 'restrictEditToLastUserMessage'].flatMap(field =>
     ['refused', 'committed-no-answer', 'unconfirmed'].map(failure => ({ field, failure }))))(
     'recovers authoritative $field after $failure and provides a usable retry', async ({ field, failure }) => {
       const h = await durable()
@@ -265,51 +265,54 @@ describe('saved display preferences', () => {
     const page = clientHalf().exports
     page.preferences.connect(client.forms)
     const fiber = h.entry.fiber
-    expect(await page.preferences.set('inlineEditorBeneathMessage', false)).toBe(true)
+    expect(await page.preferences.set('showEditResendButton', false)).toBe(true)
     expect(await page.preferences.set('regenerateLastReply', false)).toBe(true)
     expect(h.entry.fiber).toBe(fiber)
-    expect(h.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
+    expect(h.settings.describe()[0].value).toEqual({ showEditResendButton: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     expect(await page.preferences.set('restrictRegenerateToLastReply', false)).toBe(true)
     expect(await page.preferences.set('restrictEditToLastUserMessage', false)).toBe(true)
     await client.close()
     client = await settingsClientProvider(h)
     const refreshed = clientHalf().exports
     refreshed.preferences.connect(client.forms)
-    expect(refreshed.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
+    expect(refreshed.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     await client.close(); await h.close()
     h = await settingsHost(home, 'first')
     client = await settingsClientProvider(h)
     const restarted = clientHalf().exports
     restarted.preferences.connect(client.forms)
-    expect(restarted.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
+    expect(restarted.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: false, regenerateLastReply: false, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     const other = await settingsHost(home, 'second')
-    expect(other.settings.describe()[0].value).toEqual({ inlineEditorBeneathMessage: true, regenerateLastReply: true, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
+    expect(other.settings.describe()[0].value).toEqual({ showEditResendButton: true, regenerateLastReply: true, restrictRegenerateToLastReply: false, restrictEditToLastUserMessage: false })
     await other.close(); await client.close(); await h.close()
   })
   it('exposes live host fields with independent defaults and keeps legal old values', () => {
     expect(host.Config).toBeDefined()
-    const parsed = resolveConfig(host, { inlineEditorBeneathMessage: false, regenerateLastReply: 'false' })
-    expect(parsed.inlineEditorBeneathMessage.get()).toBe(false)
+    const parsed = resolveConfig(host, { showEditResendButton: false, regenerateLastReply: 'false' })
+    expect(parsed.showEditResendButton.get()).toBe(false)
     expect(parsed.regenerateLastReply.get()).toBe(true)
     expect(parsed.restrictRegenerateToLastReply.get()).toBe(false)
     expect(parsed.restrictEditToLastUserMessage.get()).toBe(false)
     expect(resolveConfig(host, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true }).restrictEditToLastUserMessage.get()).toBe(true)
     expect(resolveConfig(host, { restrictRegenerateToLastReply: false }).restrictRegenerateToLastReply.get()).toBe(false)
     expect(host.Config.dict.regenerateLastReply.meta.volatile).toBe(true)
+    expect(host.Config.dict).not.toHaveProperty('inlineEditorBeneathMessage')
+    // A retired editor-placement preference must not silently hide edit entries.
+    expect(resolveConfig(host, { inlineEditorBeneathMessage: false }).showEditResendButton.get()).toBe(true)
   })
   it('loads authoritative values and updates a second page only after acceptance', async () => {
     const a = clientHalf().exports
     const b = clientHalf().exports
-    const forms = formsFixture({ inlineEditorBeneathMessage: false })
+    const forms = formsFixture({ showEditResendButton: false })
     const offA = a.preferences.connect(forms)
     const offB = b.preferences.connect(forms)
-    expect(a.preferences.getSnapshot()).toMatchObject({ ready: true, inlineEditorBeneathMessage: false, regenerateLastReply: true })
+    expect(a.preferences.getSnapshot()).toMatchObject({ ready: true, showEditResendButton: false, regenerateLastReply: true })
     let finish
     const original = forms.form.set
     forms.form.set = (...args) => new Promise(resolve => { finish = async () => resolve(await original(...args)) })
     const write = a.preferences.set('regenerateLastReply', false)
     expect(a.preferences.getSnapshot()).toMatchObject({ status: 'saving', regenerateLastReply: true })
-    expect(await a.preferences.set('inlineEditorBeneathMessage', true)).toBe(false)
+    expect(await a.preferences.set('showEditResendButton', true)).toBe(false)
     await finish()
     await write
     expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, regenerateLastReply: false })

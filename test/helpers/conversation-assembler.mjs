@@ -1,9 +1,9 @@
 import vm from 'node:vm'
-import { resolveHostApp } from '../../scripts/host-app.mjs'
+import { resolveTestHostApp } from './test-host-app.mjs'
 
 /** Run the installed browser assembler itself, without booting its editor/UI. */
 export function installedConversationAssembler(definitions) {
-  const app = resolveHostApp()
+  const app = resolveTestHostApp()
   if (!app) return undefined
   try {
     const source = app.read('node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js')
@@ -25,7 +25,7 @@ export function assemblerChatSnapshot(assembler) {
 
 /** The installed host's message, assistant and tool Definitions, without its UI. */
 export function installedChatDefinitions({ turnTail = false } = {}) {
-  const app = resolveHostApp()
+  const app = resolveTestHostApp()
   if (!app) return undefined
   try {
     const source = app.read('node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js')

@@ -2,10 +2,10 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { mkdir, writeFile, readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
-import { resolveHostApp } from '../../scripts/host-app.mjs'
 import { provideStandInServices } from '../../scripts/host-services.mjs'
 import * as host from '../../lib/index.js'
 import { rootDir } from './dsh.mjs'
+import { resolveTestHostApp } from './test-host-app.mjs'
 import vm from 'node:vm'
 
 const LOCKED_HOST_PACKAGES = {
@@ -14,6 +14,8 @@ const LOCKED_HOST_PACKAGES = {
   '@deepseek-ai/dsh-config-editor': '0.2.0-rc.2',
   '@deepseek-ai/dsh-settings': '0.2.0-rc.2',
   '@deepseek-ai/dsh-typert-registry': '0.2.0-rc.2',
+  '@deepseek-ai/dsh-client-ui-chat': '0.2.0-rc.2',
+  '@deepseek-ai/dsh-client-ui-conversation': '0.2.0-rc.2',
   '@deepseek-ai/dsh-client-ui-settings': '0.2.0-rc.2',
 }
 
@@ -51,9 +53,10 @@ async function lockedPackageHost(root, home) {
 
 /** Run durable settings tests against the installed host or explicit locked host packages. */
 export async function settingsHost(home, name, state, initialConfig = {}) {
+  const testApp = resolveTestHostApp()
   const app = process.env.DSH_SETTINGS_HOST_ROOT
-    ? await lockedPackageHost(process.env.DSH_SETTINGS_HOST_ROOT, home)
-    : resolveHostApp()
+    ? await lockedPackageHost(testApp.root, home)
+    : testApp
   if (!app || app.kind !== 'dir') throw new Error('An unpacked DSH host is required for the durable settings test')
   const load = (pkg) => import(pathToFileURL(path.join(app.root, 'node_modules', pkg, 'lib/index.js')).href)
   const [{ default: Loader }, { mountRootInclude, readProfilePatches }, { default: ConfigEditor }, { default: SettingsForms }, { TypertRegistry }] = await Promise.all([

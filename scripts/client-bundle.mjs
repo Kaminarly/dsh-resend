@@ -53,6 +53,12 @@ const HostModal = vm.runInNewContext(`${modalCode}\nModal`, {
   get HTMLElement() { return globalThis.window?.HTMLElement },
 })
 
+const checkboxStart = primitivesSource.indexOf('function Checkbox(')
+const HostCheckbox = vm.runInNewContext(primitivesSource.slice(checkboxStart,
+  primitivesSource.indexOf('//#endregion',checkboxStart)) + '\nCheckbox', {
+  ...require_('react/jsx-runtime'),clsx:(...values)=>values.filter(Boolean).join(' '),css$10:{checkbox:'host-checkbox'},
+})
+
 /**
  * The module-table entries the bundle legitimately asks for, and NOTHING else.
  *
@@ -79,6 +85,7 @@ export const MODULE_TABLE = Object.freeze({
   'react-dom': Object.freeze({ createPortal: (...args) => require_('react-dom').createPortal(...args) }),
   '@deepseek-ai/dsh-client-ui-primitives': Object.freeze({
     Modal: HostModal,
+    Checkbox: HostCheckbox,
     Button: require_('react').forwardRef(({ variant, size, icon, children, ...props }, ref) => require_('react').createElement('button', { ...props, ref, 'data-variant': variant }, icon, children)),
     Tooltip: ({ children }) => children,
     Switch: ({ checked, onChange, label, className, disabled }) => require_('react').createElement('button', {

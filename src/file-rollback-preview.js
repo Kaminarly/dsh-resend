@@ -1,5 +1,5 @@
 import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Button, FileTypeIcon, IconCheckOutlineRegular, IconRefreshOutlineRegular, IconShieldOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Checkbox, FileTypeIcon, IconCheckOutlineRegular, IconRefreshOutlineRegular, IconShieldOutlineRegular, IconWarningOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createPortal } from 'react-dom'
 import { UIStyles } from './ui.js'
 import { ContentPreview } from './content-preview.js'
@@ -220,12 +220,12 @@ function FileRollbackPanel({ operations, point, t, preflight }) {
           : selectable && file.action === 'restore' ? chosen ? 'files.restore' : 'files.restorable' : `files.${action}`
         const Icon = action === 'restored' ? IconCheckOutlineRegular : refused ? IconWarningOutlineRegular : action === 'kept' ? undefined : IconRefreshOutlineRegular
         return createElement('li', { key: `${index}:${file.path}`, 'data-path': file.path, className: 'dsh-resend-rollback-file' }, [
-          selectable && createElement('input', {
-            key: 'check', type: 'checkbox', className: 'dsh-resend-rollback-check',
+          selectable && createElement(Checkbox, {
+            key: 'check', className: 'dsh-resend-rollback-check-label',
             checked: chosen,
             disabled: busy || file.action !== 'restore',
             onChange: () => { toggle(file.path) },
-            'aria-label': String(t('files.selectFile')).replace('{path}', file.path),
+            label: String(t('files.selectFile')).replace('{path}', file.path),
           }),
           createElement('span', { key: 'icon', className: 'dsh-resend-rollback-file-icon', 'aria-hidden': true }, createElement(FileTypeIcon, { path: file.path, size: 20 })),
           createElement('div', { key: 'info', className: 'dsh-resend-rollback-file-info', title: file.path }, [
@@ -269,7 +269,7 @@ export function ReplayPreflight({ operations, sessionId, userSeq, targetSeq, vis
     : entry.userSeq === userSeq)
   useLayoutEffect(() => {
     if (!active) return
-    anchor.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+    anchor.current?.scrollIntoView?.({ block: 'nearest', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
     anchor.current?.focus({ preventScroll: true })
   }, [active])
   if (!active) return null

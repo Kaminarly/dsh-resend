@@ -75,7 +75,7 @@ export function ContentPreview({ operations, request, onClose, stacked, t }) {
       }
       if (event.key === 'Tab') {
         const dialog = event.currentTarget.querySelector('.dsh-resend-content-dialog')
-        const controls = [...dialog.querySelectorAll('button:not(:disabled), [tabindex="0"]')]
+        const controls = [...dialog.querySelectorAll('*')].filter(node => node.matches('button:not(:disabled), [tabindex="0"]'))
         const first = controls[0]
         const last = controls.at(-1)
         if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
@@ -87,15 +87,15 @@ export function ContentPreview({ operations, request, onClose, stacked, t }) {
   }, [
     h('header', { key: 'header', className: 'dsh-resend-content-header' }, [
       h('div', { key: 'heading' }, [h('h2', { key: 'title' }, t('content.title')),
-        h('p', { key: 'path', className: 'dsh-resend-content-path' }, request.path),
+        h('p', { key: 'path', className: 'dsh-resend-content-path', tabIndex: 0 }, request.path),
         h('p', { key: 'direction' }, t('content.direction'))]),
       h(Button, { key: 'close', type: 'button', variant: 'ghost', size: 'sm', onClick: onClose,
         'data-modal-autofocus': true, 'aria-label': t('content.close') }, t('content.closeButton')),
     ]),
-    value && h('div', { key: 'meta', className: 'dsh-resend-content-meta' }, [
-      h('strong', { key: 'action' }, t(`content.${value.action}`)),
-      value.status === 'ready' ? [version('current', value.current), version('target', value.target)]
-        : h('p', { key: 'sizes' }, `${t('content.current')}: ${value.sizes.current} ${t('content.bytes')} · ${t('content.target')}: ${value.sizes.target} ${t('content.bytes')}`),
+    h('div', { key: 'meta', className: 'dsh-resend-content-meta', tabIndex: 0 }, [
+      value && h('strong', { key: 'action' }, t(`content.${value.action}`)),
+      value && (value.status === 'ready' ? [version('current', value.current), version('target', value.target)]
+        : h('p', { key: 'sizes' }, `${t('content.current')}: ${value.sizes.current} ${t('content.bytes')} · ${t('content.target')}: ${value.sizes.target} ${t('content.bytes')}`)),
       h('div', { key: 'legend', className: 'dsh-resend-content-legend' }, [
         h('span', { key: 'delete' }, t('content.legendDelete')), h('span', { key: 'add' }, t('content.legendAdd'))]),
     ]),

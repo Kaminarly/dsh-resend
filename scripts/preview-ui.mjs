@@ -5,11 +5,12 @@
 import http from 'node:http'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { transform } from 'esbuild'
 import { resolveHostApp } from './host-app.mjs'
 import { contentDiff } from '../src/content-diff.js'
 
+export async function startPreviewServer({ invoke, fixture, clientBundlePath, port = Number(process.env.DSH_PREVIEW_PORT ?? 43129) } = {}) {
 const root = fileURLToPath(new URL('..', import.meta.url))
 const app = resolveHostApp()
 if (!app) throw new Error('An installed DSH Desktop is required for the visual fixture')
@@ -63,6 +64,7 @@ const host = queue.get('@deepseek-ai/dsh-client-ui-chat').factory(require).previ
 await import('/settings-panel.js');
 const face = queue.get('dsh-resend').factory(require);
 const React = seeds.react, h = React.createElement;
+const deliveryFixture = ${JSON.stringify(fixture ?? null)};
 const dictionaries = { chat: { zh: host.zh, en: host.en } };
 const translate = (ns) => (key, args = {}) => {
   let text = dictionaries[ns]?.zh?.[key] ?? ({copy:'复制',copied:'已复制'})[key] ?? key;
@@ -82,6 +84,11 @@ const contentFiles = [
   {path:'empty.txt',action:'restore',operation:'delete'},
   {path:'README.md',action:'refuse',reason:'content-diverged'}
 ];
+if (contentParams.has('longPaths')) {
+  const filename = '用于辨认对象的长文件名'.repeat(6) + '.js';
+  contentFiles[0].path = 'src/' + '非常长的中文目录/'.repeat(60) + filename;
+  contentFiles[1].path = 'src/另一个目录/' + filename;
+}
 const contentExample = ${JSON.stringify(contentDiff(Buffer.from(Array.from({ length: 120 }, (_, i) => i === 5 ? 'const message = "当前中文内容";' : i === 8 ? '<script>不会执行</script>' : i === 10 ? 'const longLine = "' + '长行'.repeat(300) + '";' : `// 第 ${i + 1} 行上下文`).join('\n')),
   Buffer.from('\ufeff' + Array.from({ length: 120 }, (_, i) => i === 5 ? 'const message = "工作前保存的中文内容";' : i === 8 ? '// 恢复的内容' : i === 10 ? 'const longLine = "恢复后的内容";' : `// 第 ${i + 1} 行上下文`).join('\r\n') + '\r\n')))};
 let contentReads = 0;
@@ -120,7 +127,12 @@ const demoCleanup = async (request) => {
         categories:[{kind:'records',count:2,bytes:1024},{kind:'outcomes',count:1,bytes:256},{kind:'objects',count:5,bytes:129792}]};
   return {ok:true,value:{ok:true,value}};
 };
-const remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), replay: async request => ({ok:true,value:contentFixture ? request.phase === 'start' ? {ok:true,value:{preflight:true,preflightId:'fixture-preflight',planId:'preview-plan',userSeq:2,op:'edit',files:contentFiles}} : {ok:true,value:{canceled:true}} : {ok:false,error:{code:'agent-busy'}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), content:demoContent,rollback:demoRollback,cleanup:demoCleanup } };
+let remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), replay: async request => ({ok:true,value:contentFixture ? request.phase === 'start' ? {ok:true,value:{preflight:true,preflightId:'fixture-preflight',planId:'preview-plan',userSeq:2,op:'edit',files:contentFiles}} : {ok:true,value:{canceled:true}} : {ok:false,error:{code:'agent-busy'}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), content:demoContent,rollback:demoRollback,cleanup:demoCleanup } };
+if (deliveryFixture) remote = { $mount: async () => {}, resend: Object.fromEntries(['conversation','replay','apply','content','rollback'].map(method => [method, async request => {
+  const response = await fetch('/rollback-rpc', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,request})});
+  if (!response.ok) throw new Error('验收接口失败');
+  return response.json();
+}])) };
 // This visual fixture simulates the saved document. Durable Profile behavior
 // is exercised separately against the installed SettingsForms/ConfigEditor.
 let settingsView = {status:'ready',error:null,view:{writable:true,namespaces:[{ns:'dsh-resend',value:{inlineEditorBeneathMessage:true,regenerateLastReply:true}}]}};
@@ -144,6 +156,8 @@ const ctx = {
     register:(options,component)=>{const entry={options,component,locale:options.locale};registrations.push(entry);listeners.forEach(fn=>fn());return()=>{registrations.splice(registrations.indexOf(entry),1);listeners.forEach(fn=>fn())}} }
 };
 await face.apply(ctx);
+if (contentParams.has('longPaths')) dictionaries['dsh-resend'].zh = {...dictionaries['dsh-resend'].zh,
+  'files.reason.content-diverged':'文件已被其他操作修改。'.repeat(30)};
 const user = {key:'user-2',kind:'user',anchorSeq:2,data:{seq:2,time:Date.now(),content:[{type:'text',text:'请把编辑入口放到复制按钮旁。\\n按钮和输入框保持 DSH Desktop 的风格。'},{type:'file',attachment:{name:'说明.md',bytes:128}}],referenceLabels:['src/example.js'],skillNames:['grilling']}};
 const oldUser = {...user,key:'user-0',anchorSeq:0,data:{...user.data,seq:0,content:[{type:'text',text:'较早的用户消息'}]}};
 const companion = {key:'companion',kind:'dsh-resend-regenerate',visibility:'hidden',anchorSeq:3,data:{id:'reply-3',seq:3,prevSeq:null,prompt:{seq:2,isAppend:true,sourceKind:'user',hasText:true}}};
@@ -165,7 +179,24 @@ function SettingsFixture() {
     activeId:active,onSelect:setActive,onClose:()=>setOpen(false),renderSlot:(slot,_props,options)=>slot==='settings.section'?(options.only==='general'?h('p',null,'通用设置内容'):h(settings.component,{})):slot==='settings.action'?registrations.filter(entry=>entry.options.name==='settings.action').map(entry=>h(entry.component,{key:entry.options.id})):slot==='settings.close'?'关闭':'设置'
   }));
 }
-seeds['react-dom/client'].createRoot(document.getElementById('root')).render(new URLSearchParams(location.search).has('settingsOnly') ? h(settings.component,{}) : h(React.Fragment,null,
+const render = seeds['react-dom/client'].createRoot(document.getElementById('root'));
+const rollbackPoint = {sessionId:deliveryFixture?.sessionId ?? 'fixture',carrierSeq:deliveryFixture?.carrierSeq ?? 5};
+const preflightEntry = h(face.ReplayPreflight,{operations,sessionId:rollbackPoint.sessionId,userSeq:2,portal:true,t});
+function HostModalFixture() {
+  const [open,setOpen] = React.useState(false);
+  const {Button,Modal} = seeds['@deepseek-ai/dsh-client-ui-primitives'];
+  return h(React.Fragment,null,h(Button,{onClick:()=>setOpen(true)},'打开宿主原生弹窗'),
+    h(Modal,{open,onClose:()=>setOpen(false),title:'宿主原生弹窗'},h('p',null,'对照字体、背景、按钮、圆角与阴影。')));
+}
+function DeliveryReplayResult() {
+  const records = React.useSyncExternalStore(operations.subscribe,()=>operations.recordsFor(rollbackPoint.sessionId));
+  return records.map(record=>h(face.RewindRow,{key:record.carrierSeq,t,outcome:record,
+    onSendAgain:()=>void operations.sendAgain({sessionId:rollbackPoint.sessionId,carrierSeq:record.carrierSeq})}));
+}
+render.render(deliveryFixture ? h(React.Fragment,null,
+  h(face.FileRollbackPreview,{t,operations,point:rollbackPoint}),
+  h('button',{onClick:()=>void operations.run({sessionId:rollbackPoint.sessionId,targetSeq:2,op:'edit',text:'编辑后的验收消息'})},'打开重发前面板'),preflightEntry,h(DeliveryReplayResult)
+) : new URLSearchParams(location.search).has('settingsOnly') ? h(settings.component,{}) : h(React.Fragment,null,
   heading('用户消息'),h('div',{'data-chat-flow-kind':'user'},h(native.component,{...base,node:user,...native.options.inject('fixture')})),
   heading('较早用户消息'),h('div',{'data-chat-flow-kind':'user','data-earlier-user':true},h(native.component,{...base,node:oldUser,...native.options.inject('fixture')})),
   heading('助手回复'),h('p',null,'编辑入口与复制图标相邻；操作名称在悬停时显示。'),h('div',{style:{height:40,overflow:'hidden'},'data-clipped-actions':true},h(host.MessageIconActions,{text:'示例回复',t:translate('chat'),extraActions:h(regen.component,{...base,messageId:'reply-3'})})),
@@ -173,7 +204,11 @@ seeds['react-dom/client'].createRoot(document.getElementById('root')).render(new
   heading('重试提示'),h(face.RewindRow,{t,outcome:{status:'resend-failed'},onSendAgain:()=>{}}),
   h(SettingsFixture),heading('文件回滚'),h(face.FileRollbackPreview,{t,operations,point:{sessionId:'fixture',carrierSeq:5}}),
   contentFixture && h('button',{onClick:()=>void operations.run({sessionId:'fixture',targetSeq:2,op:'edit',text:'模拟重发'})},'打开重发前面板'),
-  contentFixture && h(face.ReplayPreflight,{operations,sessionId:'fixture',userSeq:2,portal:true,t}),
+  contentFixture && preflightEntry,
+  h(HostModalFixture),
+  contentParams.has('mixedResults') && h(face.FileRollbackPreview,{t,operations:{rollback:async()=>({ok:true,value:{completed:true,files:[
+    {path:contentFiles[0].path,action:'restored'}, {path:contentFiles[1].path,action:'kept'},
+    {path:'README.md',action:'refuse',reason:'content-diverged'}]}})},point:{sessionId:'mixed',carrierSeq:5}}),
   h('button',{onClick:()=>{localStorage.removeItem(rollbackDemoKey);location.reload()}},'重置回滚演示')
 ));
 window.uiFixture = {face,host,seeds,registrations,snapshot,remote,operations,
@@ -184,12 +219,23 @@ if (new URLSearchParams(location.search).has('dark')) document.body.setAttribute
 
 await transform(preview, { loader: 'js', format: 'esm' })
 
-http.createServer((request, response) => {
+const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, 'http://localhost')
+  if (url.pathname === '/rollback-rpc' && invoke && request.method === 'POST') {
+    try {
+      const parts = []; let bytes = 0;
+      for await (const part of request) { bytes += part.length; if (bytes > 65536) throw new Error('请求过大'); parts.push(part); }
+      const {method,request:payload} = JSON.parse(Buffer.concat(parts).toString('utf8'));
+      if (!['conversation','replay','apply','content','rollback'].includes(method)) throw new Error('未知验收接口');
+      response.setHeader('Content-Type','application/json; charset=utf-8');
+      response.end(JSON.stringify(await invoke(method,payload)));
+    } catch (error) { response.writeHead(400); response.end(String(error.message)); }
+    return;
+  }
   const routes = { '/': ['text/html', html], '/preview.js': ['text/javascript', preview],
     '/favicon.svg': ['image/svg+xml', app.read(frontend + 'favicon.svg')],
     '/host-chat.js': ['text/javascript', chat], '/host-theme.js': ['text/javascript', theme], '/settings-panel.js': ['text/javascript', settingsPanel],
-    '/plugin.js': ['text/javascript', readFileSync(path.join(root,new URL(request.headers.referer??'http://localhost').searchParams.has('baseline')?'.tmp/ui-01-baseline/client.bundle.js':'lib/client.bundle.js'), 'utf8')],
+    '/plugin.js': ['text/javascript', readFileSync(clientBundlePath ?? path.join(root,new URL(request.headers.referer??'http://localhost').searchParams.has('baseline')?'.tmp/ui-01-baseline/client.bundle.js':'lib/client.bundle.js'), 'utf8')],
     ['/' + asset]: ['text/javascript', runtime] }
   try {
     if (routes[url.pathname]) {
@@ -202,6 +248,13 @@ http.createServer((request, response) => {
     response.setHeader('Content-Type', url.pathname.endsWith('.css') ? 'text/css' : url.pathname.endsWith('.js') ? 'text/javascript' : 'application/octet-stream')
     response.end(content)
   } catch (error) { response.writeHead(404); response.end(String(error.message)) }
-}).listen(Number(process.env.DSH_PREVIEW_PORT ?? 43129), '127.0.0.1', function () {
-  console.log('UI fixture: http://127.0.0.1:' + this.address().port + ' (installed Desktop controls; simulated operations only)')
-})
+}).listen(port, '127.0.0.1')
+await new Promise((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject)})
+return { server, app, url: 'http://127.0.0.1:' + server.address().port,
+  close: async () => { await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve())); app.close?.() } }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  const fixture = await startPreviewServer()
+  console.log('UI fixture: ' + fixture.url + ' (installed Desktop controls; simulated operations only)')
+}

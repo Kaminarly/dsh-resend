@@ -32,6 +32,9 @@
     "probe": "node scripts/probe-profile.mjs",
     "acceptance:browser": "node scripts/verify-rich-input-browser.mjs",
     "acceptance:bundle": "node scripts/verify-rich-input-bundle.mjs",
+    "acceptance:rollback:visual": "node scripts/verify-rollback-visual.mjs",
+    "acceptance:rollback:browser": "node scripts/verify-rollback-browser.mjs",
+    "acceptance:rollback:bundle": "node scripts/verify-rollback-bundle.mjs",
     "test": "vitest run"
   },
   "keywords": [

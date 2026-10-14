@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { transform } from 'esbuild'
 import { resolveHostApp } from './host-app.mjs'
+import { contentDiff } from '../src/content-diff.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const app = resolveHostApp()
@@ -73,11 +74,33 @@ const registrations = [{ options: { key:'user' }, locale:'chat', component:host.
 // Browser storage belongs only to this simulated fixture. The real plugin
 // persists completion through the Host's private outcome files.
 const rollbackDemoKey = 'dsh-resend-ui.file-rollback-result';
+const contentParams = new URLSearchParams(location.search);
+const contentFixture = contentParams.has('contentPreview');
+const contentFiles = [
+  {path:'src/中文目录/非常长的路径/用于确认完整路径不会挤压按钮/相同文件名.js',action:'restore'},
+  {path:'src/另一个目录/相同文件名.js',action:'restore',operation:'delete'},
+  {path:'empty.txt',action:'restore',operation:'delete'},
+  {path:'README.md',action:'refuse',reason:'content-diverged'}
+];
+const contentExample = ${JSON.stringify(contentDiff(Buffer.from(Array.from({ length: 120 }, (_, i) => i === 5 ? 'const message = "当前中文内容";' : i === 8 ? '<script>不会执行</script>' : i === 10 ? 'const longLine = "' + '长行'.repeat(300) + '";' : `// 第 ${i + 1} 行上下文`).join('\n')),
+  Buffer.from('\ufeff' + Array.from({ length: 120 }, (_, i) => i === 5 ? 'const message = "工作前保存的中文内容";' : i === 8 ? '// 恢复的内容' : i === 10 ? 'const longLine = "恢复后的内容";' : `// 第 ${i + 1} 行上下文`).join('\r\n') + '\r\n')))};
+let contentReads = 0;
+const demoContent = async request => {
+  contentReads++;
+  await new Promise(resolve=>setTimeout(resolve,Number(contentParams.get('contentDelay')??100)));
+  const state = contentParams.get('contentState');
+  const result = state === 'stale' ? {ok:false,error:{code:'plan-not-found'}}
+    : state === 'error' && contentReads === 1 ? {ok:false,error:{code:'read-failed'}}
+    : state === 'unavailable' ? {ok:true,value:{status:'unavailable',reason:'too-large',action:'restore',sizes:{current:4000000,target:12345}}}
+    : request.path === 'empty.txt' ? {ok:true,value:${JSON.stringify(contentDiff(Buffer.from(''), null))}}
+    : {ok:true,value:contentExample};
+  return {ok:true,value:result};
+};
 const demoRollback = async (request) => {
   const saved = localStorage.getItem(rollbackDemoKey);
   if (saved) return {ok:true,value:JSON.parse(saved)};
   if (request.phase === 'status') return {ok:true,value:{ok:true,value:{planId:'',completed:false,files:[]}}};
-  const result = {ok:true,value:{planId:'preview-plan',scope:request.scope,files:[{path:'src/example.js',action:'restore'},{path:'README.md',action:'refuse',reason:'content-diverged'}]}};
+  const result = {ok:true,value:{planId:'preview-plan',scope:request.scope,files:contentFixture?contentFiles:[{path:'src/example.js',action:'restore'},{path:'README.md',action:'refuse',reason:'content-diverged'}]}};
   if (request.phase === 'execute') { result.value.completed = true; localStorage.setItem(rollbackDemoKey,JSON.stringify(result)); }
   return {ok:true,value:result};
 };
@@ -97,7 +120,7 @@ const demoCleanup = async (request) => {
         categories:[{kind:'records',count:2,bytes:1024},{kind:'outcomes',count:1,bytes:256},{kind:'objects',count:5,bytes:129792}]};
   return {ok:true,value:{ok:true,value}};
 };
-const remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), replay: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), rollback:demoRollback,cleanup:demoCleanup } };
+const remote = { $mount: async () => {}, resend: { conversation: async () => ({ok:true,value:{ok:true,value:{assistantSeqs:[1,3],lastReplySeq:3,userSeqs:[0,2],lastUserSeq:2}}}), replay: async request => ({ok:true,value:contentFixture ? request.phase === 'start' ? {ok:true,value:{preflight:true,preflightId:'fixture-preflight',planId:'preview-plan',userSeq:2,op:'edit',files:contentFiles}} : {ok:true,value:{canceled:true}} : {ok:false,error:{code:'agent-busy'}}}), apply: async () => ({ok:true,value:{ok:false,error:{code:'agent-busy'}}}), content:demoContent,rollback:demoRollback,cleanup:demoCleanup } };
 // This visual fixture simulates the saved document. Durable Profile behavior
 // is exercised separately against the installed SettingsForms/ConfigEditor.
 let settingsView = {status:'ready',error:null,view:{writable:true,namespaces:[{ns:'dsh-resend',value:{inlineEditorBeneathMessage:true,regenerateLastReply:true}}]}};
@@ -149,9 +172,11 @@ seeds['react-dom/client'].createRoot(document.getElementById('root')).render(new
   heading('较早回复'),h(host.MessageIconActions,{text:'较早回复示例',t:translate('chat'),extraActions:h(regen.component,{...base,messageId:'reply-1'})}),
   heading('重试提示'),h(face.RewindRow,{t,outcome:{status:'resend-failed'},onSendAgain:()=>{}}),
   h(SettingsFixture),heading('文件回滚'),h(face.FileRollbackPreview,{t,operations,point:{sessionId:'fixture',carrierSeq:5}}),
+  contentFixture && h('button',{onClick:()=>void operations.run({sessionId:'fixture',targetSeq:2,op:'edit',text:'模拟重发'})},'打开重发前面板'),
+  contentFixture && h(face.ReplayPreflight,{operations,sessionId:'fixture',userSeq:2,portal:true,t}),
   h('button',{onClick:()=>{localStorage.removeItem(rollbackDemoKey);location.reload()}},'重置回滚演示')
 ));
-window.uiFixture = {face,host,seeds,registrations,snapshot,remote,
+window.uiFixture = {face,host,seeds,registrations,snapshot,remote,operations,
   reconnect:()=>{for(const callback of contextEvents.get('connection/reset')??[])callback()}};
 document.body.style.background = 'var(--dsw-alias-bg-base)';
 if (new URLSearchParams(location.search).has('dark')) document.body.setAttribute('data-ds-dark-theme','');

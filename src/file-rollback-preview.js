@@ -15,22 +15,36 @@ import { ContentPreview } from './content-preview.js'
  * by design.
  */
 export function FileRollbackPreview({ operations, point, t, preflight }) {
+  return createElement(FileRollbackPanel, { key: JSON.stringify([point.sessionId, point.carrierSeq, preflight?.result.value?.preflightId ?? preflight?.preflightId]),
+    operations, point, t, preflight })
+}
+
+function FileRollbackPanel({ operations, point, t, preflight }) {
   const [result, setResult] = useState()
   const [pending, setPending] = useState('status')
   const [completed, setCompleted] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  // Keyed by the plan the checkboxes belong to, so a fresh preview resets them.
+  // A new plan keeps this point's choices; only its first list defaults to all.
   const [checked, setChecked] = useState({ planId: undefined, paths: [] })
   const [viewer, setViewer] = useState()
+  const [invalidated, setInvalidated] = useState(false)
   const running = useRef(false)
+  const lifetime = useRef(0)
   const panel = useRef(null)
   const opener = useRef(null)
+  const focused = useRef(null)
   const busy = pending !== null
   const terminal = result?.ok === true && (completed || result.value.completed === true)
   useEffect(() => { setViewer(undefined) }, [operations, point.sessionId, point.carrierSeq, result?.value?.planId, busy])
-  useEffect(() => operations.subscribeContentInvalidation?.(sessionId => {
-    if (sessionId === undefined || sessionId === point.sessionId) setViewer(undefined)
+  useEffect(() => operations.subscribeContentInvalidation?.((sessionId, reason) => {
+    if (sessionId !== undefined && sessionId !== point.sessionId) return
+    setViewer(undefined)
+    if (reason !== undefined && (!running.current || ['cleanup', 'connection', 'dispose'].includes(reason))) setInvalidated(true)
   }), [operations, point.sessionId])
+  useEffect(() => {
+    ++lifetime.current
+    return () => { ++lifetime.current }
+  }, [operations])
   useEffect(() => {
     if (preflight) {
       setResult(preflight.result)
@@ -61,6 +75,11 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
   }, [operations, point.sessionId, point.carrierSeq, preflight])
   const preview = result?.ok ? result.value : undefined
   const files = preview?.files ?? result?.error?.files ?? []
+  useLayoutEffect(() => {
+    const previous = focused.current
+    if (previous && (!previous.isConnected || previous.disabled) && panel.current?.isConnected &&
+        (document.activeElement === document.body || document.activeElement === previous)) panel.current.focus({ preventScroll: true })
+  }, [files, viewer, busy])
   const selectable = !terminal && !completed && preview !== undefined
   const restorablePaths = selectable ? files.filter((file) => file.action === 'restore').map((file) => file.path) : []
   const checkedPaths = selectable && checked.planId === preview?.planId ? checked.paths.filter((path) => restorablePaths.includes(path)) : []
@@ -69,16 +88,20 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     // reuses the recorded selection instead of defaulting to everything.
     // The plan's identity is the reset key: every preview mints a fresh plan.
     if (!selectable) return
-    const recorded = Array.isArray(preview.selected) ? new Set(preview.selected) : undefined
-    setChecked({ planId: preview.planId, paths: recorded ? restorablePaths.filter((path) => recorded.has(path)) : restorablePaths })
+    setChecked(previous => {
+      const recorded = Array.isArray(preview.selected) ? JSON.stringify(preview.selected) : undefined
+      const retained = recorded !== undefined && recorded !== previous.recorded ? new Set(preview.selected)
+        : previous.planId !== undefined ? new Set(previous.paths) : undefined
+      return { planId: preview.planId, recorded, paths: retained ? restorablePaths.filter(path => retained.has(path)) : restorablePaths }
+    })
   }, [selectable, preview?.planId])
   const selectedCount = checkedPaths.length
   const restorable = completed ? 0 : files.filter((file) => file.action === 'restore').length
-  const restored = files.filter((file) => file.action === 'restored' || (completed && result?.ok && file.action === 'restore')).length
+  const restored = files.filter((file) => file.action === 'restored' || file.reason === 'already-restored' || (completed && result?.ok && file.action === 'restore')).length
   const keptByChoice = files.filter((file) => file.action === 'kept').length
-  const unavailable = files.filter((file) => file.action === 'refuse').length
+  const unavailable = files.filter((file) => file.action === 'refuse' && file.reason !== 'already-restored').length
   const expanded = preflight || (result !== undefined && !collapsed) || (busy && pending !== 'status')
-  const canExecute = preview !== undefined && !terminal && !completed && selectedCount > 0
+  const canExecute = preview !== undefined && !terminal && !completed && !invalidated && selectedCount > 0
   // Legacy completions spell restored files as 'restore'; their refusals stay
   // "not restored". New results say exactly why each file is undone.
   const legacyCompleted = completed && result?.ok === true && result.value.files.some((entry) => entry.action === 'restore')
@@ -95,32 +118,40 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     className: `dsh-resend-rollback-button${key === 'preview' ? ' dsh-resend-rollback-preview-button' : key === 'execute' ? ' dsh-resend-rollback-confirm-button' : ''}`,
   }, label)
   const toggle = (path) => setChecked((state) => state.planId !== preview?.planId ? state : {
-    planId: state.planId,
+    ...state,
     paths: state.paths.includes(path) ? state.paths.filter((entry) => entry !== path) : [...state.paths, path],
   })
   const toggleAll = () => setChecked((state) => state.planId !== preview?.planId ? state : {
-    planId: state.planId, paths: allSelected ? [] : restorablePaths,
+    ...state, paths: allSelected ? [] : restorablePaths,
   })
   async function run(phase) {
     // An empty selection is never sent: the button is hidden, and a stale click
     // must not become an invalid host request (spec §10).
-    if (phase === 'execute' && selectedCount === 0) return
+    if (phase === 'execute' && (selectedCount === 0 || invalidated)) return
     setViewer(undefined)
-    if (preflight) return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase,
-      phase === 'execute' ? checkedPaths : undefined)
+    if (preflight) {
+      if (phase === 'preview') setInvalidated(false)
+      return operations.chooseReplay(point.sessionId, phase === 'execute' ? 'restore' : phase,
+        phase === 'execute' ? checkedPaths : undefined)
+    }
     if (running.current || terminal) return
     running.current = true
+    const owner = lifetime.current
     setPending(phase)
-    if (phase === 'preview') { setResult(undefined); setCompleted(false); setCollapsed(false) }
+    if (phase === 'preview') { setInvalidated(false); setResult(undefined); setCompleted(false); setCollapsed(false) }
     try {
       const answer = await operations.rollback({ ...point, scope: 'artifacts', phase,
         ...(phase === 'preview' ? {} : { planId: result?.value?.planId, ...(phase === 'execute' ? { selected: checkedPaths } : {}) }) })
-      setResult(phase === 'cancel' && answer.ok ? undefined : answer)
-      setCompleted(phase === 'execute' || answer.value?.completed === true)
+      if (lifetime.current !== owner) return
+      // Closing can encounter a completion saved by another window. Keep that
+      // real result; closing itself never manufactures a successful execution.
+      setResult(phase === 'cancel' && answer.ok && !answer.value?.completed ? undefined : answer)
+      setCompleted(answer.ok && (phase === 'execute' || answer.value?.completed === true))
     } catch {
+      if (lifetime.current !== owner) return
       setResult({ ok: false, error: { code: 'internal' } })
-      setCompleted(phase === 'execute')
-    } finally { running.current = false; setPending(null) }
+      setCompleted(false)
+    } finally { if (lifetime.current === owner) { running.current = false; setPending(null) } }
   }
   function close() {
     setViewer(undefined)
@@ -130,7 +161,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
     else { setResult(undefined); setCompleted(false) }
   }
   if (!preflight && (pending === 'status' || result?.value?.empty === true)) return null
-  return createElement('section', { ref: panel, tabIndex: -1, className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
+  return createElement('section', { ref: panel, tabIndex: -1, onFocusCapture: event => { focused.current = event.target }, className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
     createElement(UIStyles, { key: 'ui' }),
     viewer && selectable && !busy && viewer.planId === preview?.planId && viewer.sessionId === point.sessionId &&
       createElement(ContentPreview, { key: `${viewer.sessionId}:${viewer.planId}:${viewer.path}`, operations, request: viewer,
@@ -157,7 +188,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
         : button('preview', () => { void run('preview') }, [renderIcon(IconRefreshOutlineRegular), t('files.previewShort')], 'outline'),
     ]),
     expanded && createElement('div', { key: 'content', className: 'dsh-resend-rollback-content', 'aria-live': 'polite' }, [
-      result?.ok === false && createElement('p', { key: 'error', className: 'dsh-resend-rollback-notice dsh-resend-rollback-warning', role: 'alert' }, t(`files.error.${result.error.code}`)),
+      (result?.ok === false || invalidated) && createElement('p', { key: 'error', className: 'dsh-resend-rollback-notice dsh-resend-rollback-warning', role: 'alert' }, t(`files.error.${invalidated ? 'plan-not-found' : result.error.code}`)),
       completed && result?.ok && createElement('p', { key: 'completed', className: 'dsh-resend-rollback-notice' }, t('files.completed')),
       preflight && restored > 0 && createElement('p', { key: 'cancel-hint', className: 'dsh-resend-rollback-notice' }, t('replay.cancelHint')),
       preview?.files.length === 0 && createElement('p', { key: 'empty', className: 'dsh-resend-rollback-notice' }, t('files.empty')),
@@ -182,7 +213,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
       files.length > 0 && createElement('ul', { key: 'files', className: 'dsh-resend-rollback-files', 'aria-label': t('files.list') }, files.map((file, index) => {
         const normalized = file.path.replaceAll('\\', '/')
         const split = normalized.lastIndexOf('/')
-        const action = completed && file.action === 'restore' ? 'restored' : file.action
+        const action = file.reason === 'already-restored' || (completed && file.action === 'restore') ? 'restored' : file.action
         const refused = action === 'refuse'
         const chosen = selectable && file.action === 'restore' && checkedPaths.includes(file.path)
         const statusKey = action === 'kept' ? 'files.userKept' : refused ? completed && legacyCompleted ? 'files.kept' : 'files.unavailable'
@@ -206,7 +237,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
           createElement('span', { key: 'status', className: `dsh-resend-rollback-file-status dsh-resend-rollback-${action}` }, [
             Icon !== undefined ? renderIcon(Icon) : null, t(statusKey),
           ]),
-          selectable && file.action === 'restore' && createElement(Button, { key: 'view', type: 'button', size: 'sm', variant: 'ghost',
+          selectable && !invalidated && file.action === 'restore' && createElement(Button, { key: 'view', type: 'button', size: 'sm', variant: 'ghost',
             disabled: busy, className: 'dsh-resend-rollback-button dsh-resend-content-view',
             onClick: event => { opener.current = event.currentTarget; setViewer({ sessionId: point.sessionId, planId: preview.planId, path: file.path,
               ...(preflight ? { source: 'preflight', preflightId: preview.preflightId ?? preflight.preflightId }
@@ -222,7 +253,7 @@ export function FileRollbackPreview({ operations, point, t, preflight }) {
         preflight && button('keep', () => { void operations.chooseReplay(point.sessionId, 'keep') },
           t(processed ? 'replay.keepRemaining' : 'replay.keep'), 'outline'),
         canExecute && button('execute', () => { void run('execute') }, countText('files.executeCount', selectedCount), 'primary'),
-        result?.ok === false && button('retry', () => { void run('preview') }, t('files.retry'), 'outline'),
+        !terminal && button('retry', () => { void run('preview') }, t('files.retry'), 'outline'),
       ]),
     ]),
   ])
@@ -253,9 +284,12 @@ export function ReplayPreflight({ operations, sessionId, userSeq, targetSeq, vis
     if (event.defaultPrevented || !anchor.current?.contains(event.target)) return
     if (event.key === 'Escape' && !event.repeat && !event.isComposing && !entry.pending) { event.preventDefault(); void operations.chooseReplay(sessionId, 'cancel') }
     if (event.key !== 'Tab' || (!portal && !visibleUserSeqs)) return
-    const buttons = [...anchor.current.querySelectorAll('button:not(:disabled)')]
+    const buttons = [...anchor.current.querySelectorAll('*')].filter(node =>
+      node.matches('button:not(:disabled), input:not(:disabled), [tabindex="0"]'))
     if (!buttons.length) { event.preventDefault(); return }
-    if (event.shiftKey && (document.activeElement === buttons[0] || document.activeElement === anchor.current)) {
+    if (!buttons.includes(document.activeElement)) {
+      event.preventDefault(); (event.shiftKey ? buttons.at(-1) : buttons[0]).focus()
+    } else if (event.shiftKey && document.activeElement === buttons[0]) {
       event.preventDefault(); buttons.at(-1).focus()
     } else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus() }
   } }, createElement(FileRollbackPreview, { operations, preflight: entry, point: { sessionId },

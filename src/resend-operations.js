@@ -63,6 +63,7 @@ export function createResendOperations(remote, references = remote) {
   const preflights = new Map()
   const retrying = new Set()
   const drafts = new Map()
+  const starting = new Set()
   let disposed = false
   const unreadConversation = Object.freeze({ ready: false, status: 'loading' })
 
@@ -113,9 +114,12 @@ export function createResendOperations(remote, references = remote) {
    */
   async function run(request) {
     if (disposed) return { ok: true, value: { canceled: true } }
-    if (preflights.has(request.sessionId)) return { ok: false, error: { code: 'replay-busy' } }
+    if (preflights.has(request.sessionId) || starting.has(request.sessionId)) return { ok: false, error: { code: 'replay-busy' } }
     // New actions always enter preflight. Owed prompts use apply in sendAgain.
-    const result = unwrapRemoteResult(await remote.resend.replay({ phase: 'start', request }))
+    starting.add(request.sessionId)
+    let result
+    try { result = unwrapRemoteResult(await remote.resend.replay({ phase: 'start', request })) }
+    finally { starting.delete(request.sessionId) }
     if (disposed) return { ok: true, value: { canceled: true } }
     if (result.ok && result.value.preflight) {
       return new Promise(resolve => {
@@ -166,7 +170,9 @@ export function createResendOperations(remote, references = remote) {
     async chooseReplay(sessionId, phase, selected) {
       const entry = preflights.get(sessionId)
       if (!entry || entry.pending) return
-      preflights.set(sessionId, { ...entry, pending: phase })
+      const pending = { ...entry, pending: phase }
+      preflights.set(sessionId, pending)
+      for (const listener of Array.from(contentInvalidationListeners)) listener(sessionId)
       notify()
       let result
       try {
@@ -178,7 +184,7 @@ export function createResendOperations(remote, references = remote) {
       } catch { result = { ok: false, error: { code: 'internal' } } }
       if (phase === 'cancel' && result.error?.code === 'plan-not-found') result = { ok: true, value: { canceled: true } }
       // Plugin teardown retires this promise; late replies cannot recreate UI.
-      if (!preflights.has(sessionId)) return result
+      if (preflights.get(sessionId) !== pending) return result
       if (result.ok && !result.value.preflight) {
         preflights.delete(sessionId)
         if (!result.value.canceled) record(entry.request, result)
@@ -194,7 +200,7 @@ export function createResendOperations(remote, references = remote) {
     // Reconnection may precede Chat refill. Re-read every observed session and
     // retire in-flight replies so old neighbours cannot reopen an invalid target.
     invalidateConversations() {
-      for (const listener of Array.from(contentInvalidationListeners)) listener()
+      for (const listener of Array.from(contentInvalidationListeners)) listener(undefined, 'connection')
       for (const listener of Array.from(referenceInvalidationListeners)) listener()
       for (const [sessionId, entry] of conversations) {
         void this.refreshConversation(sessionId, entry.revision, true)
@@ -231,7 +237,8 @@ export function createResendOperations(remote, references = remote) {
       return entry.promise
     },
     async rollback(request) {
-      if (request.phase !== 'status') for (const listener of Array.from(contentInvalidationListeners)) listener(request.sessionId)
+      if (disposed) return { ok: false, error: { code: 'plan-not-found' } }
+      if (request.phase !== 'status') for (const listener of Array.from(contentInvalidationListeners)) listener(request.sessionId, request.phase)
       return unwrapRemoteResult(await remote.resend.rollback(request))
     },
     async content(request) {
@@ -240,7 +247,7 @@ export function createResendOperations(remote, references = remote) {
       return disposed ? { ok: false, error: { code: 'plan-not-found' } } : result
     },
     async cleanup(request) {
-      if (request.phase === 'execute') for (const listener of Array.from(contentInvalidationListeners)) listener()
+      if (request.phase === 'execute') for (const listener of Array.from(contentInvalidationListeners)) listener(undefined, 'cleanup')
       return unwrapRemoteResult(await remote.resend.cleanup(request))
     },
     outcomeOf,
@@ -280,7 +287,7 @@ export function createResendOperations(remote, references = remote) {
     },
     /** Drop this page's records and listeners when the plugin unloads. */
     dispose() {
-      for (const listener of Array.from(contentInvalidationListeners)) listener()
+      for (const listener of Array.from(contentInvalidationListeners)) listener(undefined, 'dispose')
       contentInvalidationListeners.clear()
       for (const listener of Array.from(referenceInvalidationListeners)) listener()
       referenceInvalidationListeners.clear()

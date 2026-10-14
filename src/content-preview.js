@@ -47,6 +47,14 @@ export function ContentPreview({ operations, request, onClose, stacked, t }) {
   const [answer, setAnswer] = useState()
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
+    // Returning from another window checks the current file again. Retire the
+    // displayed diff immediately, rather than leaving stale text visible while
+    // a fresh read is pending; this does not alter the file selection.
+    const recheck = () => { setAnswer(undefined); setAttempt(value => value + 1) }
+    window.addEventListener('focus', recheck)
+    return () => window.removeEventListener('focus', recheck)
+  }, [])
+  useEffect(() => {
     let alive = true
     setAnswer(undefined)
     void Promise.resolve().then(() => operations.content(request)).then(result => {

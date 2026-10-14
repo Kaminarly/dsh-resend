@@ -62,8 +62,8 @@ async function workspace({ agent = 'accepting' } = {}) {
     expect(wire.ok, JSON.stringify(wire)).toBe(true)
     return wire.value
   }
-  const start = (op = 'edit') => call({ phase: 'start', request: { sessionId: SESSION_ID,
-    targetSeq: op === 'edit' ? 2 : 3, op, ...(op === 'edit' ? { text: '编辑后的中文消息' } : {}) } })
+  const start = (op = 'edit', receiver = host) => call({ phase: 'start', request: { sessionId: SESSION_ID,
+    targetSeq: op === 'edit' ? 2 : 3, op, ...(op === 'edit' ? { text: '编辑后的中文消息' } : {}) } }, receiver)
   const choose = (result, phase, selected) => call({ phase, sessionId: SESSION_ID,
     preflightId: result.value.preflightId, ...(selected === undefined ? {} : { selected }) })
   const outcomeFiles = async () => {
@@ -77,7 +77,7 @@ async function workspace({ agent = 'accepting' } = {}) {
   }
   const contents = async (...names) => Object.fromEntries(await Promise.all(names.map(async name =>
     [name, await readFile(path.join(cwd, name), 'utf8')])))
-  return { cwd, session, state, host, write, call, start, choose, outcome, outcomeFiles, contents }
+  return { home, cwd, session, state, host, write, call, start, choose, outcome, outcomeFiles, contents }
 }
 
 it.each(['edit', 'regenerate'])('%s preflight restores only the selected subset, saves the real result, then rewinds and sends', async op => {
@@ -284,18 +284,113 @@ it('leaves processed files processed when the replay is canceled, and never fina
   expect(w.state.calls.followups).toBe(0)
   expect(auditCount(w.session)).toBe(0)
   expect((await w.outcome()).kind).toBe('file-rollback-progress')
-  // A new operation is a NEW carrier (the id is minted per attempt), so its plan
-  // reports the files as they now are: a and b diverge from that plan, c is
-  // offered again unchecked. The old point's journal still says what happened.
+  // Starting the same operation recovers its saved result and selection.
   const second = await w.start()
   expect(second.value.files).toEqual([
-    { path: 'a.txt', action: 'refuse', reason: 'content-diverged' },
+    { path: 'a.txt', action: 'refuse', reason: 'already-restored' },
     { path: 'b.txt', action: 'refuse', reason: 'content-diverged' },
     { path: 'c.txt', action: 'restore' },
   ])
-  expect(second.value.selected).toBeUndefined()
+  expect(second.value.selected).toEqual(['a.txt', 'b.txt'])
+  expect(second.value.preflightId).toBe(preview.value.preflightId)
   expect((await w.choose(second, 'keep')).ok).toBe(true)
   expect(w.state.calls.followups).toBe(1)
+})
+
+it.each(['edit', 'regenerate'])('%s recovers A restored, B selected and C unchecked across independent hosts and restart', async op => {
+  const w = await workspace()
+  const preview = await w.start(op)
+  faults.afterCommit = async (target, fs) => {
+    if (target === path.join(w.cwd, 'a.txt')) await fs.writeFile(path.join(w.cwd, 'b.txt'), '其他窗口修改 B')
+  }
+  expect((await w.choose(preview, 'restore', ['a.txt', 'b.txt'])).error.code).toBe('execution-stopped')
+  faults.afterCommit = undefined
+  const other = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => other.ctx.fiber.dispose())
+  await writeFile(path.join(w.cwd, 'a.txt'), '助手改过 A') // matching old after bytes cannot reopen A
+  await writeFile(path.join(w.cwd, 'b.txt'), '助手改过 B')
+  const recovered = await w.start(op, other)
+  expect(recovered.value.preflightId).toBe(preview.value.preflightId)
+  expect(recovered.value.selected).toEqual(['a.txt', 'b.txt'])
+  expect(recovered.value.files).toEqual([
+    { path: 'a.txt', action: 'refuse', reason: 'already-restored' },
+    { path: 'b.txt', action: 'restore' }, { path: 'c.txt', action: 'restore' },
+  ])
+  await w.host.ctx.fiber.dispose()
+  await other.ctx.fiber.dispose()
+  const restarted = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => restarted.ctx.fiber.dispose())
+  const afterRestart = await w.start(op, restarted)
+  expect(afterRestart.value.selected).toEqual(['a.txt', 'b.txt'])
+  expect(afterRestart.value.files).toEqual(recovered.value.files)
+  const sent = await w.call({ sessionId: SESSION_ID, phase: 'restore',
+    preflightId: afterRestart.value.preflightId, selected: ['b.txt'] }, restarted)
+  expect(sent.ok, JSON.stringify(sent)).toBe(true)
+  expect(await w.contents('a.txt', 'b.txt', 'c.txt')).toEqual({
+    'a.txt': '助手改过 A', 'b.txt': '中文 B', 'c.txt': '助手改过 C',
+  })
+  expect(w.state.calls.followups).toBe(1)
+})
+
+it('keeps a restored-and-uncertain run uncertain on restart without reopening or rewriting either member', async () => {
+  const w = await workspace()
+  const preview = await w.start()
+  faults.afterCommit = async (target, fs) => {
+    if (target === path.join(w.cwd, 'b.txt')) await fs.writeFile(target, '无法确认的 B')
+  }
+  expect((await w.choose(preview, 'restore', ['a.txt', 'b.txt'])).error.code).toBe('execution-stopped')
+  faults.afterCommit = undefined
+  await w.host.ctx.fiber.dispose()
+  const restarted = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => restarted.ctx.fiber.dispose())
+  const recovered = await w.start('edit', restarted)
+  expect(recovered.value.selected).toEqual(['a.txt', 'b.txt'])
+  expect(recovered.value.files).toEqual([
+    { path: 'a.txt', action: 'refuse', reason: 'already-restored' },
+    { path: 'b.txt', action: 'refuse', reason: 'restore-outcome-unavailable' },
+    { path: 'c.txt', action: 'restore' },
+  ])
+  const kept = await w.call({ sessionId: SESSION_ID, phase: 'keep', preflightId: recovered.value.preflightId }, restarted)
+  expect(kept.error.files).toEqual([
+    { path: 'a.txt', action: 'restored' },
+    { path: 'b.txt', action: 'refuse', reason: 'restore-outcome-unavailable' },
+    { path: 'c.txt', action: 'kept' },
+  ])
+  expect(w.state.calls.followups).toBe(0)
+  expect(await w.contents('a.txt', 'b.txt', 'c.txt')).toEqual({ 'a.txt': '中文 A', 'b.txt': '无法确认的 B', 'c.txt': '助手改过 C' })
+})
+
+it('ignores unrelated damaged or empty records when recovering the current operation', async () => {
+  const w = await workspace()
+  const records = path.join(w.home, 'data', 'plugins', 'dsh-resend', 'records')
+  await mkdir(records, { recursive: true })
+  await writeFile(path.join(records, `${'0'.repeat(64)}.json`), '{broken')
+  await writeFile(path.join(records, `${'1'.repeat(64)}.json`), 'null')
+  const preview = await w.start()
+  expect(preview.ok, JSON.stringify(preview)).toBe(true)
+  expect(preview.value.files).toHaveLength(3)
+  expect((await w.choose(preview, 'restore', ['a.txt'])).ok).toBe(true)
+  expect(await w.contents('a.txt', 'b.txt', 'c.txt')).toEqual({ 'a.txt': '中文 A', 'b.txt': '助手改过 B', 'c.txt': '助手改过 C' })
+})
+
+it('reports the saved split when keeping the remainder succeeds but the subsequent rewind fails', async () => {
+  const w = await workspace()
+  const preview = await w.start()
+  faults.afterCommit = async (target, fs) => {
+    if (target === path.join(w.cwd, 'a.txt')) await fs.writeFile(path.join(w.cwd, 'b.txt'), '外部修改 B')
+  }
+  await w.choose(preview, 'restore', ['a.txt', 'b.txt'])
+  faults.afterCommit = undefined
+  const append = w.session.append.bind(w.session)
+  w.session.append = (...args) => { if (args[0] === 'compaction/prune') throw new Error('rewind unavailable'); return append(...args) }
+  const failed = await w.choose(preview, 'keep')
+  expect(failed.error.code).toBe('rewind-failed')
+  expect(failed.error.files).toEqual([
+    { path: 'a.txt', action: 'restored' }, { path: 'b.txt', action: 'kept' }, { path: 'c.txt', action: 'kept' },
+  ])
+  w.session.append = append
+  expect((await w.choose(preview, 'restore', ['b.txt', 'c.txt'])).ok).toBe(true)
+  expect(await w.contents('a.txt', 'b.txt', 'c.txt')).toEqual({ 'a.txt': '中文 A', 'b.txt': '外部修改 B', 'c.txt': '助手改过 C' })
 })
 
 it('refuses the whole selected subset when one member changed before execution, and keeps the unselected one honest', async () => {

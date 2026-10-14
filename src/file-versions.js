@@ -1,6 +1,6 @@
 /** Private Phase 2 substrate. No service field or Remote method exposes records. */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createSnapshotStore, digest } from './file-snapshots.js'
 import { readCoveringLog, eventAtSeq } from './log-read.js'
@@ -10,6 +10,7 @@ import { createStorageCleanup } from './storage-cleanup.js'
 import { contents, fileTarget, sameContents as equal } from './rollback-files.js'
 import { createFileRollback } from './file-rollback.js'
 import { createObservationStore } from './file-observations.js'
+import { isCarrierIdFor } from './marker.js'
 
 const refused = (code) => ({ ok: false, error: { code } })
 const normalizedText = (bytes, keepBom = false) => bytes === null ? null : new TextDecoder('utf-8', { fatal: true, ignoreBOM: keepBom }).decode(bytes).replaceAll('\r\n', '\n')
@@ -112,10 +113,29 @@ export function createFileVersions(ctx) {
   })
   ctx.effect(() => () => { observations.clear() })
 
-  async function prepare(session, plan, carrierId) {
+  async function prepare(session, plan, carrierId, request) {
     synchronizeGeneration(session.id)
     const covering = await readCoveringLog(ctx, session.id)
     if (covering.status !== 'ok') throw new Error(covering.detail)
+    // Match the exact operation and unchanged conversation after a reload.
+    // Keep its original manifest: recomputing it from already-restored files
+    // would lose both the saved progress and the user's unselected members.
+    const replayKey = request && digest(JSON.stringify([session.id, request.op, request.targetSeq,
+      plan.rangeStartSeq, plan.endSeq, plan.shadowedSeqs, plan.resendText]))
+    if (replayKey) {
+      const directory = safePrivatePath(home, 'records')
+      const names = await readdir(directory).catch(error => { if (error.code === 'ENOENT') return []; throw error })
+      for (const name of names) {
+        if (!/^[a-f0-9]{64}\.json$/.test(name)) continue
+        let saved
+        try { saved = JSON.parse(await readFile(safePrivatePath(home, `records/${name}`), 'utf8')) }
+        catch (error) { if (error instanceof SyntaxError || error.code === 'ENOENT') continue; throw error }
+        if (saved?.replayKey !== replayKey || saved.sessionId !== session.id || !isCarrierIdFor(request.op, saved.carrierId) ||
+            digest(JSON.stringify([session.id, saved.carrierId])) !== name.slice(0, 64)) continue
+        if (covering.log.some(event => event.type === 'user/message' && event.data.id === saved.carrierId)) continue
+        return prepared(saved.carrierId, session, plan)
+      }
+    }
     const files = new Map()
     const shadowed = new Set(plan.shadowedSeqs)
     const results = new Map()
@@ -190,15 +210,26 @@ export function createFileVersions(ctx) {
     const target = recordPath(session.id, carrierId)
     await mkdir(path.dirname(target), { recursive: true })
     const staging = `${target}.${randomUUID()}.pending`
-    await writeFile(staging, JSON.stringify({ sessionId: session.id, carrierId, files: records }), { flag: 'wx', mode: 0o600 })
+    await writeFile(staging, JSON.stringify({ sessionId: session.id, carrierId, files: records,
+      ...(replayKey ? { replayKey } : {}) }), { flag: 'wx', mode: 0o600 })
     await rename(staging, target)
+    return prepared(carrierId, session, plan)
+  }
+
+  function prepared(carrierId, session, plan) {
+    const target = recordPath(session.id, carrierId)
     return {
+      carrierId,
       preview: () => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, phase: 'preview' }, carrierId),
       rollback: request => rollback.prepared({ sessionId: session.id, carrierSeq: plan.rangeStartSeq, ...request }, carrierId),
       content: request => rollback.content(request, carrierId),
       async discardUnlessWritten() {
         const read = await readCoveringLog(ctx, session.id)
         if (read.status === 'ok' && !read.log.some((event) => event.type === 'user/message' && event.data.id === carrierId)) {
+          // A canceled or abandoned preflight may already have changed files.
+          // Its outcome and original manifest must survive the next start.
+          try { await readFile(safePrivatePath(home, `outcomes/${digest(JSON.stringify([session.id, carrierId]))}.json`)); return }
+          catch (error) { if (error.code !== 'ENOENT') throw error }
           await unlink(target).catch(error => { if (error.code !== 'ENOENT') throw error })
         }
       },

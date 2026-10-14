@@ -264,10 +264,11 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request, repla
     // answerable from the log alone, which is the question §9.4's re-send rests
     // on. The trace text is chosen here, once, and is immutable in the log from
     // then on (§10).
-    const carrierId = pending?.id ?? carrierIdFor(op, randomUUID() + (op === 'regenerate'
+    let carrierId = pending?.id ?? carrierIdFor(op, randomUUID() + (op === 'regenerate'
       ? '-target-' + request.targetSeq : '-prompt-sha256-' + editPromptDigest(plan.resendText)))
+    const versions = pending?.versions ?? await fileVersions.get(ctx).prepare(session, plan, carrierId, replay ? request : undefined)
+    carrierId = versions.carrierId
     const resendMessageId = resendIdFor(carrierId)
-    const versions = pending?.versions ?? await fileVersions.get(ctx).prepare(session, plan, carrierId)
     if (replay?.phase === 'start') {
       const preview = await versions.preview()
       if (!preview.ok) { await versions.discardUnlessWritten(); return preview }
@@ -303,6 +304,10 @@ async function rewind(ctx, { session, agent, sessions, sessionId, request, repla
         // described, so it keeps following the normal retention flow.
         const kept = await versions.rollback({ phase: 'keep', planId: pending.preview.value.planId })
         if (!kept.ok && kept.error.code !== 'plan-not-found') return kept
+        if (kept.ok && kept.value.completed) {
+          pending.restored = true
+          pending.preview = { ok: true, value: { ...pending.preview.value, ...kept.value } }
+        }
       }
       if (agent.status !== 'idle') return pending.restored ? stoppedAfterRestore(pending, 'agent-busy') : replayFailure('agent-busy')
       // File I/O may have yielded to another window's normal send.

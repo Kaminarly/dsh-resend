@@ -140,12 +140,67 @@ it('never repeats a restored member even when another host still holds a plan ma
   race.afterWrite = undefined
   await writeFile(path.join(f.cwd, 'second.txt'), 'agent')
   const done = await f.call({ phase: 'execute', planId: stale.value.planId, selected: ['second.txt'] }, other)
-  expect(done.value.files).toEqual([
+  expect(done.error.code).toBe('preview-stale')
+  expect(await readFile(path.join(f.cwd, 'second.txt'), 'utf8')).toBe('agent')
+  const checked = await f.call({ phase: 'preview' }, other)
+  const recovered = await f.call({ phase: 'execute', planId: checked.value.planId, selected: ['second.txt'] }, other)
+  expect(recovered.value.files).toEqual([
     { path: 'first.txt', action: 'restored' },
     { path: 'second.txt', action: 'restored' },
   ])
   expect(await readFile(path.join(f.cwd, 'first.txt'), 'utf8')).toBe('original-first.txt')
   expect(await readFile(path.join(f.cwd, 'second.txt'), 'utf8')).toBe('original-second.txt')
+})
+
+it('does not expand a saved subset when another window submits its obsolete all-selected plan', async () => {
+  const f = await fixture(['first.txt', 'second.txt', 'third.txt'])
+  const other = await f.host()
+  const stale = await f.call({ phase: 'preview' }, other)
+  race.afterWrite = async (target, fs) => {
+    if (target === path.join(f.cwd, 'first.txt')) await fs.writeFile(path.join(f.cwd, 'second.txt'), '外部修改')
+  }
+  await f.execute({ selected: ['first.txt', 'second.txt'] })
+  race.afterWrite = undefined
+  await writeFile(path.join(f.cwd, 'first.txt'), 'agent')
+  await writeFile(path.join(f.cwd, 'second.txt'), 'agent')
+  const answer = await f.call({ phase: 'execute', planId: stale.value.planId,
+    selected: ['first.txt', 'second.txt', 'third.txt'] }, other)
+  expect(answer.error.code).toBe('preview-stale')
+  expect(answer.error.files).toEqual([
+    { path: 'first.txt', action: 'restored' },
+    { path: 'second.txt', action: 'refuse', reason: 'content-diverged' },
+    { path: 'third.txt', action: 'kept' },
+  ])
+  expect(await readFile(path.join(f.cwd, 'first.txt'), 'utf8')).toBe('agent')
+  expect(await readFile(path.join(f.cwd, 'second.txt'), 'utf8')).toBe('agent')
+  expect(await readFile(path.join(f.cwd, 'third.txt'), 'utf8')).toBe('agent')
+  const checked = await f.call({ phase: 'preview' }, other)
+  expect(checked.value.selected).toEqual(['first.txt', 'second.txt'])
+})
+
+it('stops after session release during a restore and recovers the true partial progress from disk', async () => {
+  const f = await fixture(['first.txt', 'second.txt', 'third.txt'])
+  race.afterWrite = target => {
+    if (target === path.join(f.cwd, 'first.txt')) f.first.ctx.emit('session/disposed', f.state.session)
+  }
+  const stopped = await f.execute({ selected: ['first.txt', 'second.txt'] })
+  expect(stopped.error.code).toBe('execution-stopped')
+  expect(stopped.error.files).toEqual([
+    { path: 'first.txt', action: 'restored' },
+    { path: 'second.txt', action: 'refuse', reason: 'agent-busy' },
+    { path: 'third.txt', action: 'kept' },
+  ])
+  race.afterWrite = undefined
+  const other = await f.host()
+  const recovered = await f.call({ phase: 'preview' }, other)
+  expect(recovered.value.selected).toEqual(['first.txt', 'second.txt'])
+  expect(recovered.value.files).toEqual([
+    { path: 'first.txt', action: 'refuse', reason: 'already-restored' },
+    { path: 'second.txt', action: 'restore' }, { path: 'third.txt', action: 'restore' },
+  ])
+  expect(await readFile(path.join(f.cwd, 'first.txt'), 'utf8')).toBe('original-first.txt')
+  expect(await readFile(path.join(f.cwd, 'second.txt'), 'utf8')).toBe('agent')
+  expect(await readFile(path.join(f.cwd, 'third.txt'), 'utf8')).toBe('agent')
 })
 
 it('reports a result-save failure with the real kept/restored split and recovers without re-restoring', async () => {

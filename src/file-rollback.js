@@ -41,6 +41,8 @@ export function createFileRollback(ctx, { home, snapshots }) {
   const progress = new Map()
   const owners = new Map()
   const persisted = new Set()
+  const sessionRevisions = new Map()
+  let disposed = false
   // Completions whose disk record uses the versioned shape (spec §9). A legacy
   // full-restore keeps writing the legacy record so old readers stay honest.
   const versioned = new Set()
@@ -55,9 +57,10 @@ export function createFileRollback(ctx, { home, snapshots }) {
     }
   }
   ctx.on('session/disposed', session => {
+    sessionRevisions.set(session.id, (sessionRevisions.get(session.id) ?? 0) + 1)
     for (const [id, plan] of plans) if (plan.sessionId === session.id) plans.delete(id)
   })
-  ctx.effect(() => () => { plans.clear(); completed.clear(); progress.clear(); owners.clear(); persisted.clear(); versioned.clear() })
+  ctx.effect(() => () => { disposed = true; plans.clear(); completed.clear(); progress.clear(); owners.clear(); persisted.clear(); versioned.clear() })
 
   async function save(target, value) {
     const staging = `${target}.${randomUUID()}.pending`
@@ -148,6 +151,9 @@ export function createFileRollback(ctx, { home, snapshots }) {
     if (typeof sessionId !== 'string' || sessionId === '' || !Number.isSafeInteger(carrierSeq) || carrierSeq < 0) return refused('bad-request')
     const session = hostService(ctx, 'sessions')?.get(sessionId)
     if (session === undefined) return refused('session-not-found')
+    const revision = sessionRevisions.get(sessionId)
+    const alive = () => !disposed && sessionRevisions.get(sessionId) === revision && hostService(ctx, 'sessions')?.get(sessionId) === session
+    if (!alive()) return refused('plan-not-found')
     const agent = hostService(ctx, 'agents')?.get(sessionId)
     if (phase !== 'status' && agent?.status !== 'idle') {
       const pending = plans.get(planId)
@@ -221,6 +227,11 @@ export function createFileRollback(ctx, { home, snapshots }) {
       // plan, write nothing, claim no restore happened (spec §9).
       if (phase === 'cancel' || phase === 'keep') return { ok: true, value: plan.preview }
       if (phase !== 'execute') return refused('bad-request')
+      // Another window may have acted since this plan was shown. Its durable
+      // choice wins; an old all-selected list must not expand that choice.
+      const currentProgress = progress.get(outcome)
+      if (JSON.stringify(currentProgress) !== plan.progress) return { ok: false, error: { code: 'preview-stale',
+        files: selectionReport(currentProgress.value.files, new Map(currentProgress.states.map(entry => [entry.path, entry]))) } }
       if (request.selected !== undefined) {
         // Revalidate the SAME plan, never silently calculate a new one. Only the
         // confirmed subset is revalidated: an unselected file changing does not
@@ -270,7 +281,7 @@ export function createFileRollback(ctx, { home, snapshots }) {
           failed = await savedProgress()
           if (failed) return failed
           try {
-            await restoreFile(session.header.cwd, file, () => agent.status === 'idle')
+            await restoreFile(session.header.cwd, file, () => alive() && agent.status === 'idle')
           } catch (error) {
             // A committed replacement whose verification failed is uncertain;
             // do not promote it to successful completion on the next read.
@@ -323,7 +334,7 @@ export function createFileRollback(ctx, { home, snapshots }) {
           return { ok: false, error: { code: 'progress-save-failed', files: executionFiles(plan.files, processed) } }
         }
         try {
-          await restoreFile(session.header.cwd, file, () => agent.status === 'idle')
+          await restoreFile(session.header.cwd, file, () => alive() && agent.status === 'idle')
           processed.add(file.path)
         } catch (error) {
           if (error.restored) processed.add(file.path)
@@ -371,12 +382,13 @@ export function createFileRollback(ctx, { home, snapshots }) {
       }
       files.push({ path: file.path, action: reason === undefined ? 'restore' : 'refuse', ...(reason === undefined ? { before, after } : { reason }) })
     }
+    if (!alive()) return refused('plan-not-found')
     for (const [id, plan] of plans) if (plan.sessionId === sessionId && plan.carrierSeq === carrierSeq) plans.delete(id)
     const id = randomUUID()
     const preview = { planId: id, ...(request.scope === undefined ? {} : { scope: 'artifacts' }),
       files: files.map(({ path, action, reason, before }) => ({ path, action, ...(reason === undefined ? {} : { reason }),
         ...(action === 'restore' && before === null ? { operation: 'delete' } : {}) })) }
-    plans.set(id, { sessionId, carrierSeq, files, preview, preparedId, outcome })
+    plans.set(id, { sessionId, carrierSeq, files, preview, preparedId, outcome, progress: JSON.stringify(progress.get(outcome)) })
     // A recorded selection identity travels with the preview, so a re-check
     // after an interruption reuses it instead of defaulting to everything.
     const recorded = progress.get(outcome)
@@ -402,7 +414,8 @@ export function createFileRollback(ctx, { home, snapshots }) {
       const current = await contents(session.header.cwd, file.path)
       if (!equal(current, file.after)) return refused('preview-stale')
       // A dispose/cleanup/cancel during a read must retire the answer as well.
-      if (plans.get(request.planId) !== plan) return refused('plan-not-found')
+      if (disposed || plans.get(request.planId) !== plan || hostService(ctx, 'sessions')?.get(request.sessionId) !== session) return refused('plan-not-found')
+      if (hostService(ctx, 'agents')?.get(request.sessionId)?.status !== 'idle') return refused('agent-busy')
       return { ok: true, value: contentDiff(current, file.before) }
     } catch (error) {
       return refused(error.message === 'unsafe-path' || error.message === 'content-diverged' ? 'preview-stale' : 'read-failed')

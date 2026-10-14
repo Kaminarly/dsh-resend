@@ -19,7 +19,7 @@
 
 ## 从 GitHub 安装
 
-DSH Desktop 的插件安装页支持 GitHub 仓库地址。仓库公开并发布版本后，可按以下步骤安装：
+DSH Desktop 的插件安装页支持 GitHub 仓库地址。本仓库首个发布版本为 `v0.1.0`，可按以下步骤安装：
 
 1. 在 DSH Desktop 侧栏打开「插件」，选择「添加插件」。
 2. 输入仓库地址和版本标签：`github:Kaminarly/dsh-resend#v0.1.0`。

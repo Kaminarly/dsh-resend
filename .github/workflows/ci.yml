@@ -35,5 +35,8 @@ jobs:
       - name: Build artifacts are honest (committed lib/ == fresh build)
         run: git diff --exit-code -- lib/
 
+      - name: Apply DSH Desktop 2.0.17 host patch for tests
+        run: git apply --ignore-space-change --directory=node_modules/@deepseek-ai/dsh-app-boot -p1 test/fixtures/dsh-app-boot-0.2.0-rc.2.patch
+
       - name: Test
-        run: npm test
+        run: DSH_SETTINGS_HOST_ROOT=. npm test

@@ -70,6 +70,8 @@ npm test
 
 CI 按 `check → build → 比较 lib/ → test` 的顺序执行。提交源码改动时，生成产物必须与源码一致；不要在 build 前比较 `lib/`。
 
+持久化设置集成测试使用 DSH Desktop 的 Loader、ConfigEditor 和 SettingsForms。本机有 DSH Desktop 时，测试读取实际安装；GitHub Actions 则使用锁文件中的 DSH `0.2.0-rc.2` 依赖，并先应用 `test/fixtures/dsh-app-boot-0.2.0-rc.2.patch`，模拟 DSH Desktop 2.0.17 随附的宿主补丁。
+
 `npm run check` 包含三项检查：
 
 1. `scripts/check-syntax.mjs` 使用 esbuild 解析器遍历 `src/` 和 `lib/` 中的 JavaScript。
@@ -99,10 +101,10 @@ node scripts/verify-settings-display-browser.mjs
 
 当前验证组合：
 
-| 组件 | 验证版本 |
+| 组件 | 当前支持与验证版本 |
 |---|---|
 | DSH Desktop | `2.0.17` |
-| `@deepseek-ai/dsh-*` | `0.2.0-rc.2` |
+| DSH runtime（`@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`） | `0.2.0-rc.2` |
 | `@deepseek-ai/cordis` | `4.0.4` |
 
 `package.json` 中的 `peerDependencies` 给出允许范围；锁文件固定开发和验收所用版本。版本范围不能替代宿主契约检查：兼容性由实际宿主表面（host surface）决定，插件依赖宿主暴露的服务、导出和 Slot；宿主形状变化时 `npm run check` 应失败。
@@ -138,12 +140,12 @@ DSH Desktop 2.0.17 的 `desktop` Profile 由应用管理；通用启动器不能
 已安装的 DSH Desktop 2.0.17 插件管理器接受 GitHub 仓库地址，例如：
 
 ```text
-github:OWNER/REPOSITORY#TAG
+github:Kaminarly/dsh-resend#v0.1.0
 ```
 
 这条路径不要求先发布到 npm，但需要公开可访问的仓库、可安装的根目录 `package.json`、已提交的 `lib/` 构建产物、可用的 `cordis.patch.yml`，以及本机 Git 和 GitHub 网络连接。安装器会检查 DSH 兼容性；GitHub 仓库无法访问时，切换 npm 镜像不能解决该连接问题。安装器不自动更新插件，升级需要卸载后重新安装新标签。
 
-**当前工作区尚未配置 Git remote，`package.json` 也没有 `repository` 字段，因此目前没有可供其他用户复制的真实仓库地址。** 公开仓库并确定发布标签后，再将上面的占位符替换为实际地址，并先用干净 Profile 验证安装和启用流程。
+首个 GitHub Release 为 `v0.1.0`。后续安装时，将地址中的标签替换为要安装的发布版本；发布新标签前，应先完成本指南中的检查和测试。
 
 ## 已知限制
 

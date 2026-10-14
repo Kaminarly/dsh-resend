@@ -56,4 +56,20 @@ describe('CI ordering', () => {
     const install = commands.findIndex((command) => /\bnpm ci\b/.test(command))
     expect(install).toBe(0)
   })
+
+  it('runs durable settings tests against the pinned host packages', () => {
+    const [, job] = jobs[0]
+    const testStep = (job.steps ?? []).find((step) => /\bnpm test\b/.test(step.run ?? ''))
+    expect(testStep?.run).toMatch(/DSH_SETTINGS_HOST_ROOT=\./)
+  })
+
+  it('applies the matching Desktop host patch before the tests', () => {
+    const [, job] = jobs[0]
+    const steps = job.steps ?? []
+    const patchIndex = steps.findIndex((step) => /DSH Desktop 2\.0\.17 host patch/.test(step.name ?? ''))
+    const testIndex = steps.findIndex((step) => /\bnpm test\b/.test(step.run ?? ''))
+    expect(patchIndex).toBeGreaterThanOrEqual(0)
+    expect(steps[patchIndex].run).toContain('test/fixtures/dsh-app-boot-0.2.0-rc.2.patch')
+    expect(patchIndex).toBeLessThan(testIndex)
+  })
 })

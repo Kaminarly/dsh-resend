@@ -163,7 +163,8 @@ function FileRollbackPanel({ operations, point, t, preflight }) {
   if (!preflight && (pending === 'status' || result?.value?.empty === true)) return null
   return createElement('section', { ref: panel, tabIndex: -1, onFocusCapture: event => { focused.current = event.target }, className: 'dsh-resend-rollback', 'aria-label': t('files.title'), 'aria-busy': busy }, [
     createElement(UIStyles, { key: 'ui' }),
-    viewer && selectable && !busy && viewer.planId === preview?.planId && viewer.sessionId === point.sessionId &&
+    viewer && !busy && viewer.sessionId === point.sessionId &&
+      ((viewer.source === 'result' && terminal) || (selectable && viewer.planId === preview?.planId)) &&
       createElement(ContentPreview, { key: `${viewer.sessionId}:${viewer.planId}:${viewer.path}`, operations, request: viewer,
         stacked: !!preflight, t, onClose: () => {
           setViewer(undefined)
@@ -243,6 +244,11 @@ function FileRollbackPanel({ operations, point, t, preflight }) {
               ...(preflight ? { source: 'preflight', preflightId: preview.preflightId ?? preflight.preflightId }
                 : { source: 'history', carrierSeq: point.carrierSeq }) }) },
           }, t('content.view')),
+          terminal && action === 'restored' && createElement(Button, { key: 'result-view', type: 'button', size: 'sm', variant: 'ghost',
+            disabled: busy, className: 'dsh-resend-rollback-button dsh-resend-content-view',
+            onClick: event => { opener.current = event.currentTarget; setViewer({ source: 'result', sessionId: point.sessionId,
+              carrierSeq: point.carrierSeq, path: file.path }) },
+          }, t('content.resultView')),
         ])
       })),
     ]),

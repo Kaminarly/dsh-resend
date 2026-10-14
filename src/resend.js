@@ -489,7 +489,7 @@ export class ResendService extends Service {
     const ctx = this.hostCtx
     return fileVersions.get(ctx).withOperation(request.sessionId, 'rolling-back', () =>
       withSessionLock(request.sessionId, async () => {
-        if (request.source === 'history') return fileVersions.get(ctx).content(request)
+        if (request.source === 'history' || request.source === 'result') return fileVersions.get(ctx).content(request)
         const saved = replayPlans.get(ctx).get(request.preflightId)
         if (!saved || saved.session.id !== request.sessionId || saved.preview.value.planId !== request.planId ||
             saved.generation !== fileVersions.get(ctx).generation(request.sessionId)) return replayFailure('plan-not-found')

@@ -301,6 +301,7 @@ function rollbackFileListSchema() {
 export function contentRequestSchema() {
   const member = { sessionId: z.string(), planId: z.string(), path: z.string() }
   return z.union([
+    z.strictObject({ sessionId: z.string(), path: z.string(), source: z.literal('result'), carrierSeq: z.number().check(z.int(), z.gte(0)) }),
     z.strictObject({ ...member, source: z.literal('history'), carrierSeq: z.number() }),
     z.strictObject({ ...member, source: z.literal('preflight'), preflightId: z.string() }),
   ])

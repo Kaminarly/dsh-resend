@@ -11,13 +11,15 @@ const value = { status: 'ready', action: 'delete', sizes: { current: 20, target:
   rows: [{ kind: 'delete', text: '<script>window.executed=true</script> 中文', oldLine: 1 }] }
 const success = { ok: true, value }
 
-async function panel({ preflight = false, read = async () => success } = {}) {
+async function panel({ preflight = false, read = async () => success, completed = false } = {}) {
   const calls = []
   const preview = { ok: true, value: { planId: 'plan', files,
     ...(preflight ? { preflight: true, preflightId: 'preflight', userSeq: 2, op: 'edit' } : {}) } }
   const operations = createResendOperations({ resend: {
     rollback: async request => ({ ok: true, value: request.phase === 'status'
-      ? { ok: true, value: { files: [], planId: '' } } : preview }),
+      ? completed ? { ok: true, value: { planId: 'old-plan', completed: true, files: [
+        { path: 'src/中文/file.txt', action: 'restored' }, { path: 'refused.txt', action: 'refuse', reason: 'content-diverged' },
+        { path: 'kept.txt', action: 'kept' }] } } : { ok: true, value: { files: [], planId: '' } } : preview }),
     content: async request => { calls.push(request); return { ok: true, value: await read() } },
     replay: async request => {
       calls.push(request)
@@ -29,12 +31,48 @@ async function panel({ preflight = false, read = async () => success } = {}) {
   const element = sessionId => preflight ? h(ReplayPreflight, { operations, sessionId, userSeq: 2, portal: true, t: key => key })
     : h(FileRollbackPreview, { operations, point: { sessionId, carrierSeq: 5 }, t: key => key })
   const dom = await renderDom(element('s'))
-  if (!preflight) await dom.click([...dom.container.querySelectorAll('button')].find(node => node.textContent === 'files.previewShort'))
+  if (!preflight) await dom.click([...dom.container.querySelectorAll('button')].find(node => node.textContent === (completed ? 'files.viewResult' : 'files.previewShort')))
   const button = key => [...document.querySelectorAll('button')].find(node => node.textContent === key || node.getAttribute('aria-label') === key)
   const dialog = () => document.querySelector('.dsh-resend-content-dialog')
   const check = () => document.querySelector('li[data-path="src/中文/file.txt"] input')
   return { dom, operations, calls, pending, element, button, dialog, check }
 }
+
+it('opens a completed result as plain numbered text and returns focus without restoring again', async () => {
+  const p = await panel({ completed: true, read: async () => ({ ok: true, value: { ...value, action: 'restore',
+    target: { ...value.current, exists: true }, rows: [{ kind: 'add', text: '<script>inert</script> 已还原中文', newLine: 1 }] } }) })
+  try {
+    expect(document.querySelector('li[data-path="kept.txt"] button')).toBeNull()
+    expect(document.querySelector('li[data-path="refused.txt"] button')).toBeNull()
+    const opener = p.button('content.resultView')
+    opener.focus()
+    await p.dom.click(opener)
+    expect(p.calls).toEqual([{ source: 'result', sessionId: 's', carrierSeq: 5, path: 'src/中文/file.txt' }])
+    expect(p.dialog().textContent).toContain('content.resultDescription')
+    expect(p.dialog().textContent).toContain('content.result.restore')
+    expect(p.dialog().querySelector('code').textContent).toBe('<script>inert</script> 已还原中文')
+    expect(p.dialog().querySelector('script')).toBeNull()
+    expect(p.dialog().querySelector('.dsh-resend-content-legend')).toBeNull()
+    expect(p.dialog().querySelector('.dsh-resend-content-add')).toBeNull()
+    expect(p.dialog().querySelectorAll('.dsh-resend-content-number')).toHaveLength(1)
+    await p.dom.key(p.button('content.close'), 'Escape')
+    expect(p.dialog()).toBeNull()
+    expect(document.activeElement).toBe(opener)
+    expect(p.calls).toHaveLength(1)
+  } finally { p.operations.dispose(); await p.dom.cleanup() }
+})
+
+it.each(['delete', 'empty', 'unavailable', 'failed'])('explains a completed %s result without pre-execution wording', async mode => {
+  const p = await panel({ completed: true, read: async () => mode === 'failed' ? { ok: false, error: { code: 'result-unavailable' } }
+    : { ok: true, value: mode === 'unavailable' ? { status: 'unavailable', reason: 'non-text', action: 'restore', sizes: { current: 0, target: 8 } }
+      : { ...value, action: mode, rows: [] } } })
+  try {
+    await p.dom.click(p.button('content.resultView'))
+    expect(p.dialog().textContent).toContain(mode === 'failed' ? 'content.resultFailed' : mode === 'unavailable' ? 'content.resultUnavailable' : `content.result.${mode}`)
+    expect(p.dialog().textContent).not.toContain('content.direction')
+    expect(p.dialog().querySelector('code')).toBeNull()
+  } finally { p.operations.dispose(); await p.dom.cleanup() }
+})
 
 it.each([false, true])('views unchecked files as inert text and closes only the foreground dialog (%s)', async preflight => {
   const p = await panel({ preflight })

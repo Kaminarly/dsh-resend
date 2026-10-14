@@ -74,8 +74,12 @@ async function workspace(entry,{agent='accepting',boundaries=false,empty=false,n
   }
   const ui=await makeUI(()=>host)
   const pages=[]
-  async function open({independent=false}={}) {
+  async function open({independent=false,completed=false}={}) {
     let target=ui
+    if(completed) {
+      carrierSeq=calls.findLast(c=>c.method==='replay' && c.result.value?.ok && Number.isSafeInteger(c.result.value.value.carrierSeq))?.result.value.value.carrierSeq ?? carrierSeq
+      target=await makeUI(()=>host)
+    }
     if(independent) {
       const secondary=await hostComposition({host:state,dataHome});hosts.push(secondary)
       target=await makeUI(()=>secondary)
@@ -84,8 +88,8 @@ async function workspace(entry,{agent='accepting',boundaries=false,empty=false,n
     page.on('pageerror',error=>errors.push(error.message))
     page.on('console',message=>{if(['error','warning'].includes(message.type()))errors.push(message.text())})
     await page.goto(target.url)
-    await page.getByRole('button',{name:entry==='history'?/^(预览回滚|重新预览)$/: '打开重发前面板',exact:entry!=='history'}).click()
-    const panel=entry==='history'?page.locator('.dsh-resend-rollback').first():page.locator('.dsh-resend-preflight-overlay')
+    await page.getByRole('button',{name:completed?'查看结果':entry==='history'?/^(预览回滚|重新预览)$/: '打开重发前面板',exact:completed || entry!=='history'}).click()
+    const panel=completed || entry==='history'?page.locator('.dsh-resend-rollback').first():page.locator('.dsh-resend-preflight-overlay')
     if(noFiles) await page.waitForFunction(()=>window.uiFixture.operations.recordsFor('session-1').length>0)
     else await panel.locator('li[data-path]').first().waitFor()
     return {page,panel}
@@ -258,6 +262,51 @@ try {
     assert.equal(w.state.calls.followups-w.initialFollowups,2)
     assert.equal(auditCount(w.session)-w.initialAudits,1)
   },{agent:'deaf'})
+  for(const entry of ['history','preflight']) {
+    await check(entry,'完成后查看还原内容、后续修改与重启',async w=>{
+      const {panel}=await w.open();await w.select(panel,['a.txt']);await w.restore(panel)
+      await panel.getByRole('button',{name:entry==='history'?'查看还原内容':'还原 1 个文件并继续',exact:true}).waitFor({state:entry==='history'?'visible':'detached'})
+      await fs.writeFile(path.join(w.cwd,'a.txt'),'后续用户新修改')
+      await w.restart()
+      const {page,panel:result}=await w.open({completed:true})
+      assert.equal(await result.locator('li[data-path="b.txt"] button').count(),0)
+      const opener=result.locator('li[data-path="a.txt"]').getByRole('button',{name:'查看还原内容'})
+      for(const [width,dark] of [[1024,false],[375,true]]) {
+        await page.setViewportSize({width,height:900})
+        if(dark) await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
+        await opener.click()
+        const dialog=page.locator('.dsh-resend-content-result')
+        await dialog.locator('code').getByText('原始中文 A',{exact:true}).waitFor()
+        await page.evaluate(async()=>{await Promise.all(document.getAnimations().filter(a=>a.effect.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))})
+        assert.equal(await dialog.getByText('后续用户新修改',{exact:true}).count(),0)
+        assert.equal(await dialog.locator('.dsh-resend-content-legend').count(),0)
+        assert.equal(await dialog.locator('.dsh-resend-content-add').count(),0)
+        assert.equal(await dialog.locator('.dsh-resend-content-number').first().textContent(),'1')
+        const bounds=await dialog.boundingBox()
+        assert.ok(bounds.x>=0 && bounds.x+bounds.width<=width+1)
+        assert.ok(bounds.y>=0 && bounds.y+bounds.height<=900)
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+        await page.screenshot({path:path.join(new URL(output).pathname.replace(/^\/([A-Z]:)/,'$1'),`restored-content-${entry}-${width}.png`)})
+        await page.keyboard.press('Escape')
+        assert.equal(await dialog.count(),0)
+        assert.equal(await opener.evaluate(node=>document.activeElement===node),true)
+      }
+      await page.reload()
+      await page.getByRole('button',{name:'查看结果',exact:true}).click()
+      await opener.click();await page.locator('.dsh-resend-content-result code').getByText('原始中文 A',{exact:true}).waitFor()
+      assert.deepEqual(await w.disk('a.txt'),Buffer.from('后续用户新修改'))
+      assert.equal(w.state.calls.followups-w.initialFollowups,entry==='history'?0:1)
+    })
+    await check(entry,'完成后查看删除结果',async w=>{
+      const {panel}=await w.open();await w.select(panel,['new.txt']);await w.restore(panel)
+      await panel.getByRole('button',{name:entry==='history'?'查看还原内容':'还原 1 个文件并继续',exact:true}).waitFor({state:entry==='history'?'visible':'detached'})
+      const {page,panel:result}=await w.open({completed:true})
+      await result.locator('li[data-path="new.txt"]').getByRole('button',{name:'查看还原内容'}).click()
+      await page.getByText('本次回滚已删除此文件',{exact:true}).waitFor()
+      assert.equal(await page.locator('.dsh-resend-content-result code').count(),0)
+      assert.equal(await w.disk('new.txt'),null)
+    })
+  }
   assert.deepEqual(errors,[])
   const hashes={}
   for(const file of ['client.bundle.js','index.js','host.js']) hashes[file]=createHash('sha256').update(await fs.readFile(file==='client.bundle.js' && process.env.ROLLBACK_CLIENT_BUNDLE_PATH ? process.env.ROLLBACK_CLIENT_BUNDLE_PATH : new URL(`../lib/${file}`,import.meta.url))).digest('hex')

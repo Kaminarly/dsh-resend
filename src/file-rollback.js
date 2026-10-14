@@ -398,8 +398,37 @@ export function createFileRollback(ctx, { home, snapshots }) {
     try { return await rollback(request, preparedId) }
     catch (error) { logWarning(ctx, `file rollback failed: ${describeError(error)}`); return refused('internal') }
   }
+  /** Read the verified restore target, authorized by a durable completion, never the live file. */
+  async function resultContent(request) {
+    const session = hostService(ctx, 'sessions')?.get(request.sessionId)
+    if (!session || disposed) return refused('result-unavailable')
+    const revision = sessionRevisions.get(request.sessionId)
+    const covering = await readCoveringLog(ctx, request.sessionId)
+    if (covering.status !== 'ok') return refused('result-unavailable')
+    const carrier = eventAtSeq(covering.log, request.carrierSeq)
+    if (carrier?.type !== 'user/message' || !hasMarkerPrefix(carrier.data?.id) || carrier.surfaceOp?.op !== 'replace') return refused('invalid-member')
+    // Read from disk even if a cached completion exists: cleaned or damaged
+    // evidence must not authorize a historical content read.
+    const saved = JSON.parse(await readFile(outcomePath(request.sessionId, carrier.data.id), 'utf8'))
+    const answer = resultSchema.parse(saved.kind === 'file-rollback-result' && saved.version === 2 ? saved.value : saved)
+    if (!answer.ok || answer.value.completed !== true) return refused('result-unavailable')
+    const member = answer.value.files.find(file => file.path === request.path)
+    // Legacy successful full restores used 'restore' for landed members.
+    if (!member || !['restored', 'restore'].includes(member.action)) return refused('invalid-member')
+    const record = JSON.parse(await readFile(recordPath(request.sessionId, carrier.data.id), 'utf8'))
+    if (!Array.isArray(record) && (record.sessionId !== request.sessionId || record.carrierId !== carrier.data.id)) return refused('result-unavailable')
+    const files = filesInRecord(record)
+    const matches = Array.isArray(files) ? files.filter(file => file?.path === request.path) : []
+    if (matches.length !== 1 || matches[0].reason !== undefined || !Object.hasOwn(matches[0], 'before')) return refused('result-unavailable')
+    const target = await snapshots.get(matches[0].before)
+    if (disposed || sessionRevisions.get(request.sessionId) !== revision || hostService(ctx, 'sessions')?.get(request.sessionId) !== session) return refused('result-unavailable')
+    // An absent current side returns the full target text with the same bounded
+    // UTF-8 decoder. The result viewer presents it as plain numbered lines.
+    return { ok: true, value: { ...contentDiff(null, target), action: target === null ? 'delete' : target.length === 0 ? 'empty' : 'restore' } }
+  }
   async function content(request, preparedId) {
     try {
+      if (request.source === 'result' && preparedId === undefined) return await resultContent(request)
       const plan = plans.get(request.planId)
       if (!plan || plan.sessionId !== request.sessionId || plan.preparedId !== preparedId ||
           (preparedId === undefined && plan.carrierSeq !== request.carrierSeq)) return refused('plan-not-found')
@@ -418,6 +447,7 @@ export function createFileRollback(ctx, { home, snapshots }) {
       if (hostService(ctx, 'agents')?.get(request.sessionId)?.status !== 'idle') return refused('agent-busy')
       return { ok: true, value: contentDiff(current, file.before) }
     } catch (error) {
+      if (request.source === 'result') return refused('result-unavailable')
       return refused(error.message === 'unsafe-path' || error.message === 'content-diverged' ? 'preview-stale' : 'read-failed')
     }
   }

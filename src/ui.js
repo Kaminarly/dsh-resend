@@ -199,6 +199,7 @@ div[role="presentation"]:has(>.dsh-resend-content-stacked)>div[aria-hidden="true
 .dsh-resend-content-header button{flex:none;white-space:normal;max-width:120px}
 .dsh-resend-content-meta{box-sizing:border-box;height:min(140px,24dvh);min-height:0;max-height:30%;overflow:auto;overscroll-behavior:contain;padding:14px 24px;flex:none;font-size:var(--dsh-content-font-size-secondary,13px);overflow-wrap:anywhere}
 .dsh-resend-content-meta strong{font-weight:500}
+.dsh-resend-content-result .dsh-resend-content-meta{height:auto;max-height:24dvh}
 .dsh-resend-content-version{margin:4px 0;color:var(--dsw-alias-label-secondary)}
 .dsh-resend-content-legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:10px}
 .dsh-resend-content-body{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;border-top:.5px solid var(--dsw-alias-border-l4);padding:12px 0;font-size:var(--dsh-content-font-size-secondary,13px)}

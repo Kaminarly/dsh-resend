@@ -86,6 +86,96 @@ it.each([false, true])('reads the net current-to-original diff without consuming
   expect((await w.content()).error.code).toBe('plan-not-found')
 })
 
+it('reads the persisted restore target after later edits and a host restart, even while generating', async () => {
+  const original = '\ufeff本次还原的中文\r\n<script>inert</script>\r\n'
+  const w = await workspace(original, 'current')
+  const request = { source: 'result', sessionId: SESSION_ID, carrierSeq: w.request.carrierSeq, path: 'file.txt' }
+  expect((await w.call('content', request)).ok).toBe(false)
+  expect((await w.execute()).ok).toBe(true)
+  await writeFile(w.target, '后续用户修改')
+  await w.host.ctx.fiber.dispose()
+  const restarted = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+  cleanups.push(() => restarted.ctx.fiber.dispose())
+  w.state.agent.status = 'running'
+  const events = w.session.snapshotEvents()
+  const followups = w.state.calls.followups
+  const result = await w.call('content', request, restarted)
+  expect(result).toMatchObject({ ok: true, value: { status: 'ready', action: 'restore',
+    target: { exists: true, bom: true, eol: 'crlf', finalNewline: true },
+    rows: [{ kind: 'add', text: '本次还原的中文', newLine: 1 }, { kind: 'add', text: '<script>inert</script>', newLine: 2 }] } })
+  expect(JSON.stringify(result)).not.toMatch(/后续用户修改|objects|records/)
+  expect(await readFile(w.target, 'utf8')).toBe('后续用户修改')
+  expect(w.session.snapshotEvents()).toEqual(events)
+  expect(w.state.calls.followups).toBe(followups)
+})
+
+it.each([[null, 'delete'], ['', 'empty']])('shows a completed %s target without confusing absence and empty text', async (original, action) => {
+  const w = await workspace(original, 'current')
+  expect((await w.execute()).ok).toBe(true)
+  const result = await w.call('content', { source: 'result', sessionId: SESSION_ID, carrierSeq: w.request.carrierSeq, path: 'file.txt' })
+  expect(result).toMatchObject({ ok: true, value: { status: 'ready', action, target: { exists: original !== null, bytes: 0 }, rows: [] } })
+})
+
+it('authorizes only restored result members and rejects foreign paths, owners, points and extra fields', async () => {
+  const w = await workspace('saved', 'current')
+  await w.execute()
+  const request = { source: 'result', sessionId: SESSION_ID, carrierSeq: w.request.carrierSeq, path: 'file.txt' }
+  for (const changes of [{ path: '../private.txt' }, { path: w.target }, { sessionId: 'other' }, { carrierSeq: 2 },
+    { carrierSeq: -1 }, { carrierSeq: 0.5 }, { planId: w.request.planId }, { snapshot: 'private' }]) {
+    const wire = await dispatchToHost(w.host, 'resend/content', { request: { ...request, ...changes } })
+    expect(wire.ok && wire.value.ok).toBe(false)
+    expect(JSON.stringify(wire)).not.toContain('saved')
+  }
+  const dir = path.join(w.home, 'data/plugins/dsh-resend/outcomes')
+  const [name] = await readdir(dir)
+  const target = path.join(dir, name)
+  const outcome = JSON.parse(await readFile(target, 'utf8'))
+  outcome.value.value.files[0] = { path: 'file.txt', action: 'kept' }
+  await writeFile(target, JSON.stringify(outcome))
+  expect(await w.call('content', request)).toEqual({ ok: false, error: { code: 'invalid-member' } })
+})
+
+it.each(['cleanup', 'damaged-snapshot', 'missing-result', 'legacy'])('handles completed result %s without falling back to live text', async mode => {
+  const w = await workspace('saved', 'current')
+  await w.execute()
+  const request = { source: 'result', sessionId: SESSION_ID, carrierSeq: w.request.carrierSeq, path: 'file.txt' }
+  const storage = path.join(w.home, 'data/plugins/dsh-resend')
+  if (mode === 'cleanup') {
+    const other = await hostComposition({ host: w.state, dataHome: path.join(w.home, 'data') })
+    cleanups.push(() => other.ctx.fiber.dispose())
+    const plan = await w.call('cleanup', { phase: 'preview', mode: 'sessions', sessionIds: [SESSION_ID] }, other)
+    expect((await w.call('cleanup', { phase: 'execute', mode: 'sessions', planId: plan.value.planId }, other)).ok).toBe(true)
+  } else if (mode === 'damaged-snapshot') {
+    const [name] = await readdir(path.join(storage, 'records'))
+    const record = JSON.parse(await readFile(path.join(storage, 'records', name), 'utf8'))
+    await writeFile(path.join(storage, 'objects', record.files[0].before.slice(4)), 'damaged')
+  } else {
+    const [name] = await readdir(path.join(storage, 'outcomes'))
+    const target = path.join(storage, 'outcomes', name)
+    if (mode === 'missing-result') await unlink(target)
+    else {
+      const outcome = JSON.parse(await readFile(target, 'utf8')).value
+      outcome.value.files[0].action = 'restore'
+      await writeFile(target, JSON.stringify(outcome))
+    }
+  }
+  const result = await w.call('content', request)
+  if (mode === 'legacy') expect(result).toMatchObject({ ok: true, value: { rows: [{ text: 'saved' }] } })
+  else expect(result).toEqual({ ok: false, error: { code: 'result-unavailable' } })
+  expect(await readFile(w.target, 'utf8')).toBe('saved')
+})
+
+it.each([['size', 3145729, 'too-large'], ['lines', 10001, 'too-many-lines'], ['non-text', 0, 'non-text']])(
+  'bounds completed %s content before transport', async (kind, count, reason) => {
+    const original = kind === 'size' ? ('a'.repeat(1023) + '\n').repeat(3072) + 'a'
+      : kind === 'lines' ? '行\n'.repeat(count) : 'x\0y'
+    const w = await workspace(original, 'current')
+    await w.execute()
+    const result = await w.call('content', { source: 'result', sessionId: SESSION_ID, carrierSeq: w.request.carrierSeq, path: 'file.txt' })
+    expect(result).toMatchObject({ ok: true, value: { status: 'unavailable', reason } })
+    expect(result.value).not.toHaveProperty('rows')
+  })
+
 it.each([false, true])('rejects forged members, owners, sources and private addresses and preserves the valid plan (%s)', async preflight => {
   const w = await workspace('original', 'current', { preflight })
   for (const changes of [{ path: '../secret.txt' }, { path: w.home }, { path: 'objects/private' },

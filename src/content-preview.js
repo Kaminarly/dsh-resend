@@ -3,6 +3,13 @@ import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 
 export const CONTENT_DICTIONARIES = {
   'zh-CN': {
+    'content.resultView': '查看还原内容', 'content.resultTitle': '本次还原后的内容',
+    'content.resultDescription': '展示本次回滚还原的内容，不随文件后续修改变化。',
+    'content.result.delete': '本次回滚已删除此文件', 'content.result.empty': '本次回滚已还原为空文件',
+    'content.result.restore': '本次回滚已还原的文件内容',
+    'content.resultFailed': '无法读取本次还原内容，相关记录可能已清理或损坏。',
+    'content.resultUnavailable': '无法展示正文；本次回滚结果不受影响。',
+    'content.resultNoRows': '此结果没有文本正文。', 'content.resultVersion': '本次还原结果',
     'content.view': '查看差异', 'content.title': '文件内容差异', 'content.close': '关闭内容预览', 'content.closeButton': '关闭',
     'content.direction': '当前内容 → 还原后内容', 'content.loading': '正在读取内容…',
     'content.delete': '还原后将删除此文件', 'content.create': '还原后将创建此文件',
@@ -22,6 +29,13 @@ export const CONTENT_DICTIONARIES = {
     'content.noRows': '没有文本行；文件处理动作见上方说明。',
   },
   en: {
+    'content.resultView': 'View restored content', 'content.resultTitle': 'Content restored by this rollback',
+    'content.resultDescription': 'Shows the content restored by this rollback, independent of later file changes.',
+    'content.result.delete': 'This rollback deleted the file', 'content.result.empty': 'This rollback restored an empty file',
+    'content.result.restore': 'File content restored by this rollback',
+    'content.resultFailed': 'Restored content could not be read. The saved records may have been cleared or damaged.',
+    'content.resultUnavailable': 'The content cannot be displayed; this rollback result is unaffected.',
+    'content.resultNoRows': 'This result has no text content.', 'content.resultVersion': 'Restored result',
     'content.view': 'View diff', 'content.title': 'File content diff', 'content.close': 'Close content preview', 'content.closeButton': 'Close',
     'content.direction': 'Current content → Restored content', 'content.loading': 'Reading content…',
     'content.delete': 'Restoring will delete this file', 'content.create': 'Restoring will create this file',
@@ -44,6 +58,8 @@ export const CONTENT_DICTIONARIES = {
 
 /** A keyed mount owns exactly one read; a retired mount never accepts its reply. */
 export function ContentPreview({ operations, request, onClose, stacked, t }) {
+  const restored = request.source === 'result'
+  const title = t(restored ? 'content.resultTitle' : 'content.title')
   const [answer, setAnswer] = useState()
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -65,9 +81,9 @@ export function ContentPreview({ operations, request, onClose, stacked, t }) {
   const value = answer?.ok ? answer.value : undefined
   const stale = answer?.ok === false && ['plan-not-found', 'preview-stale', 'invalid-member', 'session-not-found'].includes(answer.error.code)
   const version = (key, info) => h('p', { key, className: 'dsh-resend-content-version' },
-    `${t(`content.${key}`)}: ${info.exists ? `${info.bytes} ${t('content.bytes')} · ${info.lines} ${t('content.lines')} · ${t(info.bom ? 'content.bom' : 'content.noBom')} · ${t(`content.eol.${info.eol}`)} · ${t(info.finalNewline ? 'content.finalNewline' : 'content.noFinalNewline')}` : t('content.absent')}`)
-  return h(Modal, { open: true, onClose, headless: true, title: t('content.title'),
-    className: `dsh-resend-content-dialog${stacked ? ' dsh-resend-content-stacked' : ''}`, backdropBlur: !stacked,
+    `${t(restored ? 'content.resultVersion' : `content.${key}`)}: ${info.exists ? `${info.bytes} ${t('content.bytes')} · ${info.lines} ${t('content.lines')} · ${t(info.bom ? 'content.bom' : 'content.noBom')} · ${t(`content.eol.${info.eol}`)} · ${t(info.finalNewline ? 'content.finalNewline' : 'content.noFinalNewline')}` : t('content.absent')}`)
+  return h(Modal, { open: true, onClose, headless: true, title,
+    className: `dsh-resend-content-dialog${stacked ? ' dsh-resend-content-stacked' : ''}${restored ? ' dsh-resend-content-result' : ''}`, backdropBlur: !stacked,
     // React portal events would otherwise bubble into the replay panel.
     onKeyDownCapture: event => {
       if (event.key === 'Escape' && !event.isComposing && !event.ctrlKey && !event.altKey && !event.metaKey) {
@@ -86,33 +102,33 @@ export function ContentPreview({ operations, request, onClose, stacked, t }) {
     },
   }, [
     h('header', { key: 'header', className: 'dsh-resend-content-header' }, [
-      h('div', { key: 'heading' }, [h('h2', { key: 'title' }, t('content.title')),
+      h('div', { key: 'heading' }, [h('h2', { key: 'title' }, title),
         h('p', { key: 'path', className: 'dsh-resend-content-path', tabIndex: 0 }, request.path),
-        h('p', { key: 'direction' }, t('content.direction'))]),
+        h('p', { key: 'direction' }, t(restored ? 'content.resultDescription' : 'content.direction'))]),
       h(Button, { key: 'close', type: 'button', variant: 'ghost', size: 'sm', onClick: onClose,
         'data-modal-autofocus': true, 'aria-label': t('content.close') }, t('content.closeButton')),
     ]),
     h('div', { key: 'meta', className: 'dsh-resend-content-meta', tabIndex: 0 }, [
-      value && h('strong', { key: 'action' }, t(`content.${value.action}`)),
-      value && (value.status === 'ready' ? [version('current', value.current), version('target', value.target)]
-        : h('p', { key: 'sizes' }, `${t('content.current')}: ${value.sizes.current} ${t('content.bytes')} · ${t('content.target')}: ${value.sizes.target} ${t('content.bytes')}`)),
-      h('div', { key: 'legend', className: 'dsh-resend-content-legend' }, [
+      value && h('strong', { key: 'action' }, t(`content.${restored ? 'result.' : ''}${value.action}`)),
+      value && (value.status === 'ready' ? [!restored && version('current', value.current), version('target', value.target)]
+        : h('p', { key: 'sizes' }, restored ? `${value.sizes.target} ${t('content.bytes')}` : `${t('content.current')}: ${value.sizes.current} ${t('content.bytes')} · ${t('content.target')}: ${value.sizes.target} ${t('content.bytes')}`)),
+      !restored && h('div', { key: 'legend', className: 'dsh-resend-content-legend' }, [
         h('span', { key: 'delete' }, t('content.legendDelete')), h('span', { key: 'add' }, t('content.legendAdd'))]),
     ]),
-    h('div', { key: 'body', className: 'dsh-resend-content-body', tabIndex: 0, 'aria-label': t('content.direction'), 'aria-busy': answer === undefined },
+    h('div', { key: 'body', className: 'dsh-resend-content-body', tabIndex: 0, 'aria-label': restored ? title : t('content.direction'), 'aria-busy': answer === undefined },
       answer === undefined ? h('p', { role: 'status' }, t('content.loading'))
       : answer.ok === false ? h('div', { role: 'alert', className: 'dsh-resend-content-message' }, [
-        h('p', { key: 'error' }, t(stale ? 'content.stale' : 'content.failed')),
+        h('p', { key: 'error' }, t(restored ? 'content.resultFailed' : stale ? 'content.stale' : 'content.failed')),
         !stale && h(Button, { key: 'retry', type: 'button', variant: 'outline', size: 'sm', onClick: () => setAttempt(value => value + 1) }, t('content.retry')),
       ]) : value.status === 'unavailable' ? h('div', { role: 'status', className: 'dsh-resend-content-message' }, [
-        h('p', { key: 'reason' }, t(`content.${value.reason}`)), h('p', { key: 'hint' }, t('content.unavailable')),
+        h('p', { key: 'reason' }, t(`content.${value.reason}`)), h('p', { key: 'hint' }, t(restored ? 'content.resultUnavailable' : 'content.unavailable')),
       ]) : [
-        !value.rows.some(row => row.kind !== 'context') && h('p', { key: 'format', className: 'dsh-resend-content-message' }, t(value.rows.length ? 'content.format' : 'content.noRows')),
+        (restored ? value.rows.length === 0 : !value.rows.some(row => row.kind !== 'context')) && h('p', { key: 'format', className: 'dsh-resend-content-message' }, t(restored ? 'content.resultNoRows' : value.rows.length ? 'content.format' : 'content.noRows')),
         h('div', { key: 'diff', className: 'dsh-resend-content-lines' }, value.rows.map((row, index) => h('div', {
-          key: index, className: `dsh-resend-content-line dsh-resend-content-${row.kind}`,
-        }, [h('span', { key: 'old', className: 'dsh-resend-content-number' }, row.oldLine ?? ''),
+          key: index, className: `dsh-resend-content-line dsh-resend-content-${restored ? 'context' : row.kind}`,
+        }, [!restored && h('span', { key: 'old', className: 'dsh-resend-content-number' }, row.oldLine ?? ''),
           h('span', { key: 'new', className: 'dsh-resend-content-number' }, row.newLine ?? ''),
-          h('span', { key: 'mark', className: 'dsh-resend-content-mark' }, row.kind === 'delete' ? '−' : row.kind === 'add' ? '+' : ' '),
+          !restored && h('span', { key: 'mark', className: 'dsh-resend-content-mark' }, row.kind === 'delete' ? '−' : row.kind === 'add' ? '+' : ' '),
           h('code', { key: 'text' }, row.text)]))),
       ]),
   ])

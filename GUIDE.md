@@ -101,13 +101,13 @@ node scripts/verify-settings-display-browser.mjs
 
 当前验证组合：
 
-| 组件 | 当前支持与验证版本 |
+| 组件 | 已验证版本 |
 |---|---|
-| DSH Desktop | `2.0.17` |
-| DSH runtime（`@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`） | `0.2.0-rc.2` |
-| `@deepseek-ai/cordis` | `4.0.4` |
+| DSH Desktop | `2.0.17`（CI 验收基线）、`2.0.19-next`（本机验收） |
+| DSH runtime（`@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`） | `0.2.0-rc.2`（CI 验收基线）、`0.2.1-rc.2`（本机验收） |
+| `@deepseek-ai/cordis` | `4.0.4`（2.0.17）、`4.0.5`（2.0.19-next） |
 
-`package.json` 中的 `peerDependencies` 给出允许范围；锁文件固定开发和验收所用版本。版本范围不能替代宿主契约检查：兼容性由实际宿主表面（host surface）决定，插件依赖宿主暴露的服务、导出和 Slot；宿主形状变化时 `npm run check` 应失败。
+`package.json` 中的 `peerDependencies` 给出允许范围；锁文件固定开发和验收所用版本。版本范围不能替代宿主契约检查：兼容性由实际宿主表面（host surface）决定，插件依赖宿主暴露的服务、导出和 Slot；宿主形状变化时 `npm run check` 应失败。0.2.1-rc.2 的 `@deepseek-ai/dsh-api-gateway` 把 `ClientRemoteService` 从 `lib/client.js` 移到 `lib/client.browser.js`，契约表为这个实体登记两处候选位置，按登记顺序取安装应用实际携带者；两处都缺失时检查仍应失败。
 
 运行依赖包括 `zod` 和 ProseMirror 编辑器模块。`react`、`react-dom` 由 DSH Client 提供，因此声明为 peer，不重复打入浏览器包。`@deepseek-ai/dsh-api-gateway` 是开发依赖，用于驱动真实 Remote consumer 测试；发布代码通过注入的 Remote 调用它，不直接导入该包。`@deepseek-ai/dsh-util-crypto` 同时是 peer 和开发依赖，Host 用它生成消息标识。
 

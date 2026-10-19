@@ -203,6 +203,14 @@ export const ENTITIES = [
   {
     entity: 'ClientRemoteService',
     file: 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js',
+    // 0.2.1-rc.2 split the client half into platform bundles: the same class now
+    // lives in `lib/client.browser.js` (and a node twin the plugin never loads).
+    // `file` stays the 0.2.0-rc.2 location; `files` is every declaring file, and
+    // the gate takes the first one the installed app ships.
+    files: [
+      'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js',
+      'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.browser.js',
+    ],
     service: 'remote',
     usedBy: 'src/client.js — `ctx.remote.$mount(TYPERT_REMOTE)` (§6.5)',
     present: ['$mount'],
@@ -491,6 +499,19 @@ export function catalogEntries(lines, slot) {
 }
 
 /**
+ * The declaring file(s) of one entity. Upstream may move a class between files
+ * between releases (dsh-api-gateway split its client half at 0.2.1-rc.2), so an
+ * entry may name several candidates: `file` is the classic location the table
+ * was written against, and `files`, when present, every location a current
+ * release may use. All candidates live in the same package.
+ * @param entry - an `ENTITIES` row.
+ * @returns the declaring file(s), in resolution order.
+ */
+export function entityFiles(entry) {
+  return entry.files !== undefined ? entry.files : [entry.file]
+}
+
+/**
  * Every app-relative file the contract reads, scope markers and catalog
  * included. Tests build installation-shaped fixtures from exactly this list, so
  * a fixture cannot silently be narrower than the contract.
@@ -498,7 +519,7 @@ export function catalogEntries(lines, slot) {
  */
 export function contractFiles() {
   const files = new Set([APP_MANIFEST, SLOT_CATALOG.file])
-  for (const entry of ENTITIES) files.add(entry.file)
+  for (const entry of ENTITIES) for (const file of entityFiles(entry)) files.add(file)
   for (const entry of EXPORTS) files.add(entry.file)
   for (const marker of scopeMarkers()) files.add(marker)
   return [...files].sort()
@@ -512,8 +533,9 @@ export function contractFiles() {
 export function scopeMarkers() {
   const packages = new Set()
   for (const entry of [...ENTITIES, ...EXPORTS]) {
-    if (!entry.file.startsWith('node_modules/')) continue
-    packages.add(`${packageOf(entry.file)}/package.json`)
+    const file = entityFiles(entry)[0]
+    if (!file.startsWith('node_modules/')) continue
+    packages.add(`${packageOf(file)}/package.json`)
   }
   return [...packages].sort()
 }

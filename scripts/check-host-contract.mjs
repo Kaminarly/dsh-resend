@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url'
 import { resolveHostApp } from './host-app.mjs'
 import { optionValue, rejectUnknownOptions } from './args.mjs'
 import { walkJavaScript, relativePath } from './walk-javascript.mjs'
-import { APP_MANIFEST, ENTITIES, EXPORTS, SLOT_CATALOG, catalogEntries, emptyTableGroups, entityRegion, escapeRegex, exportTarget, locateMember, memberForms, packageNameOf, packageOf, scopeMarkers } from './host-contract.mjs'
+import { APP_MANIFEST, ENTITIES, EXPORTS, SLOT_CATALOG, catalogEntries, emptyTableGroups, entityFiles, entityRegion, escapeRegex, exportTarget, locateMember, memberForms, packageNameOf, packageOf, scopeMarkers } from './host-contract.mjs'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
 
@@ -125,12 +125,15 @@ let presentCount = 0
 let exportCount = 0
 let absentCount = 0
 
-for (const { entity, file, service, usedBy, present, absent } of ENTITIES) {
-  const text = sourceOf(file)
-  if (text === undefined) {
-    fail(`contract file missing: ${file} — ${entity} declares members this plugin reads (${usedBy}), so its absence is drift`)
+for (const entry of ENTITIES) {
+  const { entity, service, usedBy, present, absent } = entry
+  const candidates = entityFiles(entry)
+  const file = candidates.find((candidate) => sourceOf(candidate) !== undefined)
+  if (file === undefined) {
+    fail(`contract file missing: ${candidates.join(' or ')} — ${entity} declares members this plugin reads (${usedBy}), so its absence is drift`)
     continue
   }
+  const text = sourceOf(file)
   const lines = linesOf(file)
   const region = entityRegion(lines, entity)
   if (region === undefined) {

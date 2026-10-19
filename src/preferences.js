@@ -24,7 +24,11 @@ export function createPreferences() {
   function sync() {
     const held = connection?.mirror.getSnapshot()
     const row = held?.view?.namespaces?.find(row => row.ns === 'dsh-resend')
-    const known = connection?.form.getSnapshot().mode === 'host' && held?.error == null && row !== undefined && held.status === 'ready'
+    // 0.2.1-rc.2 dropped the form's `mode` field (memory persistence is gone and
+    // every form tracks the Host), so an absent field means Host-backed; the
+    // legacy `memory` spelling keeps its old unsaved-state behavior.
+    const formMode = connection?.form.getSnapshot()?.mode
+    const known = formMode !== 'memory' && held?.error == null && row !== undefined && held.status === 'ready'
     const values = { ...DEFAULTS }
     for (const field of PREFERENCE_FIELDS) {
       if (typeof row?.value?.[field] === 'boolean') values[field] = row.value[field]

@@ -11,7 +11,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { APP_MANIFEST, ENTITIES, EXPORTS, SLOT_CATALOG, packageNameOf, packageOf, scopeMarkers } from '../../scripts/host-contract.mjs'
+import { APP_MANIFEST, ENTITIES, EXPORTS, SLOT_CATALOG, entityFiles, packageNameOf, packageOf, scopeMarkers } from '../../scripts/host-contract.mjs'
 
 /** Members the installed host spells as getters rather than methods. */
 const GETTERS = new Set(['Session.seq', 'Session.surface', 'SurfaceManager.nodes', 'ReactLoopAgent.status', 'TypertRegistry.local'])
@@ -205,9 +205,11 @@ export function hostFixture(options = {}) {
   }
 
   // One file can hold several entities, and hold exported bindings too, exactly
-  // as the shipped bundles do.
+  // as the shipped bundles do. An entity with several candidate files is written
+  // into every one, so a fixture stays contract-complete when the gate resolves
+  // the entity from whichever candidate the installation ships.
   const perFile = new Map()
-  for (const entry of ENTITIES) perFile.set(entry.file, [...(perFile.get(entry.file) ?? []), entry])
+  for (const entry of ENTITIES) for (const file of entityFiles(entry)) perFile.set(file, [...(perFile.get(file) ?? []), entry])
   for (const { file } of EXPORTS) if (!perFile.has(file)) perFile.set(file, [])
 
   for (const [file, entries] of perFile) {

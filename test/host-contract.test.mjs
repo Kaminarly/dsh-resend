@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { resolveHostApp } from '../scripts/host-app.mjs'
-import { APP_MANIFEST, ENTITIES, EXPORTS, MEMBER_FORMS, SLOT_CATALOG, contractFiles, emptyTableGroups, packageNameOf, packageOf, scopeMarkers } from '../scripts/host-contract.mjs'
+import { APP_MANIFEST, ENTITIES, EXPORTS, MEMBER_FORMS, SLOT_CATALOG, contractFiles, emptyTableGroups, entityFiles, packageNameOf, packageOf, scopeMarkers } from '../scripts/host-contract.mjs'
 import { RESURRECTION_SHAPES, hostFixture, splice, writeTree } from './helpers/host-contract.mjs'
 import { writeAsar } from './helpers/asar.mjs'
 import { rootDir, tmpDir } from './helpers/dsh.mjs'
@@ -215,6 +215,17 @@ describe('check-host-contract: a well-formed host passes', () => {
     expect(result.stdout).toMatch(/scope marker .*dsh-session\/package\.json — @deepseek-ai\/dsh-session@/)
   })
 
+  it('reads the client remote from the platform bundle when the classic file is gone', () => {
+    // 0.2.1-rc.2 moved ClientRemoteService out of lib/client.js into
+    // lib/client.browser.js: the gate resolves the entity from whichever
+    // candidate the installation ships, and reports which one it read.
+    const classic = 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js'
+    const result = gateAgainst('client-remote-moved', hostFixture({ omitFiles: [classic] }), ['--report'])
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stdout).toContain('ClientRemoteService — node_modules/@deepseek-ai/dsh-api-gateway/lib/client.browser.js')
+    expect(result.stdout).toMatch(/present \$mount ….*client\.browser\.js.*method declaration/)
+  })
+
   it('treats an unknown option as a usage error rather than an ignored flag', () => {
     const { status, stderr } = runGate(['--allow-missing-members'])
     expect(status, stderr).toBe(2)
@@ -386,6 +397,14 @@ describe('check-host-contract: drift is never a pass', () => {
     expect(result.status, output(result)).toBe(1)
     expect(result.stderr).toContain(`contract file missing: ${file}`)
     expect(result.stderr).toContain('SessionQueryEngine')
+  })
+
+  it('goes red when no candidate declares the client remote, naming every candidate', () => {
+    const candidates = ['node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js', 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.browser.js']
+    const result = gateAgainst('client-remote-gone', hostFixture({ omitFiles: candidates }))
+    expect(result.status, output(result)).toBe(1)
+    expect(result.stderr).toContain(`contract file missing: ${candidates.join(' or ')}`)
+    expect(result.stderr).toContain('ClientRemoteService')
   })
 
   it('goes red on a mistyped override instead of reading "no app installed"', () => {
@@ -578,8 +597,15 @@ describe.runIf(installed !== undefined && installed.kind === 'dir')('check-host-
     const files = {}
     for (const file of contractFiles()) {
       const text = installed.read(file)
-      if (text === undefined) throw new Error(`the installed app has no ${file}: the contract table is out of date`)
-      files[file] = text
+      if (text !== undefined) files[file] = text
+    }
+    // A candidate list is satisfied by whichever candidate the installation
+    // ships; a table that has drifted from every known location of an entity is
+    // still out of date, and must fail loudly rather than copy a silent subset.
+    for (const entry of ENTITIES) {
+      if (!entityFiles(entry).some((file) => files[file] !== undefined)) {
+        throw new Error(`the installed app has none of ${entityFiles(entry).join(' or ')}: the contract table is out of date`)
+      }
     }
     return writePluginTree(name, files)
   }
@@ -625,16 +651,21 @@ describe.runIf(installed !== undefined && installed.kind === 'dir')('check-host-
 
   it('resolves every contract path out of an archive of the installed app', () => {
     // Same files, one archive: the built-in reader is what makes this gate work on
-    // a shipped installation, so it must reach every path the table names.
+    // a shipped installation, so it must reach every path the table names that
+    // this installation ships (a candidate list is satisfied by one of its
+    // candidates, and only the shipped ones are packed here).
     const archive = path.join(fixtureRoot, 'installed-packed.asar')
     const files = {}
-    for (const file of contractFiles()) files[file] = installed.read(file)
+    for (const file of contractFiles()) {
+      const text = installed.read(file)
+      if (text !== undefined) files[file] = text
+    }
     rmSync(archive, { force: true })
     writeAsar(archive, files)
 
     const app = resolveHostApp({ candidates: [archive] })
     expect(app.kind).toBe('asar')
-    for (const file of contractFiles()) expect(app.read(file), `${file} inside the archive`).toBeDefined()
+    for (const file of Object.keys(files)) expect(app.read(file), `${file} inside the archive`).toBeDefined()
 
     const gate = runGate([], { DSH_APP_ASAR: archive })
     expect(gate.status, output(gate)).toBe(0)

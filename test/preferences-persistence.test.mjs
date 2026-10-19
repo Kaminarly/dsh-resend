@@ -31,7 +31,10 @@ const tick = async () => { await new Promise(resolve => setTimeout(resolve, 0)) 
 
 // ConfigForms is the host service boundary; the durable integration below
 // also exercises the installed SettingsForms/ConfigEditor and profile files.
-function formsFixture(value = {}) {
+// `formMode` mirrors the legacy 0.2.0-rc.2 persistence mode ('host' | 'memory');
+// omitted, the form's snapshot carries no `mode` field at all — the 0.2.1-rc.2
+// shape, where memory persistence is gone and every form tracks the Host.
+function formsFixture(value = {}, formMode) {
   let snapshot = { status: 'ready', view: { writable: true, namespaces: [{ ns: 'dsh-resend', value }] }, error: null }
   const listeners = new Set()
   const mirror = {
@@ -40,8 +43,9 @@ function formsFixture(value = {}) {
     ensure: async () => {}, load: async () => {},
   }
   const publish = (next) => { snapshot = next; listeners.forEach(fn => fn()) }
+  const formSnapshot = formMode === undefined ? {} : { mode: formMode }
   const form = {
-    getSnapshot: () => ({ mode: 'host' }),
+    getSnapshot: () => formSnapshot,
     set: async (field, next) => {
       publish({ ...snapshot, view: { ...snapshot.view, namespaces: [{ ns: 'dsh-resend', value: { ...snapshot.view.namespaces[0].value, [field]: next } }] } })
       return true
@@ -317,5 +321,25 @@ describe('saved display preferences', () => {
     await write
     expect(b.preferences.getSnapshot()).toMatchObject({ ready: true, regenerateLastReply: false })
     offA(); offB()
+  })
+  it('accepts the host-less form snapshot of 0.2.1-rc.2 and keeps a legacy memory-mode form unsaved', async () => {
+    // 0.2.1-rc.2 dropped the form's `mode` field: an absent field means the form
+    // tracks the Host, so the preferences become ready. The legacy `memory`
+    // spelling must keep its old behavior — a page that can only persist in
+    // process memory never reads as saved.
+    const page = clientHalf().exports
+    const offModern = page.preferences.connect(formsFixture({ showEditResendButton: false }))
+    expect(page.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'ready', showEditResendButton: false, regenerateLastReply: true })
+    offModern()
+
+    const legacy = clientHalf().exports
+    const offLegacy = legacy.preferences.connect(formsFixture({ showEditResendButton: true }, 'memory'))
+    expect(legacy.preferences.getSnapshot()).toMatchObject({ ready: false, status: 'read-error', showEditResendButton: true })
+    offLegacy()
+
+    const hosted = clientHalf().exports
+    const offHosted = hosted.preferences.connect(formsFixture({ showEditResendButton: true }, 'host'))
+    expect(hosted.preferences.getSnapshot()).toMatchObject({ ready: true, status: 'ready', showEditResendButton: true })
+    offHosted()
   })
 })

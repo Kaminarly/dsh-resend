@@ -1,6 +1,6 @@
 {
   "name": "dsh-resend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Edit-and-resend and regenerate for DeepSeek Harness conversations — a DSH Desktop plugin bundle (the rewind is written, the prompt is sent, a failed re-send is retryable)",
   "type": "module",
   "main": "lib/index.js",

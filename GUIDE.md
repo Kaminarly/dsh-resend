@@ -133,19 +133,19 @@ npm pack --pack-destination "D:\DSH Desktop\plugins\dsh-resend"
 dsh plugin --profile <name> add dsh-resend
 ```
 
-DSH Desktop 2.0.17 的 `desktop` Profile 由应用管理；通用启动器不能管理这个 Profile，应通过桌面插件页面安装。
+DSH Desktop 的 `desktop` Profile 由应用管理；通用启动器不能管理这个 Profile，应通过桌面插件页面安装。
 
 ### 通过 GitHub 安装
 
-已安装的 DSH Desktop 2.0.17 插件管理器接受 GitHub 仓库地址，例如：
+已安装的 DSH Desktop 插件管理器接受 GitHub 仓库地址，例如：
 
 ```text
-github:Kaminarly/dsh-resend#v0.1.1
+github:Kaminarly/dsh-resend#v0.1.2
 ```
 
 这条路径不要求先发布到 npm，但需要公开可访问的仓库、可安装的根目录 `package.json`、已提交的 `lib/` 构建产物、可用的 `cordis.patch.yml`，以及本机 Git 和 GitHub 网络连接。安装器会检查 DSH 兼容性；GitHub 仓库无法访问时，切换 npm 镜像不能解决该连接问题。安装器不自动更新插件，升级需要卸载后重新安装新标签。
 
-当前 GitHub Release 为 `v0.1.1`。后续安装时，将地址中的标签替换为要安装的发布版本；发布新标签前，应先完成本指南中的检查和测试。
+当前 GitHub Release 为 `v0.1.2`。后续安装时，将地址中的标签替换为要安装的发布版本；发布新标签前，应先完成本指南中的检查和测试。
 
 ## 已知限制
 

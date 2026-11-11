@@ -25,13 +25,18 @@ it.skipIf(!app)('preserves the installed settings panel and changes only Message
   const face = clientHalf().exports
   const selected = []
   const props = { rows: [{ id: 'general', label: '通用设置' }, { id: 'dsh-resend-preferences', label: createElement(face.SettingsNavigationLabel, { text: '消息编辑' }) }], activeId: 'dsh-resend-preferences', onSelect: (id) => selected.push(id), onClose() {},
-    renderSlot: (slot, _props, options) => slot === 'settings.section' ? createElement('span', null, options.only) : '设置' }
+    renderSlot: (slot, _props, options) => slot === 'settings.section' ? createElement('span', null, options.only) : slot === 'settings.section.icon' ? options.fallback : '设置' }
   const dom = await renderDom(createElement(Panel, props))
   try {
+    // The 0.2.2-rc.1 nav cell renders an icon slot beside the label. The stub
+    // emulates slot semantics: no registered icon content, so the host's own
+    // fallback (navIcon) supplies the element.
     const buttons = [...document.body.querySelectorAll('nav button')]
-    const editing = buttons.find((button) => button.textContent === '消息编辑')
-    const general = buttons.find((button) => button.textContent === '通用设置')
-    expect(editing.querySelector('[data-icon="edit-outline"]')).not.toBeNull()
+    const editing = buttons.find((button) => button.querySelector('.dsh-resend-settings-nav-label'))
+    const general = buttons.find((button) => button.textContent.includes('通用设置'))
+    // The new host names icon symbols dsw-icon-<glyph>-<weight>; keep the glyph
+    // intent (an edit icon) without coupling to the host's symbol table.
+    expect(editing.querySelector('svg[data-icon*="edit-outline"]')).not.toBeNull()
     expect(editing.querySelector('.dsh-resend-settings-nav-label')).not.toBeNull()
     expect(general.querySelector('[data-host-gear]')).not.toBeNull()
     expect(document.body.querySelector('[role=dialog]').textContent).toContain('dsh-resend-preferences')

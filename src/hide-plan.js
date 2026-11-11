@@ -24,6 +24,10 @@ function indexFor(snapshot, grouped) {
   const bySeq = new Map()
   const carriers = new Map()
   const modelShadowed = new Set()
+  // Host compaction also replaces a surface range, but it is not a rewind: the
+  // transcript keeps those rows. They stay visible, out of the effective model
+  // conversation, and must not be treated as hidden by the plugin.
+  const compactedSeqs = new Set()
   const userSeqs = new Set()
   const rendered = new Map()
   const groups = []
@@ -66,7 +70,9 @@ function indexFor(snapshot, grouped) {
     eligibilityNodes.push([node.key, node.kind, node.anchorSeq, node.data?.seq, node.data?.prompt, node.data?.shadowedSeqs])
     if (node.kind === 'dsh-resend-error') carriers.set(node.data.carrierSeq, node.data)
     if (node.kind === 'dsh-resend-surface-shadow') {
-      for (const seq of node.data.shadowedSeqs) modelShadowed.add(seq)
+      const shadowed = Array.isArray(node.data?.shadowedSeqs) ? node.data.shadowedSeqs : []
+      const target = node.data?.compacted === true ? compactedSeqs : modelShadowed
+      for (const seq of shadowed) target.add(seq)
     }
     if (node.kind === 'user') userSeqs.add(node.data?.seq ?? node.anchorSeq)
     if (node.visibility === 'hidden') continue
@@ -78,7 +84,7 @@ function indexFor(snapshot, grouped) {
     keys.push(...flowKeys)
     bySeq.set(Math.ceil(seq), keys)
   }
-  const index = { bySeq, groups, carriers, modelShadowed, userSeqs, revision: JSON.stringify(eligibilityNodes) }
+  const index = { bySeq, groups, carriers, modelShadowed, compactedSeqs, userSeqs, revision: JSON.stringify(eligibilityNodes) }
   indexes.set(snapshot, { grouped, index })
   return index
 }
@@ -135,6 +141,7 @@ export function hidePlanFor(snapshot, records, grouped) {
     groupKeys: Object.freeze(groupKeys),
     errors,
     hiddenSeqs,
+    compactedSeqs: index.compactedSeqs,
     userSeqs: index.userSeqs,
     revision: index.revision,
     keys: Object.freeze([...allKeys]),

@@ -67,6 +67,7 @@ function installCandidates() {
     '/opt/DSH Desktop/resources',
     '/usr/lib/dsh-desktop/resources',
     'D:\\DSH Desktop\\resources',
+    'D:\\DSH NEXT\\resources',
   ]
   const candidates = []
   for (const home of homes.filter(Boolean)) {

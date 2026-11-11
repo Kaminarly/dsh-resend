@@ -1,13 +1,12 @@
 import { afterEach, expect, it } from 'vitest'
-import { createVolatile, updateVolatile } from '@deepseek-ai/cosmokit'
-import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
+import { dispatchToHost, hostComposition, setSavedSetting } from './helpers/gateway.mjs'
 import { appendUser, auditCount, hostState, logOf, sessionFixture, middleRewoundFixture } from './helpers/host.mjs'
 
 const hosts = []
 afterEach(async () => { for (const h of hosts.splice(0)) await h.ctx.fiber.dispose() })
 async function host(options = {}) { const h = await hostComposition(options); hosts.push(h); return h }
 const edit = (h, targetSeq, text = '修改后的准确文字\n下一行') => dispatchToHost(h, 'resend/apply', { request: { sessionId: 'session-1', targetSeq, op: 'edit', text } })
-const restrict = h => updateVolatile(h.fiber.config.restrictEditToLastUserMessage, createVolatile(true))
+const restrict = h => setSavedSetting(h, 'restrictEditToLastUserMessage', true)
 
 it('replays earlier edited text, removes the later effective context, and preserves the original log', async () => {
   const session = sessionFixture()

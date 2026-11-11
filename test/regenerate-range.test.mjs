@@ -1,7 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
-import { dispatchToHost, hostComposition } from './helpers/gateway.mjs'
+import { dispatchToHost, hostComposition, setSavedSetting } from './helpers/gateway.mjs'
 import { appendReply, appendUser, auditCount, hostState, logOf, sessionFixture } from './helpers/host.mjs'
-import { createVolatile, updateVolatile } from '@deepseek-ai/cosmokit'
 
 const hosts = []
 afterEach(async () => { for (const h of hosts.splice(0)) await h.ctx.fiber.dispose() })
@@ -27,7 +26,7 @@ it('refuses a newly restricted earlier reply after the covering read awaited, be
   let reads = 0
   query.readSession = async (...args) => {
     const result = await read(...args)
-    if (++reads === 2) updateVolatile(h.fiber.config.restrictRegenerateToLastReply, createVolatile(true))
+    if (++reads === 2) setSavedSetting(h, 'restrictRegenerateToLastReply', true)
     return result
   }
   const result = await regenerate(h, 1)
@@ -49,7 +48,7 @@ it('provides reply eligibility from the complete effective conversation, indepen
 it('cannot use the owed-prompt exception for a different question inside an earlier regenerate range', async () => {
   const h = await host({ host: hostState({ agent: 'deaf' }), config: { restrictRegenerateToLastReply: false } })
   expect((await regenerate(h, 1)).value.ok).toBe(true)
-  updateVolatile(h.fiber.config.restrictRegenerateToLastReply, createVolatile(true))
+  setSavedSetting(h, 'restrictRegenerateToLastReply', true)
   expect((await regenerate(h, 3)).value).toEqual({ ok: false, error: { code: 'target-shadowed' } })
   expect(h.host.calls.followups).toBe(1)
   expect(auditCount(h.host.session)).toBe(1)
@@ -97,7 +96,7 @@ it.each(['rule', 'target'])('rechecks %s changes while a direct request waits be
   const first = h.ctx.resend.apply({ sessionId: 'session-1', targetSeq: 4, op: 'edit', text: 'changed latest question' })
   await waiting
   const queued = h.ctx.resend.apply({ sessionId: 'session-1', targetSeq: change === 'rule' ? 1 : 3, op: 'regenerate' })
-  updateVolatile(h.fiber.config.restrictRegenerateToLastReply, createVolatile(true))
+  setSavedSetting(h, 'restrictRegenerateToLastReply', true)
   if (change === 'target') appendReply(state.session, { id: 'new-target', text: 'new assistant reply' })
   release()
   expect((await first).ok).toBe(true)

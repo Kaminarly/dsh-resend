@@ -14,20 +14,34 @@ const user = { key: 'user-2', kind: 'user', anchorSeq: 2,
   data: { seq: 2, time: 123, content: [{ type: 'text', text: '中文原文\n第二行' }, { type: 'file', attachment: { name: '说明.md' } }], referenceLabels: ['src/a.js'], skillNames: ['grilling'] } }
 const snapshot = { nodes: new Map([[user.key, user]]) }
 const props = { node: user, sessionId: 's', t: (key) => key, useChat: (select) => select(snapshot), useInput: (select) => select({ phase: 'plain' }),
-  useSession: (select) => select({ running: false }), inputActions: { setDraft() {} }, readInput: () => ({ phase: 'plain' }) }
+  useSession: (select) => select({ running: false }), inputActions: { setDraft() {} }, readInput: () => ({ phase: 'plain' }),
+  // Since 0.2.2-rc.1 the renderer's kit hands the user row a `renderSlotChain`
+  // binding for the `conversation.chat.user.before` chain seat. This row's
+  // entry descriptor supplies the null renderer (the host owns the seat), so
+  // the merged props always carry a callable binding.
+  renderSlotChain: (slotKey, owner, options) => null }
 
-function Bubble({ content, actions, renderMessageImages, references, referenceLabels, skillNames }) {
-  return createElement('div', { 'data-original-bubble': true }, content[0].text,
+function Bubble({ node, content, actions, renderMessageImages, references, referenceLabels, skillNames, renderSlotChain }) {
+  // The host bubble renders the chain seat above the bubble content. The
+  // stand-in mirrors that call: a missing binding is the exact crash the
+  // 0.2.2-rc.1 renderer produced before the entry descriptor supplied one.
+  // The 0.2.2-rc.1 host hands the bubble the factory seat (`renderFactorySlot`)
+  // instead of `renderMessageImages`, and drops `references` — the stand-in
+  // therefore treats both as optional so it stands in for either generation.
+  const seat = typeof renderSlotChain === 'function'
+    ? renderSlotChain('conversation.chat.user.before', { source: node?.data?.source ?? null, kind: node?.kind }, { fallback: null })
+    : null
+  return createElement('div', { 'data-original-bubble': true }, seat, content[0].text,
     createElement('span', null, content[1].attachment.name, referenceLabels, skillNames),
-    createElement('button', { 'aria-label': '引用', onClick: () => references.openFile('src/a.js') }),
-    renderMessageImages({ images: ['fixture-image'] }), actions(content[0].text))
+    createElement('button', { 'aria-label': '引用', onClick: () => references?.openFile?.('src/a.js') }),
+    typeof renderMessageImages === 'function' ? renderMessageImages({ images: ['fixture-image'] }) : null, actions(content[0].text))
 }
 function Actions({ extraActions, text, time, t }) {
   return createElement('div', { 'data-original-actions': true, 'data-time': time },
     createElement('button', { 'aria-label': t('copy'), 'data-copy-text': text }), extraActions)
 }
-const original = memo(({ node, t, renderMessageImages, openFile, openSkill }) => createElement(Bubble, {
-  ...node.data, t, renderMessageImages, references: { openFile, openSkill },
+const original = memo(({ node, t, renderMessageImages, openFile, openSkill, renderSlotChain }) => createElement(Bubble, {
+  ...node.data, node, t, renderSlotChain, renderMessageImages, references: { openFile, openSkill },
   actions: (text) => createElement(Actions, { text, time: node.data.time, t }),
 }))
 
@@ -96,6 +110,14 @@ describe('user actions stay in the original host message', () => {
     composition.record.replaceHostUser({ component: original, locale: 'chat', options: { key: 'user', priority: 0 } })
     expect(seat()).toHaveLength(1)
     expect(seat()[0].options.priority).toBe(-1)
+    // The renderer merges the entry's `inject` extras into the row props:
+    // since 0.2.2-rc.1 the host user renderer calls the `renderSlotChain`
+    // binding, so the descriptor must keep supplying it — the guard for the
+    // `renderSlotChain is not a function` crash in the row's crash boundary.
+    const extras = seat()[0].options.inject('s')
+    expect(typeof extras.readInput).toBe('function')
+    expect(typeof extras.renderSlotChain).toBe('function')
+    expect(extras.renderSlotChain('conversation.chat.user.before', { source: null, kind: 'user' }, { fallback: null })).toBeNull()
     composition.record.replaceHostUser(undefined)
     expect(seat()).toHaveLength(0)
     await fiber.dispose()

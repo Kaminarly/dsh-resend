@@ -41,6 +41,25 @@ const rankByName = vm.runInNewContext(primitivesSource.slice(primitivesSource.in
 
 // Exercise the installed Modal's actual focus/layer code, leaving only CSS
 // class names out of the Node harness. Browser acceptance uses its real CSS.
+//
+// The installed package compiles its CSS modules into `css$<n>` constants, and
+// the NUMBER is a build-time artifact: 0.2.0-rc.2's Modal referenced `css$18`
+// and Checkbox `css$10`; 0.2.2-rc.1's reference `css$23` and `css$18`, and the
+// property sets moved with them. A stand-in that hardcodes the numbers rots on
+// every generation bump, so one is synthesized from the code being evaluated:
+// every `css$<n>` the code names, with every property the code actually reads.
+function cssStandIn(code, prefix) {
+  const standIn = {}
+  for (const variable of new Set(code.match(/css\$\d+/g) ?? [])) {
+    const escaped = variable.replace('$', '\\$')
+    const dotted = (code.match(new RegExp(`${escaped}\\.([A-Za-z_$][\\w$]*)`, 'g')) ?? []).map((hit) => hit.slice(variable.length + 1))
+    const destructured = (code.match(new RegExp(`\\{([^}]*)\\}\\s*=${escaped}`, 'g')) ?? []).flatMap((hit) => hit.slice(1, hit.length - 1).split(',')).map((name) => name.trim()).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name))
+    const properties = [...new Set([...dotted, ...destructured])]
+    standIn[variable] = Object.fromEntries(properties.map((property) => [property, `${prefix}-${property}`]))
+  }
+  return standIn
+}
+
 const modalStart = primitivesSource.indexOf('function Modal(')
 const modalCode = primitivesSource.slice(primitivesSource.indexOf('function observeComposition('),
   primitivesSource.indexOf('//#endregion', primitivesSource.indexOf('function useModalLayer('))) +
@@ -48,15 +67,16 @@ const modalCode = primitivesSource.slice(primitivesSource.indexOf('function obse
 const HostModal = vm.runInNewContext(`${modalCode}\nModal`, {
   ...require_('react'), ...require_('react/jsx-runtime'), createPortal: require_('react-dom').createPortal,
   clsx: (...values) => values.filter(Boolean).join(' '),
-  css$18: { root: 'host-modal-root', mask: 'host-modal-mask', dialog: 'host-modal-dialog' },
+  ...cssStandIn(modalCode, 'host-modal'),
   get document() { return globalThis.document },
   get HTMLElement() { return globalThis.window?.HTMLElement },
 })
 
 const checkboxStart = primitivesSource.indexOf('function Checkbox(')
-const HostCheckbox = vm.runInNewContext(primitivesSource.slice(checkboxStart,
-  primitivesSource.indexOf('//#endregion',checkboxStart)) + '\nCheckbox', {
-  ...require_('react/jsx-runtime'),clsx:(...values)=>values.filter(Boolean).join(' '),css$10:{checkbox:'host-checkbox'},
+const checkboxCode = primitivesSource.slice(checkboxStart,
+  primitivesSource.indexOf('//#endregion', checkboxStart))
+const HostCheckbox = vm.runInNewContext(checkboxCode + '\nCheckbox', {
+  ...require_('react/jsx-runtime'),clsx:(...values)=>values.filter(Boolean).join(' '),...cssStandIn(checkboxCode, 'host'),
 })
 
 /**

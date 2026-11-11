@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { resolveHostApp } from '../scripts/host-app.mjs'
-import { APP_MANIFEST, ENTITIES, EXPORTS, MEMBER_FORMS, SLOT_CATALOG, contractFiles, emptyTableGroups, entityFiles, packageNameOf, packageOf, scopeMarkers } from '../scripts/host-contract.mjs'
+import { APP_MANIFEST, CHAIN_SEAT_SUPPLY, ENTITIES, EXPORTS, MEMBER_FORMS, SLOT_CATALOG, contractFiles, emptyTableGroups, entityFiles, packageNameOf, packageOf, scopeMarkers } from '../scripts/host-contract.mjs'
 import { RESURRECTION_SHAPES, hostFixture, splice, writeTree } from './helpers/host-contract.mjs'
 import { writeAsar } from './helpers/asar.mjs'
 import { rootDir, tmpDir } from './helpers/dsh.mjs'
@@ -180,6 +180,19 @@ describe('check-host-contract: the table is §12’s table', () => {
     expect(serviceOnly).toEqual([])
     // The gate is wired to the guard, not merely able to call it.
     expect(realFile('scripts/check-host-contract.mjs')).toContain('emptyTableGroups()')
+  })
+
+  it('pins the chain-seat supply table the 0.2.2-rc.1 renderer drift left', () => {
+    // The host's user row now renders the chain seat through the kit binding,
+    // and the plugin's shadow entry supplies the binding it cannot own. The
+    // table is the shared spelling for both sides of that assertion.
+    expect(CHAIN_SEAT_SUPPLY.slot).toBe('conversation.chat.node')
+    expect(CHAIN_SEAT_SUPPLY.entryKey).toBe('user')
+    expect(CHAIN_SEAT_SUPPLY.chainSlot).toBe('conversation.chat.user.before')
+    expect(CHAIN_SEAT_SUPPLY.binding).toBe('renderSlotChain')
+    expect(CHAIN_SEAT_SUPPLY.hostFile).toBe('node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js')
+    // The gate is wired to the table, not merely able to call it.
+    expect(realFile('scripts/check-host-contract.mjs')).toContain('CHAIN_SEAT_SUPPLY')
   })
 })
 
@@ -517,6 +530,9 @@ describe('check-host-contract: the plugin-side invariant', () => {
     const result = runGate([], { DSH_APP_ROOT: path.join(fixtureRoot, 'healthy-app-host') })
     expect(result.status, output(result)).toBe(0)
     expect(result.stdout).toContain('check-host-contract: OK')
+    // The own tree must carry the invariant: src/client.js and the committed
+    // lib/client.bundle.js each key the user row, so both must supply.
+    expect(result.stdout).toContain('2 shadow user descriptor(s) supply renderSlotChain')
   })
 
   it('fails with file:line when a src/ file reads a legacy event-view member', () => {
@@ -586,6 +602,45 @@ describe('check-host-contract: the plugin-side invariant', () => {
     const result = against('plugin-empty', { 'src/.keep': '', 'lib/.keep': '' })
     expect(result.status, output(result)).toBe(1)
     expect(result.stderr).toContain('vacuously green invariant')
+  })
+
+  describe('the chain-seat supply invariant', () => {
+    /**
+     * A client half whose shadow user descriptor either keeps or drops the
+     * binding the 0.2.2-rc.1 renderer requires of it.
+     * @param withBinding - whether the descriptor supplies `renderSlotChain`.
+     */
+    const clientHalf = (withBinding) => [
+      'export const reconcile = (inputScope) => {',
+      '  inputScope.slots.register({',
+      "    name: 'conversation.chat.node', key: 'user', locale: 'dsh-resend',",
+      "    inject: (sessionId) => ({ readInput: () => inputScope.conversation?.input }),",
+      ...(withBinding ? ['    renderSlotChain: () => null,'] : []),
+      '  })',
+      '}',
+    ].join('\n') + '\n'
+
+    it('passes when the client half supplies the chain-seat renderer', () => {
+      const result = against('plugin-chain-ok', { ...tree(), 'src/client.js': clientHalf(true) })
+      expect(result.status, output(result)).toBe(0)
+      expect(result.stdout).toContain('1 shadow user descriptor(s) supply renderSlotChain')
+    })
+
+    it('goes red when the descriptor stops supplying the binding', () => {
+      const result = against('plugin-chain-gone', { ...tree(), 'src/client.js': clientHalf(false) })
+      expect(result.status, output(result)).toBe(1)
+      expect(result.stderr).toContain('chain-seat supply src/client.js')
+      expect(result.stderr).toContain('renderSlotChain')
+      expect(result.stderr).toContain('slot entry crashed')
+    })
+
+    it('judges a foreign tree for what it contains: no descriptor, no vacuous alarm', () => {
+      // The lost-descriptor alarm has ground truth only in the gate's own tree.
+      // A fixture that names a file src/client.js without the client half is
+      // judged for what it contains — and contains no descriptor.
+      const result = against('plugin-chain-orphan', { ...tree(), 'src/client.js': 'export const reconcile = () => {}\n' })
+      expect(result.status, output(result)).toBe(0)
+    })
   })
 })
 

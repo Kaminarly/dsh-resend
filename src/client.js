@@ -282,6 +282,7 @@ const DICTIONARIES = {
     'row.regenerate': '重新生成',
     'row.notLast': '只能重新生成最后一条回复',
     'row.shadowed': '这条回复已被重写',
+    'row.compacted': '这条消息已被上下文压缩移出有效对话，无法编辑重发',
     'row.imageOnly': '这条提示词没有可重发的文本',
     'row.offSurface': '这条回复不在当前对话面上',
     'row.regenerateFailed': '重新生成失败，请重试',
@@ -473,6 +474,7 @@ const DICTIONARIES = {
     'row.regenerate': 'Regenerate',
     'row.notLast': 'Only the last reply can be regenerated',
     'row.shadowed': 'This reply was already rewound',
+    'row.compacted': 'Context compaction moved this message out of the effective conversation; it cannot be edited and resent',
     'row.imageOnly': 'The prompt has no text to re-send',
     'row.offSurface': 'This reply is off the current surface',
     'row.regenerateFailed': 'Regenerate failed; try again',
@@ -668,6 +670,19 @@ function mountSurfaces(scope, ctx) {
                 if (typeof input?.for !== 'function' || sessionScope === undefined) return undefined
                 return input.for(sessionScope)?.state?.getSnapshot?.()
               },
+              // The 0.2.2-rc.1 renderer hands a `renderSlotChain` kit binding
+              // only to entries that declare a `kind: 'chain'` child slot, and
+              // the host's `user` entry owns the `conversation.chat.user.before`
+              // declaration — this entry may not re-declare it (a second
+              // declaration throws at load time). The host's user renderer,
+              // which this row wraps, now calls that binding to render the
+              // chain seat above the bubble, so an entry that neither declares
+              // the seat nor supplies the binding meets `undefined` and the
+              // whole row dies in its crash boundary (`slot entry crashed in
+              // 'conversation.chat.node'`). The host's own `steering` entry
+              // reuses the bubble exactly this way: it injects a null
+              // renderer, leaving the seat empty for rows that do not own it.
+              renderSlotChain: () => null,
             }),
           }, withPanelBoundary(Surface, 'panel.error.userActions', undefined, fallback))
         } finally { reconciling = false }
@@ -740,5 +755,8 @@ export async function apply(ctx) {
   mount = { status: 'mounted', error: undefined }
   // $mount creates the namespace. Declare it only after mounting, and retain
   // this injected scope's Remote so later UI calls carry the same dependency.
-  ctx.inject(['remote.resend', 'slots', 'locale', 'uiConversation'], (scope) => mountSurfaces(scope, ctx))
+  // Since 0.2.2-rc.1 (cordis 4.1.0) `ctx.inject` starts a fiber and returns
+  // it instead of running the body synchronously; await it so the surfaces
+  // are mounted before this half reports applied.
+  await ctx.inject(['remote.resend', 'slots', 'locale', 'uiConversation'], (scope) => mountSurfaces(scope, ctx))
 }

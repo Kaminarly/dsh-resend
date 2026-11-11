@@ -12,7 +12,17 @@ export function installedConversationAssembler(definitions) {
     const keyStart = source.indexOf('function conversationContextKey(')
     const keyEnd = source.indexOf('//#endregion', keyStart)
     if (start < 0 || end < start || keyStart < 0 || keyEnd < keyStart) throw new Error('Installed conversation assembler boundaries changed')
-    const Assembler = vm.runInNewContext(source.slice(keyStart, keyEnd) + source.slice(start, end) + '\nConversationNodeAssembler')
+    // The 0.2.2-rc.1 assembler reads the PartialArguments view from the host's
+    // shared util/values module, which the browser bundle keeps in its own
+    // region; include it or the sliced assembler throws on first use.
+    let values = ''
+    const valuesStart = source.indexOf('//#region ../../util/values/lib/index.js')
+    if (valuesStart >= 0) {
+      const valuesEnd = source.indexOf('//#endregion', valuesStart)
+      if (valuesEnd < valuesStart) throw new Error('Installed conversation assembler values boundary changed')
+      values = source.slice(valuesStart, valuesEnd)
+    }
+    const Assembler = vm.runInNewContext(values + source.slice(keyStart, keyEnd) + source.slice(start, end) + '\nConversationNodeAssembler')
     return new Assembler({ entries: () => definitions, fallbackEntry: () => undefined }, { entries: () => [] })
   } finally { app.close?.() }
 }
@@ -29,7 +39,11 @@ export function installedChatDefinitions({ turnTail = false } = {}) {
   if (!app) return undefined
   try {
     const source = app.read('node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js')
+    // The tool Definition reads PartialArguments (its own util/values region, a
+    // proper var declaration in the chat bundle); without it the sliced
+    // definitions throw a ReferenceError on the first tool call.
     const regions = [
+      '../../util/values/lib/index.js',
       'lib/types/client/conversation-nodes/common.js',
       'lib/types/client/conversation-nodes/event-projection.js',
       'lib/types/client/conversation-nodes/assistant.js',

@@ -5,8 +5,23 @@ import path from 'node:path'
 import { provideStandInServices } from '../../scripts/host-services.mjs'
 import * as host from '../../lib/index.js'
 import { rootDir } from './dsh.mjs'
-import { resolveTestHostApp } from './test-host-app.mjs'
+import { resolveTestHostApp, resolveTestHostAppDir } from './test-host-app.mjs'
 import vm from 'node:vm'
+
+/**
+ * The durable tests import the host's packages, which a packed installation
+ * cannot serve; start that unpack when this helper loads rather than inside
+ * the first test body, where a full extraction would time out the test. A
+ * failure is remembered and re-thrown from `settingsHost`, so the suite
+ * reports it instead of the whole run crashing on an unhandled rejection.
+ */
+let unpackedHostError
+const unpackedHostApp = process.env.DSH_SETTINGS_HOST_ROOT === undefined || process.env.DSH_SETTINGS_HOST_ROOT === ''
+  ? resolveTestHostAppDir().catch((error) => {
+    unpackedHostError = error
+    return undefined
+  })
+  : undefined
 
 const LOCKED_HOST_PACKAGES = {
   '@deepseek-ai/cordis-plugin-loader': '1.0.5',
@@ -53,10 +68,11 @@ async function lockedPackageHost(root, home) {
 
 /** Run durable settings tests against the installed host or explicit locked host packages. */
 export async function settingsHost(home, name, state, initialConfig = {}) {
-  const testApp = resolveTestHostApp()
-  const app = process.env.DSH_SETTINGS_HOST_ROOT
-    ? await lockedPackageHost(testApp.root, home)
-    : testApp
+  const configuredRoot = process.env.DSH_SETTINGS_HOST_ROOT
+  const locked = configuredRoot !== undefined && configuredRoot !== ''
+  const testApp = locked ? resolveTestHostApp() : await unpackedHostApp
+  if (!locked && unpackedHostError !== undefined) throw unpackedHostError
+  const app = locked ? await lockedPackageHost(testApp.root, home) : testApp
   if (!app || app.kind !== 'dir') throw new Error('An unpacked DSH host is required for the durable settings test')
   const load = (pkg) => import(pathToFileURL(path.join(app.root, 'node_modules', pkg, 'lib/index.js')).href)
   const [{ default: Loader }, { mountRootInclude, readProfilePatches }, { default: ConfigEditor }, { default: SettingsForms }, { TypertRegistry }] = await Promise.all([

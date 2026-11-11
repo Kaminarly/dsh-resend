@@ -75,8 +75,11 @@ export const inject = ['sessions', 'agents', 'sessionQuery', 'sessionPersistence
  * still arrive (spec §6.5).
  * @param ctx - the fiber's context, which provides the services in {@link inject}.
  */
-export function apply(ctx) {
-  ctx.inject(['settings'], (scope) => {
+export async function apply(ctx) {
+  // Since 0.2.2-rc.1 (cordis 4.1.0) `ctx.inject` starts a fiber and returns
+  // it instead of running the body synchronously; await it so the settings
+  // configuration lands before the receiver and the registration below.
+  await ctx.inject(['settings'], (scope) => {
     scope.effect(() => scope.settings.configure({ auto: false }, ctx.fiber))
   })
   // The receiver exists before the descriptor that names it is committed: the

@@ -103,9 +103,9 @@ node scripts/verify-settings-display-browser.mjs
 
 | 组件 | 已验证版本 |
 |---|---|
-| DSH Desktop | `2.0.17`（CI 验收基线）、`2.0.19-next`（本机验收） |
-| DSH runtime（`@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`） | `0.2.0-rc.2`（CI 验收基线）、`0.2.1-rc.2`（本机验收） |
-| `@deepseek-ai/cordis` | `4.0.4`（2.0.17）、`4.0.5`（2.0.19-next） |
+| DSH Desktop | `2.0.17`（CI 验收基线）、`2.0.22-next`（本机验收） |
+| DSH runtime（`@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`） | `0.2.0-rc.2`（CI 验收基线）、`0.2.2-rc.1`（本机验收） |
+| `@deepseek-ai/cordis` | `4.0.4`（2.0.17）、`4.1.0`（2.0.22-next） |
 
 `package.json` 中的 `peerDependencies` 给出允许范围；锁文件固定开发和验收所用版本。版本范围不能替代宿主契约检查：兼容性由实际宿主表面（host surface）决定，插件依赖宿主暴露的服务、导出和 Slot；宿主形状变化时 `npm run check` 应失败。0.2.1-rc.2 的 `@deepseek-ai/dsh-api-gateway` 把 `ClientRemoteService` 从 `lib/client.js` 移到 `lib/client.browser.js`，契约表为这个实体登记两处候选位置，按登记顺序取安装应用实际携带者；两处都缺失时检查仍应失败。
 

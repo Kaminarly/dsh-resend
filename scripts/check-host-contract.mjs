@@ -31,13 +31,15 @@ import { fileURLToPath } from 'node:url'
 import { resolveHostApp } from './host-app.mjs'
 import { optionValue, rejectUnknownOptions } from './args.mjs'
 import { walkJavaScript, relativePath } from './walk-javascript.mjs'
-import { APP_MANIFEST, ENTITIES, EXPORTS, SLOT_CATALOG, catalogEntries, emptyTableGroups, entityFiles, entityRegion, escapeRegex, exportTarget, locateMember, memberForms, packageNameOf, packageOf, scopeMarkers } from './host-contract.mjs'
+import { APP_MANIFEST, CHAIN_SEAT_SUPPLY, ENTITIES, EXPORTS, SLOT_CATALOG, catalogEntries, emptyTableGroups, entityFiles, entityRegion, escapeRegex, exportTarget, locateMember, memberForms, packageNameOf, packageOf, scopeMarkers } from './host-contract.mjs'
 
 const rootDir = fileURLToPath(new URL('..', import.meta.url))
 
 const argv = process.argv.slice(2)
 /** The tree the plugin-side invariant scans; overridable so the scan is testable. */
 const pluginRoot = path.resolve(rootDir, optionValue(argv, '--plugin-root', { bin: 'check-host-contract', fallback: rootDir }))
+/** Whether that tree is this gate's own: the lost-descriptor alarm only has a ground truth there. */
+const ownTree = pluginRoot === rootDir
 /** Print the resolved scope of every assertion, for a human reading a drift report. */
 const reporting = argv.includes('--report')
 
@@ -282,6 +284,24 @@ for (const { file, specifier, names, usedBy } of EXPORTS) {
   }
 }
 
+// --- chain-seat supply: the shadow user entry's kit binding (0.2.2-rc.1) ----
+//
+// Host side, REPORTED rather than failed (see CHAIN_SEAT_SUPPLY): the host's
+// user entry declares the chain seat the renderer needs the binding for. If
+// the declaration goes away the renderer stops needing the binding and the
+// stub this plugin supplies is inert — the safe direction for a false red
+// would be a failure, so this stays a report line; the load-bearing
+// assertion is the plugin-side one below.
+
+for (const [field, value] of Object.entries(CHAIN_SEAT_SUPPLY)) {
+  if (typeof value !== 'string' || value === '') fail(`chain-seat supply table empty at ${field} — it would assert nothing, which is drift rather than a pass`)
+}
+const hostChatSource = sourceOf(CHAIN_SEAT_SUPPLY.hostFile)
+const chainSeatDeclared = hostChatSource !== undefined && new RegExp(
+  `["']${escapeRegex(CHAIN_SEAT_SUPPLY.chainSlot)}["']\\s*:\\s*\\{\\s*kind:\\s*["']chain["']`,
+).test(hostChatSource)
+report(`chain seat ${CHAIN_SEAT_SUPPLY.chainSlot} ${chainSeatDeclared ? 'is' : 'is not'} declared in ${CHAIN_SEAT_SUPPLY.hostFile} — ${chainSeatDeclared ? 'the host user renderer requires the binding; the descriptor invariant below is load-bearing' : 'the host renderer no longer needs the binding, so a supplied stub is inert'}`)
+
 // --- plugin-side invariant: no legacy event-view read outside the log module -
 
 const LEGACY_EVENT_VIEW_READ = /\.\s*events\b|\[\s*["'`]events["'`]\s*\]|\{\s*events\b/
@@ -348,6 +368,8 @@ function isLogReader(relative, source) {
 }
 
 let scannedFiles = 0
+/** Every scanned `{ relative, source }`, so the invariants below can judge the same bytes. */
+const scannedSources = []
 
 for (const dir of ['src', 'lib']) {
   if (!existsSync(path.join(pluginRoot, dir))) {
@@ -360,6 +382,7 @@ for (const dir of ['src', 'lib']) {
     scannedFiles += 1
     const relative = relativePath(pluginRoot, file)
     const source = readFileSync(file, 'utf8')
+    scannedSources.push({ relative, source })
     if (isLogReader(relative, source)) {
       logReaders += 1
       continue
@@ -382,6 +405,42 @@ if (scannedFiles === 0) {
   fail('plugin-side scan found no JavaScript under src/ or lib/ — a vacuously green invariant is worse than no invariant')
 }
 
+// --- chain-seat supply: the shadow user descriptor must carry the binding --
+//
+// Two rules, split by what each can know. The per-descriptor rule reaches every
+// scanned tree: wherever a `slots.register` call keys the user row, the window
+// after the call is where the renderer's inject merge picks up the binding, so
+// a descriptor without it fails the tree that carries it — a fixture or a
+// foreign `--plugin-root`. The vacuous rule (a tree that lost the descriptor
+// altogether) has ground truth only in this gate's own tree; a foreign fixture
+// that names a file `src/client.js` without the client half is not a lost
+// invariant, so it is judged for what it contains and nothing more.
+const userRowKey = new RegExp(`key:\\s*["']${escapeRegex(CHAIN_SEAT_SUPPLY.entryKey)}["']`)
+const bindingProp = new RegExp(`${escapeRegex(CHAIN_SEAT_SUPPLY.binding)}\\s*:`)
+let chainDescriptors = 0
+let userDescriptors = 0
+
+for (const { relative, source } of scannedSources) {
+  const registerCall = /\bslots\s*\.\s*register\s*\(/g
+  let call
+  while ((call = registerCall.exec(source)) !== null) {
+    const region = source.slice(call.index, call.index + 2000)
+    if (!userRowKey.test(region)) continue
+    userDescriptors += 1
+    if (bindingProp.test(region)) {
+      chainDescriptors += 1
+      report(`chain-seat supply ${relative} — the shadow user descriptor supplies ${CHAIN_SEAT_SUPPLY.binding}`)
+    } else {
+      fail(
+        `chain-seat supply ${relative} — the shadow user entry's register descriptor (key '${CHAIN_SEAT_SUPPLY.entryKey}') does not supply ${CHAIN_SEAT_SUPPLY.binding} under inject; since 0.2.2-rc.1 the host user renderer calls that binding, and a row without it dies in its crash boundary (slot entry crashed in '${CHAIN_SEAT_SUPPLY.slot}')`,
+      )
+    }
+  }
+}
+if (ownTree && userDescriptors === 0) {
+  fail(`no shadow user register descriptor (key '${CHAIN_SEAT_SUPPLY.entryKey}') anywhere in this plugin tree — the chain-seat invariant has nothing to hold, which is drift rather than a pass`)
+}
+
 app.close?.()
 
 if (failures.length > 0) {
@@ -391,5 +450,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `check-host-contract: OK — ${presentCount} present and ${absentCount} absent member(s) asserted across ${ENTITIES.length} scoped entities, plus ${exportCount} imported binding(s) and ${catalogEntryCount} catalog entry(ies) (${standardPropCount} standard, ${ownerPropCount} owner prop(s)), asserted against ${app.describe()}`,
+  `check-host-contract: OK — ${presentCount} present and ${absentCount} absent member(s) asserted across ${ENTITIES.length} scoped entities, plus ${exportCount} imported binding(s) and ${catalogEntryCount} catalog entry(ies) (${standardPropCount} standard, ${ownerPropCount} owner prop(s)); chain-seat supply: ${chainDescriptors} shadow user descriptor(s) supply ${CHAIN_SEAT_SUPPLY.binding}, host chain seat ${chainSeatDeclared ? 'declared' : 'absent (stub inert)'}, asserted against ${app.describe()}`,
 )

@@ -2,6 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { Session } from '@deepseek-ai/dsh-session'
 import { TypertGatewayService } from '@deepseek-ai/dsh-api-gateway'
+import { RemoteAccessService } from '@deepseek-ai/dsh-api-remote-access'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { clientHalf } from '../scripts/client-bundle.mjs'
@@ -21,6 +22,9 @@ async function durable(state) {
   const home = await mkdtemp(path.join(tmpDir, 'integrated-acceptance-'))
   const host = await settingsHost(home, 'acceptance', state)
   resources.push(host)
+  // Since 0.2.2-rc.1 the gateway service injects the remote-access service,
+  // so the owner-peer carrier needs it plugged before the gateway.
+  await host.ctx.plugin(RemoteAccessService)
   await host.ctx.plugin(TypertGatewayService)
   const client = await settingsClientProvider(host)
   resources.push(client)

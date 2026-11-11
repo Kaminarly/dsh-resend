@@ -554,6 +554,40 @@ export function scopeMarkers() {
  *   overridable so the empty cases themselves can be tested.
  * @returns one description per entry that asserts nothing.
  */
+/**
+ * The chain-seat renderer the shadow user entry must keep supplying — the
+ * 0.2.2-rc.1 renderer drift that broke the upgrade.
+ *
+ * The host's user-row renderer now renders the session-scoped
+ * `conversation.chat.user.before` chain seat through the kit's
+ * `renderSlotChain` binding, and the renderer hands that binding only to
+ * entries that declare the chain as their own child. The host's `user`
+ * entry owns the declaration, so this plugin's shadow entry cannot
+ * re-declare it — a second declaration throws at load time. Its `inject`
+ * descriptor therefore supplies the binding itself: a null renderer, the
+ * pattern the host's own `steering` entry uses for rows that do not own
+ * the seat.
+ *
+ * The gate asserts both sides. The host side is REPORTED, not failed: if
+ * the host stops declaring the chain seat, the renderer stops needing the
+ * binding and the supplied stub is inert rather than wrong — failing here
+ * would be a false red. The plugin side has two rules: wherever any scanned
+ * tree carries a shadow user register descriptor (`key: 'user'`), that
+ * descriptor must supply the binding under `inject`, or the row dies in
+ * its crash boundary (`slot entry crashed in 'conversation.chat.node'`,
+ * the exact 0.2.2-rc.1 regression); and the gate's OWN tree must carry at
+ * least one such descriptor at all, so a tree that loses the entry cannot
+ * green by asserting nothing.
+ */
+export const CHAIN_SEAT_SUPPLY = {
+  slot: 'conversation.chat.node',
+  entryKey: 'user',
+  chainSlot: 'conversation.chat.user.before',
+  binding: 'renderSlotChain',
+  hostFile: 'node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js',
+  usedBy: 'src/client.js — the shadow user entry wraps the host user renderer',
+}
+
 export function emptyTableGroups(table = { entities: ENTITIES, importedBindings: EXPORTS, catalogEntries: SLOT_CATALOG.entries, scopeMarkers: scopeMarkers() }) {
   const empty = []
   if (table.entities.length === 0) empty.push('entities')

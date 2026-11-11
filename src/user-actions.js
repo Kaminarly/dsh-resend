@@ -160,8 +160,11 @@ export function UserActionsRow(props) {
   const { conversation, revision } = useConversationEligibility(operations, sessionId, session, plan)
   const hidden = plan?.hiddenSeqs.has(data.seq) === true
   const reasonFor = (saved, current, context) => {
-    if (!context.plan || !current.ready) return t('row.conversationUnavailable')
-    if (context.plan.hiddenSeqs.has(context.data.seq) || !current.userSeqs.includes(context.data.seq)) return t('row.shadowed')
+    if (!context.plan) return t('row.conversationUnavailable')
+    if (context.plan.hiddenSeqs.has(context.data.seq)) return t('row.shadowed')
+    if (context.plan.compactedSeqs?.has(context.data.seq)) return t('row.compacted')
+    if (!current.ready) return t('row.conversationUnavailable')
+    if (!current.userSeqs.includes(context.data.seq)) return t('row.shadowed')
     if (!saved.ready) return t(saved.status === 'loading' ? 'settings.loading' : 'settings.read-error')
     if (saved.restrictEditToLastUserMessage !== false && current.lastUserSeq !== context.data.seq) return t('row.notLastUser')
     if (context.session?.running) return t('row.stopFirst')
@@ -302,7 +305,14 @@ export const SURFACE_SHADOW_DEFINITION = {
   target: 'chat',
   match: (event) => event?.surfaceOp?.op === 'replace'
     ? { id: String(event.seq), role: 'start' } : null,
-  start: (_context, match) => ({ seq: match.event.seq, shadowedSeqs: [...(match.event.sourceEventSeqs ?? [])] }),
+  start: (_context, match) => ({
+    seq: match.event.seq,
+    shadowedSeqs: [...(match.event.sourceEventSeqs ?? [])],
+    // Context compaction replaces a range of the model surface with one
+    // summary checkpoint. Its rows deliberately remain in the transcript, so
+    // they must not be mistaken for a rewind this plugin can hide.
+    compacted: match.event.data?.source?.kind === 'compact-checkpoint',
+  }),
   update: (context) => context.state,
   buildViewNode: (context) => context.state === undefined ? null : ({
     key: context.key, kind: 'dsh-resend-surface-shadow', id: context.id, target: 'chat',

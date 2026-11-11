@@ -566,13 +566,16 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     // Exactly one boundary implementation in the whole half.
     expect(texts.join('\n').match(/class PanelBoundary/g)).toHaveLength(1)
 
-    // Every slots.register site hands its component through the factory.
+    // Every slots.register site hands its component through the factory. The
+    // window is capped at the chunk so a bare registration can never borrow the
+    // next site's boundary; 2000 covers the user entry, whose renderSlotChain
+    // comment (root cause 1 of the 0.2.2-rc.1 upgrade) sits past the old 800.
     const client = texts.find((text) => text.includes('function mountSurfaces'))
     expect(client).not.toBeUndefined()
     const registerSites = client.split('slots.register(').length - 1
     expect(registerSites).toBe(5)
     for (const chunk of client.split(/slots\.register\(/).slice(1)) {
-      expect(chunk.slice(0, 800)).toContain('withPanelBoundary(')
+      expect(chunk.slice(0, Math.min(2000, chunk.length - 1))).toContain('withPanelBoundary(')
     }
 
     // The sub-surfaces are factory products too, not inline elements: the file

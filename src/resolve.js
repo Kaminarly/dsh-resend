@@ -126,9 +126,34 @@ export function regenerateTargetRefusal(log, nodes, targetSeq, restrict = true) 
   }
 }
 
-/** Loader volatile fields are live refs, rather than the raw saved booleans. */
+/**
+ * Read one saved boolean out of the running fiber config, across both host
+ * generations.
+ *
+ * Since 0.2.2-rc.1 (cordis 4.1.0) the loader retains the raw config plain —
+ * it is the input for the next activation, not a runtime read surface — and
+ * the running values live on `fiber.effectiveConfig`, where the schema's
+ * volatile fields are live refs. Earlier generations kept the live refs on
+ * the raw config itself, so the field is read from whichever config carries
+ * it.
+ * @param ctx - the service context.
+ * @param name - the config field.
+ * @returns the saved value, or `undefined` when no config carries it.
+ */
+function savedBoolean(ctx, name) {
+  const fiber = ctx?.fiber
+  if (!fiber) return undefined
+  for (const config of [fiber.effectiveConfig, fiber.config]) {
+    const value = config?.[name]
+    if (value === undefined) continue
+    return typeof value === 'object' && value !== null && typeof value.get === 'function' ? value.get() : value
+  }
+  return undefined
+}
+
+/** The restriction is off only when the saved value is exactly `false`. */
 export function restrictRegenerate(ctx) {
-  return ctx.fiber?.config?.restrictRegenerateToLastReply?.get?.() !== false
+  return savedBoolean(ctx, 'restrictRegenerateToLastReply') !== false
 }
 
 function isUserMessage(event) {
@@ -136,7 +161,7 @@ function isUserMessage(event) {
 }
 
 export function restrictEdit(ctx) {
-  return ctx.fiber?.config?.restrictEditToLastUserMessage?.get?.() !== false
+  return savedBoolean(ctx, 'restrictEditToLastUserMessage') !== false
 }
 
 /** Real user sends count even when they have no editable text. */

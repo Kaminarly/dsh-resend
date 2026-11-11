@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { TypertGatewayService } from '@deepseek-ai/dsh-api-gateway'
+import { RemoteAccessService } from '@deepseek-ai/dsh-api-remote-access'
 import { mkdir, mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import { clientHalf } from '../scripts/client-bundle.mjs'
@@ -20,6 +21,10 @@ async function durable(state = hostState({ session: measuredFixture(), agent: 'd
   const home = await mkdtemp(path.join(tmpDir, 'cross-window-policy-'))
   const h = await settingsHost(home, 'shared', state, { restrictRegenerateToLastReply: true, restrictEditToLastUserMessage: true })
   resources.push(h)
+  // 0.2.2-rc.1's TypertGatewayService hard-injects `remoteAccess`, so the gateway's
+  // own fiber stays pending (and `ctx.typertGateway` never materializes) until a
+  // RemoteAccessService is plugged first. Plug it before the gateway.
+  await h.ctx.plugin(RemoteAccessService)
   await h.ctx.plugin(TypertGatewayService)
   return { h, state }
 }

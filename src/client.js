@@ -27,7 +27,7 @@
  */
 import { withPanelBoundary } from './panel-boundary.js'
 import { createElement } from 'react'
-import { SettingsNavigationLabel } from './settings-navigation.js'
+import { SettingsNavigationIcon, SettingsNavigationLabel } from './settings-navigation.js'
 import { UIStyles } from './ui.js'
 import { CLEANUP_DICTIONARIES } from './storage-cleanup-ui.js'
 import { CONTENT_DICTIONARIES } from './content-preview.js'
@@ -54,7 +54,7 @@ import { hidePlanFor, hideRulesFor, hiddenKeysFor } from './hide-plan.js'
 import { TYPERT_REMOTE } from './typert.client.js'
 export { FileRollbackPreview, ReplayPreflight } from './file-rollback-preview.js'
 export { operationErrorText, OperationErrorNotice } from './operation-error.js'
-export { SettingsNavigationLabel } from './settings-navigation.js'
+export { SettingsNavigationIcon, SettingsNavigationLabel } from './settings-navigation.js'
 
 /**
  * The contribution this half mounts, re-exported.
@@ -296,6 +296,7 @@ const DICTIONARIES = {
     'panel.error.hideRules': '隐藏规则无法显示',
     'panel.error.settings': '设置行无法显示',
     'panel.error.settingsNavigation': '设置导航图标无法显示',
+    'panel.error.navIcon': '导航图标无法显示',
     'settings.heading': 'DSH Resend 设置',
     'settings.nav': 'DSH Resend',
     'operation.dismiss': '关闭错误提示',
@@ -488,6 +489,7 @@ const DICTIONARIES = {
     'panel.error.hideRules': 'The hide rules could not be displayed',
     'panel.error.settings': 'The settings row could not be displayed',
     'panel.error.settingsNavigation': 'The settings navigation icon could not be displayed',
+    'panel.error.navIcon': 'The navigation icon could not be displayed',
     'settings.heading': 'DSH Resend settings',
     'settings.nav': 'DSH Resend',
     'operation.dismiss': 'Dismiss error',
@@ -727,6 +729,15 @@ function mountSurfaces(scope, ctx) {
       withPanelBoundary(settingsSurface(preferences, translate, operations), 'panel.error.settings', translate),
     ),
   )
+
+  // Registration 4b: the nav glyph. The shell renders a default gear for any
+  // section id without a registered icon, so the pencil is addressed by this
+  // page's own id — the label no longer carries a glyph of its own. Like every
+  // other registration it goes through the ONE boundary with its own title.
+  scope.slots.inject('settings.section.icon', () => scope.slots.register(
+    { name: 'settings.section.icon', id: SETTINGS_ROW_ID, order: 100, locale: NS },
+    withPanelBoundary(SettingsNavigationIcon, 'panel.error.navIcon', translate),
+  ))
 
   // A style-only additive entry keeps the nav glyph correct even while another
   // section is selected. The host keeps ownership of its settings shell/slots.

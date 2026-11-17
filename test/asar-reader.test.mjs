@@ -185,12 +185,12 @@ describe('the packed-app path through the gate', () => {
       env: { ...process.env, DSH_APP_ROOT: drifted },
     })
 
-    expect(result.status).toBe(1)
-    expect(result.stderr).toContain('PRESENT eventAt')
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain('DRIFT PRESENT eventAt')
     expect(result.stderr).toContain('node_modules/@deepseek-ai/dsh-session/lib/index.js')
     expect(result.stderr).toContain('packed app')
-    // One assertion broke; a scoping bug inside an archive would fail neighbours.
-    expect(result.stderr.match(/FAIL PRESENT /g) ?? []).toHaveLength(1)
+    // One finding was reported; a scoping bug inside an archive would report neighbours.
+    expect(result.stderr.match(/DRIFT PRESENT /g) ?? []).toHaveLength(1)
   })
 })
 

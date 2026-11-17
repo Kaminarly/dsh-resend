@@ -9,7 +9,7 @@
  * claim that spans all three gates: `npm run check` runs them.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { rootDir, libArtifacts, tmpDir as scratchDir } from './helpers/dsh.mjs'
@@ -327,15 +327,20 @@ describe('check-typert > the copies that run are held to the same contract', () 
 
 describe('the gates are wired as one `check` command', () => {
   it('`npm run check` runs all three gates and succeeds', () => {
-    const stdout = execFileSync('npm', ['run', 'check'], {
+    // check-host-contract reports drift on stderr (non-blocking), so capture both
+    // streams: a drift-only installation still exits zero, which is what "runs
+    // all three gates and succeeds" means now.
+    const result = spawnSync('npm', ['run', 'check'], {
       cwd: rootDir,
       encoding: 'utf8',
       // A .cmd shim cannot be spawned directly on Windows.
       shell: process.platform === 'win32',
     })
-    expect(stdout).toContain('check-syntax: OK')
-    expect(stdout).toContain('check-typert: OK')
-    expect(stdout).toContain('§6.3')
-    expect(stdout).toMatch(/check-host-contract: (OK|SKIP)/)
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+    expect(result.status, output).toBe(0)
+    expect(output).toContain('check-syntax: OK')
+    expect(output).toContain('check-typert: OK')
+    expect(output).toContain('§6.3')
+    expect(output).toMatch(/check-host-contract: (OK|SKIP|.*drift finding)/)
   }, 120_000)
 })

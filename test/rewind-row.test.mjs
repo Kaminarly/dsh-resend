@@ -413,14 +413,20 @@ describe('every registered surface goes through the ONE boundary (§7.4, §13.3 
 
   it('every actual registered surface uses the shared boundary and binds its own state', async () => {
     const { record } = await activated()
-    // Ticket 08 adds the settings row, so the half now registers four slot
-    // occupants (the two keyed rows, the list entry, and the settings row).
-    expect(record.mounts).toHaveLength(5)
+    // Ticket 08 adds the settings row, so the half now registers five slot
+    // occupants (the two keyed rows, the list entry, the settings row and its
+    // navigation glyph). The glyph shares the settings row's id but a distinct
+    // slot name, so it is disambiguated by name, not id.
+    expect(record.mounts).toHaveLength(6)
     for (const registration of record.mounts) {
       const tree = registration.component(POINT_PROPS)
       expect(typeof tree.type.getDerivedStateFromError).toBe('function')
       const bound = tree.props.children.type(POINT_PROPS)
-      if (registration.options.id === 'dsh-resend-preferences') {
+      if (registration.options.name === 'settings.section.icon') {
+        // The nav glyph renders the edit symbol and binds no store at all.
+        const svg = bound.type(bound.props)
+        expect(svg.props['data-icon']).toMatch('edit-outline')
+      } else if (registration.options.id === 'dsh-resend-preferences') {
         // The settings row binds the preferences store, not the operations.
         expect(typeof bound.props.preferences.set).toBe('function')
       } else if (registration.options.name === 'settings.action') {

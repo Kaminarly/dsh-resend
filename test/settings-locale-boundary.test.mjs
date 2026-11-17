@@ -331,7 +331,7 @@ describe('localization: one language at a time, labels by thunk (spec §10)', ()
       expect(registration.options.label().props.text).toBe('DSH Resend')
       expect(strip.options.label()).toBe('重新生成')
       expect(composition.record.dictionaries).toHaveLength(1)
-      expect(composition.record.mounts).toHaveLength(5)
+      expect(composition.record.mounts).toHaveLength(6)
     } finally {
       await chatDom.cleanup()
       await settingsDom.cleanup()
@@ -386,6 +386,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     'panel.error.settings',
     'panel.error.settingsNavigation',
     'panel.error.hideRules',
+    'panel.error.navIcon',
   ])
 
   it('wraps every surface through the same implementation, each with its own localized title', async () => {
@@ -450,7 +451,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     const registrations = composition.record.mounts
     const produced = registrations.map((registration) => registration.component({ ...SLOT_PROPS }))
 
-    expect(registrations).toHaveLength(5)
+    expect(registrations).toHaveLength(6)
     for (const [index, registration] of registrations.entries()) {
       const label = registration.options.id ?? registration.options.key
       const tree = produced[index]
@@ -460,10 +461,10 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
       expect(tree?.props?.title, label).not.toBe('')
     }
 
-    // Identity, in the two forms this seam allows. All four registrations live in
+    // Identity, in the two forms this seam allows. All six registrations live in
     // ONE module instance, and each `Panel` closure it hands out is a distinct
     // object — so the shared thing is not the closure but the CLASS every one of
-    // them renders: one `PanelBoundary` across all four sites. A per-site boundary
+    // them renders: one `PanelBoundary` across all six sites. A per-site boundary
     // implementation would be a second class here.
     const owners = registrations.map((registration) => registration.component)
     for (const owner of owners) expect(typeof owner).toBe('function')
@@ -499,12 +500,12 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     // therefore not one of these.
     const callSites = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*?(?:'(?:panel|settings)\.[A-Za-z.]+'(?:\s*,\s*translate(?:\s*,\s*fallback)?|\s*,\s*undefined\s*,\s*fallback)?\s*)\)/g)]
     const titles = [...all.matchAll(/withPanelBoundary\((?:[^()]|\([^()]*\))*,\s*'(panel\.error\.[A-Za-z]+)'/g)].map((match) => match[1])
-    // Every title in the source is one of the six this suite names, and every one
-    // of the six is used: a surface whose title key no dictionary carries would
-    // render the raw key instead of a sentence.
-    expect(callSites).toHaveLength(7)
+    // Every title in the source is one of the eight this suite names, and every
+    // one of the eight is used: a surface whose title key no dictionary carries
+    // would render the raw key instead of a sentence.
+    expect(callSites).toHaveLength(8)
     expect(titles).toHaveLength(callSites.length)
-    expect(new Set(titles).size).toBe(7)
+    expect(new Set(titles).size).toBe(8)
     expect(titles.slice().sort()).toEqual(SIX_TITLES.slice().sort())
     for (const title of titles) expect(Object.keys(registered)).toContain(title)
 
@@ -527,7 +528,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
       expect(tree.props.title).not.toBe('')
       titlesInUse.push(tree.props.title)
     }
-    // Four registrations name four different panels; the remaining two titles
+    // Six registrations name six different panels; the remaining two titles
     // belong to sub-surfaces that a registration builds internally.
     expect(new Set(titlesInUse).size).toBe(titlesInUse.length)
     expect(Object.keys(registered).filter((key) => key.startsWith('panel.error.'))).toHaveLength(SIX_TITLES.length)
@@ -573,7 +574,7 @@ describe('the one shared boundary across all six registered surfaces (spec §7.4
     const client = texts.find((text) => text.includes('function mountSurfaces'))
     expect(client).not.toBeUndefined()
     const registerSites = client.split('slots.register(').length - 1
-    expect(registerSites).toBe(5)
+    expect(registerSites).toBe(6)
     for (const chunk of client.split(/slots\.register\(/).slice(1)) {
       expect(chunk.slice(0, Math.min(2000, chunk.length - 1))).toContain('withPanelBoundary(')
     }

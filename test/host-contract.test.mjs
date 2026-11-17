@@ -248,26 +248,26 @@ describe('check-host-contract: a well-formed host passes', () => {
 
 describe('check-host-contract: a member the plugin reads cannot disappear quietly', () => {
   for (const { entry, member } of PRESENT_MEMBERS) {
-    it(`goes red when ${entry.entity}.${member} is undeclared`, () => {
+    it(`reports drift (exit 0) when ${entry.entity}.${member} is undeclared`, () => {
       const result = gateAgainst(`present-${entry.entity}-${member}`, hostFixture({ omitMembers: [`${entry.entity}.${member}`] }))
-      expect(result.status, output(result)).toBe(1)
-      expect(result.stderr).toContain(`PRESENT ${member} (${entry.file})`)
+      expect(result.status, output(result)).toBe(0)
+      expect(result.stderr).toContain(`DRIFT PRESENT ${member} (${entry.file})`)
       expect(result.stderr).toContain(entry.entity)
-      // Only that one assertion broke: a scoping bug would fail its neighbours too.
-      expect(result.stderr.match(/FAIL PRESENT /g) ?? [], output(result)).toHaveLength(1)
+      // Only that one finding is reported: a scoping bug would report its neighbours too.
+      expect(result.stderr.match(/DRIFT PRESENT /g) ?? [], output(result)).toHaveLength(1)
     })
   }
 
   for (const { entry, name } of EXPORT_NAMES) {
-    it(`goes red when ${entry.file.split('/')[2]} stops exporting ${name}`, () => {
+    it(`reports drift (exit 0) when ${entry.file.split('/')[2]} stops exporting ${name}`, () => {
       const result = gateAgainst(`export-${name}`, hostFixture({ omitExports: [`${entry.file}#${name}`] }))
-      expect(result.status, output(result)).toBe(1)
-      expect(result.stderr).toContain(`PRESENT export ${name} (${entry.file})`)
+      expect(result.status, output(result)).toBe(0)
+      expect(result.stderr).toContain(`DRIFT PRESENT export ${name} (${entry.file})`)
       expect(result.stderr).toContain('imports it by that name')
     })
   }
 
-  it('goes red when the exports map stops resolving the specifier to the file the table reads', () => {
+  it('reports drift when the exports map stops resolving the specifier to the file the table reads', () => {
     // The plugin imports the SPECIFIER, not the file: a package that repoints a
     // subpath leaves this table reading a module nothing loads, and the name
     // assertion above would stay green over a host half that cannot import.
@@ -276,8 +276,8 @@ describe('check-host-contract: a member the plugin reads cannot disappear quietl
     const packageName = packageNameOf(entry.file)
     const subpath = `.${entry.specifier.slice(packageName.length)}`
     const result = gateAgainst('repointed-exports', hostFixture({ repointExports: { [pkg]: { [subpath]: './lib/somewhere-else.js' } } }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`import path moved: ${entry.specifier} resolves to lib/somewhere-else.js`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT import path moved: ${entry.specifier} resolves to lib/somewhere-else.js`)
     expect(result.stderr).toContain('the plugin imports the specifier, not the file')
   })
 })
@@ -289,18 +289,18 @@ describe('check-host-contract: the resurrection alarms', () => {
   })
 
   for (const shape of RESURRECTION_SHAPES) {
-    it(`goes red when Session.events returns as a ${shape.label}`, () => {
+    it(`reports drift (exit 0) when Session.events returns as a ${shape.label}`, () => {
       const result = gateAgainst(`resurrect-${shape.label.replace(/\s+/g, '-')}`, hostFixture({ resurrect: { 'Session.events': shape.label } }))
-      expect(result.status, output(result)).toBe(1)
+      expect(result.status, output(result)).toBe(0)
       expect(result.stderr).toContain('ABSENT events')
       expect(result.stderr, output(result)).toContain(`as a ${shape.reportedAs}`)
       expect(result.stderr).toMatch(/dsh-session\/lib\/index\.js:\d+/)
     })
   }
 
-  it('goes red when the client session controller grows a host write member', () => {
+  it('reports drift when the client session controller grows a host write member', () => {
     const result = gateAgainst('resurrect-controller-write', hostFixture({ resurrect: { 'ClientSessions.append': 'method' } }))
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('ABSENT append (node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js')
     expect(result.stderr).toContain('ClientSessions')
   })
@@ -321,7 +321,7 @@ describe('check-host-contract: the resurrection alarms', () => {
     // client's `uiConversation`: the same word, two owners, and the scoping is
     // what lets both assertions be true at once.
     const result = gateAgainst('events-two-owners', hostFixture({ omitMembers: ['UiConversation.events'] }))
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('PRESENT events')
     expect(result.stderr).not.toContain('ABSENT events')
   })
@@ -351,75 +351,81 @@ describe('check-host-contract: the resurrection alarms', () => {
     const real = hostFixture()
     real[controller] = `${hostFixture()[controller]}\nSession.prototype.append = function append() {}\n`
     const result = gateAgainst('suffix-real', real)
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('ABSENT append')
     expect(result.stderr).toContain('as a prototype bolt-on')
   })
 })
 
-describe('check-host-contract: drift is never a pass', () => {
-  it('goes red when a package manifest — a scope marker — is gone', () => {
+describe('check-host-contract: host drift is reported, not silently passed', () => {
+  // A missing host member, a renamed class, a vanished scope marker — none of
+  // these may vanish without a trace, but (per the maintainer's decision) they
+  // REPORT drift and exit zero rather than failing the build, because the host
+  // version churns and a moving installation must not keep the tree red.
+  it('reports drift (exit 0) when a package manifest — a scope marker — is gone', () => {
     const marker = 'node_modules/@deepseek-ai/dsh-token-meter/package.json'
     const result = gateAgainst('marker-gone', hostFixture({ omitMarkers: [marker] }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`scope marker missing: ${marker}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT scope marker missing: ${marker}`)
   })
 
-  it('goes red when the installed app has no manifest at all', () => {
+  it('reports drift when the installed app has no manifest at all', () => {
     const files = hostFixture()
     delete files[APP_MANIFEST]
     const result = gateAgainst('app-manifest-gone', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`scope marker missing: ${APP_MANIFEST}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT scope marker missing: ${APP_MANIFEST}`)
   })
 
-  it('goes red when a scope marker names a different package than its path', () => {
+  it('reports drift when a scope marker names a different package than its path', () => {
     const files = hostFixture()
     files['node_modules/@deepseek-ai/dsh-session/package.json'] = JSON.stringify({ name: 'some-other-package', version: '1.0.0' })
     const result = gateAgainst('marker-mismatch', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('names some-other-package, not the package the contract reads from')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT scope marker node_modules/@deepseek-ai/dsh-session/package.json names some-other-package, not the package the contract reads from')
   })
 
-  it('goes red when a scope marker carries no version', () => {
+  it('reports drift when a scope marker carries no version', () => {
     const files = hostFixture()
     files['node_modules/@deepseek-ai/dsh-session/package.json'] = JSON.stringify({ name: '@deepseek-ai/dsh-session' })
     const result = gateAgainst('marker-no-version', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('has no version')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT scope marker node_modules/@deepseek-ai/dsh-session/package.json has no version')
   })
 
-  it('goes red when the class a member was scoped to is renamed away', () => {
+  it('reports drift when the class a member was scoped to is renamed away', () => {
     const file = 'node_modules/@deepseek-ai/dsh-token-meter/lib/index.js'
     const files = hostFixture()
     files[file] = files[file].replace('var TokenMeter = class TokenMeter extends Service {', 'var MeterRack = class MeterRack extends Service {')
     const result = gateAgainst('entity-renamed', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`scope marker missing: no declaration of TokenMeter was found in ${file}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT scope marker missing: no declaration of TokenMeter was found in ${file}`)
   })
 
-  it('goes red when the service name the plugin injects is renamed away', () => {
+  it('reports drift when the service name the plugin injects is renamed away', () => {
     const result = gateAgainst('service-renamed', hostFixture({ omitServices: ['tokenMeter'] }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('no longer registers the service "tokenMeter"')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT scope marker missing: node_modules/@deepseek-ai/dsh-token-meter/lib/index.js no longer registers the service "tokenMeter"')
   })
 
-  it('goes red when a contract file is missing, naming the entity it declares', () => {
+  it('reports drift when a contract file is missing, naming the entity it declares', () => {
     const file = 'node_modules/@deepseek-ai/dsh-session-query/lib/index.js'
     const result = gateAgainst('file-gone', hostFixture({ omitFiles: [file] }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`contract file missing: ${file}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT contract file missing: ${file}`)
     expect(result.stderr).toContain('SessionQueryEngine')
   })
 
-  it('goes red when no candidate declares the client remote, naming every candidate', () => {
+  it('reports drift when no candidate declares the client remote, naming every candidate', () => {
     const candidates = ['node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js', 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.browser.js']
     const result = gateAgainst('client-remote-gone', hostFixture({ omitFiles: candidates }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`contract file missing: ${candidates.join(' or ')}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT contract file missing: ${candidates.join(' or ')}`)
     expect(result.stderr).toContain('ClientRemoteService')
   })
 
+  // A path that is not a DSH app at all is not host drift — it is a usage error,
+  // and it must still fail hard: silently reading "no app" would mask a typo.
   it('goes red on a mistyped override instead of reading "no app installed"', () => {
     const { status, stderr } = runGate([], { DSH_APP_ROOT: path.join(fixtureRoot, 'definitely-not-an-app') })
     expect(status, stderr).toBe(1)
@@ -438,58 +444,61 @@ describe('check-host-contract: drift is never a pass', () => {
     // inference, so the well-known candidates are not in play here: the override
     // is simply absent, which is what CI sees.
     const discovered = resolveHostApp()
-    const { status, stdout } = runGate([])
-    expect(status, stdout).toBe(0)
-    if (discovered === undefined) expect(stdout).toContain('SKIP')
-    else expect(stdout).toContain('check-host-contract: OK')
+    const result = runGate([])
+    expect(result.status, output(result)).toBe(0)
+    if (discovered === undefined) expect(result.stdout).toContain('SKIP')
+    else expect(output(result)).toMatch(/check-host-contract: (OK|SKIP|.*drift finding)/)
   })
 })
 
 describe('check-host-contract: the slot catalog', () => {
-  it('goes red when a slot entry the plugin registers against is gone', () => {
+  it('reports drift (exit 0) when a slot entry the plugin registers against is gone', () => {
     const result = gateAgainst('catalog-entry-gone', hostFixture({ omitSlots: ['conversation.chat.node'] }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('catalog entry missing: conversation.chat.node')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT catalog entry missing: conversation.chat.node')
   })
 
-  it('goes red when the catalog file itself is gone, without skipping the entry assertions', () => {
+  it('reports drift when the catalog file itself is gone, without skipping the entry assertions', () => {
     const result = gateAgainst('catalog-file-gone', hostFixture({ omitFiles: [SLOT_CATALOG.file] }))
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain(`catalog file missing: ${SLOT_CATALOG.file}`)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain(`DRIFT catalog file missing: ${SLOT_CATALOG.file}`)
     // Reported once and outside the entry loop: a missing file must not read as
     // "there were no entries to check".
-    expect(result.stderr.match(/catalog file missing/g) ?? []).toHaveLength(1)
+    expect(result.stderr.match(/DRIFT catalog file missing/g) ?? []).toHaveLength(1)
   })
 
-  it('goes red when an entry stops declaring standardProps', () => {
+  it('reports drift when an entry stops declaring standardProps', () => {
     const result = gateAgainst('catalog-props-gone', hostFixture({ omitProps: ['conversation.chat.node#standardProps'] }))
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT catalog entry')
     expect(result.stderr).toContain('declares no standardProps')
   })
 
   for (const prop of SLOT_CATALOG.entries[0].standardProps) {
-    it(`goes red when chat.node stops delivering ${prop}`, () => {
+    it(`reports drift when chat.node stops delivering ${prop}`, () => {
       const result = gateAgainst(`catalog-prop-${prop}`, hostFixture({ omitProps: [`conversation.chat.node#${prop}`] }))
-      expect(result.status, output(result)).toBe(1)
+      expect(result.status, output(result)).toBe(0)
+      expect(result.stderr).toContain(`DRIFT catalog entry`)
       expect(result.stderr).toContain(`standardProps no longer delivers ${prop}`)
     })
   }
 
-  it('goes red when assistant-actions stops declaring its owner props', () => {
+  it('reports drift when assistant-actions stops declaring its owner props', () => {
     const result = gateAgainst('catalog-owner-props', hostFixture({ omitProps: ['conversation.chat.assistant-actions#ownerProps'] }))
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT catalog entry')
     expect(result.stderr).toContain('ownerProps no longer carries messageId')
   })
 
-  it('goes red when a slot changes kind under a registration that cannot follow it', () => {
+  it('reports drift when a slot changes kind under a registration that cannot follow it', () => {
     // The plugin registers a keyed cell in `conversation.chat.node` and a list
     // entry in `conversation.chat.assistant-actions`; a flip in either changes what
     // `{ key }` versus `{ id }` means at the call site.
     const files = hostFixture()
     files[SLOT_CATALOG.file] = files[SLOT_CATALOG.file].replace('\t\tkey: "conversation.chat.node",\n\t\tkind: "keyed",', '\t\tkey: "conversation.chat.node",\n\t\tkind: "list",')
     const result = gateAgainst('catalog-kind-flip', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('catalog entry conversation.chat.node')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT catalog entry conversation.chat.node')
     expect(result.stderr).toContain('declared as kind: "list"')
     // The catalog diagnostics carry the same `file:line` pointer as the rest.
     expect(result.stderr).toMatch(/dsh-cordis-client-runner\/lib\/client\.js:\d+/)
@@ -497,14 +506,14 @@ describe('check-host-contract: the slot catalog', () => {
     expect(result.stderr).toContain('this plugin registers a keyed cell there')
   })
 
-  it('goes red when a slot is declared twice, rather than reading whichever came first', () => {
+  it('reports drift when a slot is declared twice, rather than reading whichever came first', () => {
     const files = hostFixture()
     const entry = '\t{\n\t\tkey: "conversation.chat.node",\n\t\tkind: "keyed",'
     expect(files[SLOT_CATALOG.file]).toContain(entry)
     files[SLOT_CATALOG.file] = files[SLOT_CATALOG.file].replace(entry, `${entry}\n\t{\n\t\tkey: "conversation.chat.node",\n\t\tkind: "single",`)
     const result = gateAgainst('catalog-duplicate', files)
-    expect(result.status, output(result)).toBe(1)
-    expect(result.stderr).toContain('catalog entry ambiguous: conversation.chat.node is declared 2 times')
+    expect(result.status, output(result)).toBe(0)
+    expect(result.stderr).toContain('DRIFT catalog entry ambiguous: conversation.chat.node is declared 2 times')
   })
 })
 
@@ -668,19 +677,19 @@ describe.runIf(installed !== undefined && installed.kind === 'dir')('check-host-
   it('is green on this machine’s installation', () => {
     const result = runGate([], { DSH_APP_ROOT: installed.root })
     expect(result.status, output(result)).toBe(0)
-    expect(result.stdout).toContain(installed.describe())
+    expect(output(result)).toContain(installed.describe())
   })
 
-  it('goes red when a member is deleted from real host source', () => {
+  it('reports drift when a member is deleted from real host source', () => {
     const dir = copyOfInstalledContract('installed-copy')
     const file = path.join(dir, 'node_modules/@deepseek-ai/dsh-session-query/lib/index.js')
     writeFileSync(file, splice(readFileSync(file, 'utf8'), '\tasync readSession(sessionId) {', '\tasync readSessionRenamed(sessionId) {', 'readSession'))
     const result = runGate([], { DSH_APP_ROOT: dir })
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('PRESENT readSession')
   })
 
-  it('goes red when a member bolted onto real host source is removed', () => {
+  it('reports drift when a member bolted onto real host source is removed', () => {
     // The bolt-on path is the one the region scan cannot see, so it is proved
     // against the host's own spelling rather than only against a fixture.
     const dir = copyOfInstalledContract('installed-bolted')
@@ -689,17 +698,17 @@ describe.runIf(installed !== undefined && installed.kind === 'dir')('check-host-
     expect(source).toContain('SlotRegistry.prototype.register = ')
     writeFileSync(file, source.replace('SlotRegistry.prototype.register = ', 'SlotRegistry.prototype.registerAway = '))
     const result = runGate([], { DSH_APP_ROOT: dir })
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('PRESENT register')
     expect(result.stderr).toContain('would fail at runtime')
   })
 
-  it('goes red when Session.events is bolted back onto real host source', () => {
+  it('reports drift when Session.events is bolted back onto real host source', () => {
     const dir = copyOfInstalledContract('installed-resurrect')
     const file = path.join(dir, 'node_modules/@deepseek-ai/dsh-session/lib/index.js')
     writeFileSync(file, `${readFileSync(file, 'utf8')}\nObject.defineProperty(Session.prototype, "events", {\n\tget() {\n\t\treturn []\n\t},\n});\n`)
     const result = runGate([], { DSH_APP_ROOT: dir })
-    expect(result.status, output(result)).toBe(1)
+    expect(result.status, output(result)).toBe(0)
     expect(result.stderr).toContain('ABSENT events')
     expect(result.stderr).toContain('Object.defineProperty(X.prototype, …')
   })
@@ -724,7 +733,7 @@ describe.runIf(installed !== undefined && installed.kind === 'dir')('check-host-
 
     const gate = runGate([], { DSH_APP_ASAR: archive })
     expect(gate.status, output(gate)).toBe(0)
-    expect(gate.stdout).toContain('packed app')
+    expect(output(gate)).toContain('packed app')
     app.close?.()
   })
 })

@@ -16,6 +16,19 @@
  *   - a reverse (ABSENT) assertion over-matches rather than under-matches: a
  *     false red is the safe direction.
  *
+ * The gate splits its findings by what they protect. Plugin-side invariants
+ * (the shadow-user chain-seat binding, the legacy event-view read ban, the
+ * "no JS at all" guard) and the contract table's own integrity are HARD
+ * failures: they are about this plugin's own bytes and do not move with a host
+ * version, so a break there is a real regression that must block the build.
+ * Host-side findings (a missing scope marker, a PRESENT/ABSENT member, a
+ * slot-catalog entry, an import source) are DRIFT: they compare the contract
+ * table against whatever DSH Desktop is installed, and the host churns. Per the
+ * maintainer's decision, host drift is REPORTED — a loud, explicit,
+ * non-blocking DRIFT summary — rather than failing the build, so a moving host
+ * no longer keeps the tree red, while the still-blocking plugin-side
+ * invariants keep the gate from going vacuously green.
+ *
  * With no installed app the gate prints an explicit SKIP and exits zero — it is
  * Desktop-optional (spec §12). `process.noAsar` is set by both modules that open
  * a path — `scripts/host-app.mjs`, before this file reads anything, and
@@ -52,6 +65,11 @@ rejectUnknownOptions(argv, {
 
 const failures = []
 const fail = (message) => failures.push(message)
+// Host-side findings, kept apart from the hard failures: the installed app has
+// drifted from the contract table. These are REPORTED, not blocking (see the
+// header), so a moving host version must not keep the build red.
+const driftFailures = []
+const drift = (message) => driftFailures.push(message)
 const report = (message) => {
   if (reporting) console.log(`  ${message}`)
 }
@@ -100,26 +118,26 @@ for (const group of emptyTableGroups()) {
 for (const marker of scopeMarkers()) {
   const text = sourceOf(marker)
   if (text === undefined) {
-    fail(`scope marker missing: ${marker} — the contract reads members out of that package, so its absence is drift`)
+    drift(`scope marker missing: ${marker} — the contract reads members out of that package, so its absence is drift`)
     continue
   }
   let manifest
   try {
     manifest = JSON.parse(text)
   } catch (error) {
-    fail(`scope marker ${marker} is not valid JSON: ${error.message}`)
+    drift(`scope marker ${marker} is not valid JSON: ${error.message}`)
     continue
   }
   for (const field of ['name', 'version']) {
-    if (typeof manifest[field] !== 'string' || manifest[field] === '') fail(`scope marker ${marker} has no ${field}`)
+    if (typeof manifest[field] !== 'string' || manifest[field] === '') drift(`scope marker ${marker} has no ${field}`)
   }
   if (typeof manifest.name === 'string' && !marker.endsWith(`/${manifest.name}/package.json`)) {
-    fail(`scope marker ${marker} names ${manifest.name}, not the package the contract reads from`)
+    drift(`scope marker ${marker} names ${manifest.name}, not the package the contract reads from`)
   }
   report(`scope marker ${marker} — ${manifest.name}@${manifest.version}`)
 }
 
-if (sourceOf(APP_MANIFEST) === undefined) fail(`scope marker missing: ${APP_MANIFEST} — without it the gate cannot tell a DSH app from a directory`)
+if (sourceOf(APP_MANIFEST) === undefined) drift(`scope marker missing: ${APP_MANIFEST} — without it the gate cannot tell a DSH app from a directory`)
 
 // --- both directions, scoped to the entity that owns each member ------------
 
@@ -132,7 +150,7 @@ for (const entry of ENTITIES) {
   const candidates = entityFiles(entry)
   const file = candidates.find((candidate) => sourceOf(candidate) !== undefined)
   if (file === undefined) {
-    fail(`contract file missing: ${candidates.join(' or ')} — ${entity} declares members this plugin reads (${usedBy}), so its absence is drift`)
+    drift(`contract file missing: ${candidates.join(' or ')} — ${entity} declares members this plugin reads (${usedBy}), so its absence is drift`)
     continue
   }
   const text = sourceOf(file)
@@ -141,10 +159,10 @@ for (const entry of ENTITIES) {
   if (region === undefined) {
     for (const member of present) {
       presentCount += 1
-      fail(`PRESENT ${member} (${file}): no ${entity} declaration was found to scope it to, so this member cannot be asserted at all`)
+      drift(`PRESENT ${member} (${file}): no ${entity} declaration was found to scope it to, so this member cannot be asserted at all`)
     }
     absentCount += absent.length
-    fail(`scope marker missing: no declaration of ${entity} was found in ${file} — the assertions below it cannot be scoped, which is drift, not a pass`)
+    drift(`scope marker missing: no declaration of ${entity} was found in ${file} — the assertions below it cannot be scoped, which is drift, not a pass`)
     continue
   }
   report(`${entity} — ${file}:${region.start}..${region.end}`)
@@ -158,7 +176,7 @@ for (const entry of ENTITIES) {
     // entity still registers this name, and `ctx.inject` will still resolve.
     const registered = new RegExp(`super\\([^)]*,\\s*["']${service}["']\\s*\\)|\\bprovide\\(\\s*["']${service}["']\\s*,`)
     const hit = lines.findIndex((line) => registered.test(line))
-    if (hit === -1) fail(`scope marker missing: ${file} no longer registers the service "${service}" that ${entity} is reached through (§3.1; ${usedBy})`)
+    if (hit === -1) drift(`scope marker missing: ${file} no longer registers the service "${service}" that ${entity} is reached through (§3.1; ${usedBy})`)
     else report(`  service ${service} — ${file}:${hit + 1}`)
   }
 
@@ -166,7 +184,7 @@ for (const entry of ENTITIES) {
     presentCount += 1
     const { index, shape, boltOnForm } = locateMember(memberForms(entity, member, 'present'), region, text)
     if (index === undefined && boltOnForm === undefined) {
-      fail(`PRESENT ${member} (${file}): ${entity} no longer declares it in any known form — ${usedBy} reads it and would fail at runtime`)
+      drift(`PRESENT ${member} (${file}): ${entity} no longer declares it in any known form — ${usedBy} reads it and would fail at runtime`)
       continue
     }
     if (index === undefined) {
@@ -181,7 +199,7 @@ for (const entry of ENTITIES) {
     const { index, shape, boltOnForm } = locateMember(memberForms(entity, member, 'absent'), region, text)
     const resurrection = index !== undefined ? { where: `${file}:${region.start + index}`, form: shape.form } : { where: `${file}:${lineOf(text, text.search(boltOnForm?.pattern))}`, form: boltOnForm?.form }
     if (resurrection.form === undefined) report(`  absent ${member} — ${entity} stays without it`)
-    else fail(`ABSENT ${member} (${resurrection.where}): ${entity} has it again as a ${resurrection.form} — this member was removed upstream and must not come back silently (${usedBy})`)
+    else drift(`ABSENT ${member} (${resurrection.where}): ${entity} has it again as a ${resurrection.form} — this member was removed upstream and must not come back silently (${usedBy})`)
   }
 }
 
@@ -196,7 +214,7 @@ if (catalogLines === undefined) {
   // Reported once, outside the loop: the loop's own assertions cannot be read off
   // a file that is not there, and skipping them silently is the vacuous green §12
   // rules out.
-  fail(`catalog file missing: ${SLOT_CATALOG.file} — the slot entries this plugin registers against are declared there, so its absence is drift`)
+  drift(`catalog file missing: ${SLOT_CATALOG.file} — the slot entries this plugin registers against are declared there, so its absence is drift`)
 } else {
   for (const { slot, kind, standardProps, ownerProps } of SLOT_CATALOG.entries) {
     const found = catalogEntries(catalogLines, slot)
@@ -204,7 +222,7 @@ if (catalogLines === undefined) {
       // Zero is the ordinary drift. More than one is the quieter failure: the
       // assertions below would be read off whichever entry came first, so a stale
       // duplicate could keep the gate green while the live entry changed.
-      fail(
+      drift(
         found.length === 0
           ? `catalog entry missing: ${slot} in ${SLOT_CATALOG.file} — a slot the host stopped declaring means the row never mounts, which is drift, not a pass`
           : `catalog entry ambiguous: ${slot} is declared ${found.length} times in ${SLOT_CATALOG.file} — which entry governs the registration is undecided, and reading the first would be a guess`,
@@ -221,19 +239,19 @@ if (catalogLines === undefined) {
     const cell = kind === 'keyed' ? 'a keyed cell' : kind === 'list' ? 'a list entry' : `a ${kind} registration`
     const at = `${SLOT_CATALOG.file}:${entry.start}`
     const kindLine = entry.body.find((line) => /^\s*kind: /.test(line))
-    if (kindLine === undefined) fail(`catalog entry ${slot} (${at}): declares no kind — whether this plugin registers a keyed cell or a list entry is undecided`)
-    else if (!kindLine.includes(`"${kind}"`)) fail(`catalog entry ${slot} (${at}): declared as ${kindLine.trim()}, but this plugin registers ${cell} there`)
+    if (kindLine === undefined) drift(`catalog entry ${slot} (${at}): declares no kind — whether this plugin registers a keyed cell or a list entry is undecided`)
+    else if (!kindLine.includes(`"${kind}"`)) drift(`catalog entry ${slot} (${at}): declared as ${kindLine.trim()}, but this plugin registers ${cell} there`)
 
     const body = entry.body.join('\n')
-    if (!/^\s*standardProps: \[/m.test(body)) fail(`catalog entry ${slot} (${at}): declares no standardProps — this plugin's renderers destructure its props and would draw undefined`)
+    if (!/^\s*standardProps: \[/m.test(body)) drift(`catalog entry ${slot} (${at}): declares no standardProps — this plugin's renderers destructure its props and would draw undefined`)
     for (const prop of standardProps) {
       standardPropCount += 1
-      if (!new RegExp(`["']${escapeRegex(prop)}: [^"']*["']`).test(body)) fail(`catalog entry ${slot} (${at}): standardProps no longer delivers ${prop}`)
+      if (!new RegExp(`["']${escapeRegex(prop)}: [^"']*["']`).test(body)) drift(`catalog entry ${slot} (${at}): standardProps no longer delivers ${prop}`)
     }
     for (const prop of ownerProps) {
       ownerPropCount += 1
       const owner = entry.body.find((line) => /^\s*ownerProps: /.test(line)) ?? ''
-      if (!owner.includes(`${prop}:`)) fail(`catalog entry ${slot} (${at}): ownerProps no longer carries ${prop} — the entry cannot find the message it belongs to`)
+      if (!owner.includes(`${prop}:`)) drift(`catalog entry ${slot} (${at}): ownerProps no longer carries ${prop} — the entry cannot find the message it belongs to`)
     }
   }
 }
@@ -250,19 +268,19 @@ for (const { file, specifier, names, usedBy } of EXPORTS) {
   // file: asserting a name in a module the plugin no longer resolves to would be
   // a green gate over a half that cannot load.
   if (manifestText === undefined) {
-    fail(`import source missing: ${pkg}/package.json — ${usedBy} imports ${specifier}, and without the manifest nothing says that resolves to ${file}`)
+    drift(`import source missing: ${pkg}/package.json — ${usedBy} imports ${specifier}, and without the manifest nothing says that resolves to ${file}`)
   } else {
     let manifest
     try {
       manifest = JSON.parse(manifestText)
     } catch (error) {
-      fail(`import source ${pkg}/package.json is not valid JSON: ${error.message} — ${usedBy} imports ${specifier}`)
+      drift(`import source ${pkg}/package.json is not valid JSON: ${error.message} — ${usedBy} imports ${specifier}`)
     }
     if (manifest !== undefined) {
       const landed = exportTarget(manifest, specifier, packageName)
       const expected = file.slice(pkg.length + 1)
       if (landed !== expected) {
-        fail(`import path moved: ${specifier} resolves to ${landed ?? '(nothing)'}, but this table and the fixtures read ${expected} — the plugin imports the specifier, not the file (${usedBy})`)
+        drift(`import path moved: ${specifier} resolves to ${landed ?? '(nothing)'}, but this table and the fixtures read ${expected} — the plugin imports the specifier, not the file (${usedBy})`)
       } else {
         report(`import ${specifier} → ${file}`)
       }
@@ -270,7 +288,7 @@ for (const { file, specifier, names, usedBy } of EXPORTS) {
   }
 
   if (text === undefined) {
-    fail(`import source missing: ${file} — ${usedBy} imports from it, so its absence is drift`)
+    drift(`import source missing: ${file} — ${usedBy} imports from it, so its absence is drift`)
     continue
   }
   for (const name of names) {
@@ -279,7 +297,7 @@ for (const { file, specifier, names, usedBy } of EXPORTS) {
     const listed = new RegExp(`export\\s*\\{[^}]*\\b${escaped}\\b`, 's').test(text) || new RegExp(`export\\s+(?:const|function|class|let|var)\\s+${escaped}\\b`).test(text)
     // No `file:line` here: the failure is that the name is absent, so there is no
     // line to point at. The other diagnostics cite one because they have a hit.
-    if (!listed) fail(`PRESENT export ${name} (${file}): ${packageName} no longer exports it, and ${usedBy} imports it by that name`)
+    if (!listed) drift(`PRESENT export ${name} (${file}): ${packageName} no longer exports it, and ${usedBy} imports it by that name`)
     else report(`export ${name} — ${file}`)
   }
 }
@@ -443,10 +461,23 @@ if (ownTree && userDescriptors === 0) {
 
 app.close?.()
 
+// Hard failures (plugin-side invariants + table integrity) block the build.
 if (failures.length > 0) {
   for (const failure of failures) console.error(`check-host-contract: FAIL ${failure}`)
-  console.error(`check-host-contract: ${failures.length} failure(s) against ${app.describe()}`)
+  console.error(`check-host-contract: ${failures.length} hard failure(s) — a plugin-side invariant or the contract table's own integrity is broken; fix before shipping`)
   process.exit(1)
+}
+
+// Host-side drift is reported, not blocking: the installed host churns, and a
+// moving version must not keep the tree red. The summary stays loud on purpose
+// so it is never a silent pass — a missing slot or member here can mean a row
+// silently never mounts, and the maintainer still gets to see it.
+if (driftFailures.length > 0) {
+  for (const finding of driftFailures) console.warn(`check-host-contract: DRIFT ${finding}`)
+  console.warn(
+    `check-host-contract: ${driftFailures.length} drift finding(s) against ${app.describe()} — the installed host no longer matches the contract table. Non-blocking by design (host versions churn), but review: a missing slot or member can mean a row silently never mounts.`,
+  )
+  process.exit(0)
 }
 
 console.log(
